@@ -1,109 +1,78 @@
-# Gazette — GitHub Actions CI Workflow (PPC-focused)
+# Gazette — GitHub Actions CI Workflow (Carbon PPC for Mac OS 9)
 
 name: Build Gazette (Carbon PPC)
 
 on:
   push:
-    branches: [ main, master ]
+    paths:
+      - 'src/**'
+      - 'CMakeLists.txt'
+      - 'third_party/InterfacesAndLibraries/**'
+      - '.github/workflows/build.yml'
   pull_request:
-    branches: [ main, master ]
-
-# Cancel redundant builds on the same branch
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-# ------------------------------------------------------------------ #
-# Jobs                                                                #
-# ------------------------------------------------------------------ #
+    paths:
+      - 'src/**'
+      - 'CMakeLists.txt'
+      - 'third_party/InterfacesAndLibraries/**'
+      - '.github/workflows/build.yml'
+  workflow_dispatch:
 
 jobs:
-  # ================================================================== #
-  # Carbon PPC build — Mac OS X (PowerPC)                             #
-  # ================================================================== #
-
-  carbon-ppc-build:
-    name: Carbon PPC Build (macOS ${{ matrix.os-version }})
-    runs-on: ${{ matrix.runner }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # macOS 11 (Big Sur) — last GitHub Actions runner with Carbon framework
-          - runner: macos-11
-            os-version: "11"
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Select Xcode version (Carbon-compatible)
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: "13.4.2"  # Last Xcode with Carbon support on macOS 11
-
-      - name: Install CMake
-        uses: lukka/get-cmake@v3.28.1
-
-      - name: Configure CMake (PPC only)
-        run: |
-          mkdir build && cd build
-          cmake .. \
-            -DCMAKE_OSX_ARCHITECTURES="ppc" \
-            -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build Gazette (PPC)
-        run: |
-          cd build
-          make -j$(nproc)
-
-      - name: Upload PPC artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Gazette-carbon-ppc-macos11
-          path: build/Gazette
-          if-no-files-found: warn
-
-  # ================================================================== #
-  # Classic Mac OS 9 PPC build (via Retro68 cross-compiler)           #
-  # ================================================================== #
-
-  os9-ppc-build:
-    name: Classic Mac OS 9 PPC Build (Retro68)
+  build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Retro68 toolchain
+      - name: Build with Retro68 (Carbon / PowerPC toolchain)
         run: |
-          git clone --depth 1 https://github.com/retro68/retro68.git ~/retro68
-          cd ~/retro68
-          mkdir build && cd build
-          cmake .. -DCMAKE_INSTALL_PREFIX=$HOME/.retro68
-          make -j$(nproc)
-          sudo make install
+          docker run --rm \
+            -v "${{ github.workspace }}:/root/Gazette" \
+            -w /root/Gazette \
+            -i ghcr.io/autc04/retro68 /bin/bash <<'EOF'
+          set -euo pipefail
 
-      - name: Install CMake
-        uses: lukka/get-cmake@v3.28.1
+          # Stage Apple's Universal Interfaces (Carbon). The trailing arguments are
+          # BUILD_68K BUILD_PPC BUILD_CARBON: Carbon PPC for Mac OS 9.
+          /Retro68-build/bin/interfaces-and-libraries.sh \
+            /Retro68-build/toolchain /root/Gazette/third_party/InterfacesAndLibraries false true true
 
-      - name: Configure CMake (Retro68 PPC)
-        run: |
-          mkdir build && cd build
-          cmake .. \
-            -DCMAKE_TOOLCHAIN_FILE=$HOME/.retro68/share/retro68/cmake/Modules/Platform/Darwin.cmake \
-            -DCMAKE_C_COMPILER=retrocc \
-            -DCMAKE_CXX_COMPILER=retroc++
-
-      - name: Build Gazette (Classic Mac OS 9 PPC)
-        run: |
+          mkdir -p build
           cd build
-          make -j$(nproc)
+          cmake .. \
+            -DCMAKE_TOOLCHAIN_FILE=/Retro68-build/toolchain/powerpc-apple-macos/cmake/retrocarbon.toolchain.cmake
+          cmake --build . --verbose
+          ls -la
+          EOF
 
-      - name: Upload Classic Mac OS 9 artifact
+      - name: Package release assets (.sit archive)
+        run: |
+          set -euo pipefail
+
+          # build/ is owned by root (created inside the Retro68 container),
+          # so this host-side step can read from it but not write new
+          # files into it -- everything created here goes to package/
+          # instead, which this step owns.
+          mkdir -p package
+
+          git clone --depth 1 https://github.com/thecloudexpanse/sit.git /tmp/sit-src
+          make -C /tmp/sit-src
+
+          # sit reads AppleDouble sidecars named "._name" on Linux; Rez
+          # already wrote the resource-fork half as "%Gazette.ad" (its own
+          # AppleDouble naming convention) and the plain data fork as
+          # "Gazette.ad" -- just rename both into place.
+          cp build/Gazette.ad package/Gazette
+          cp "build/%Gazette.ad" package/._Gazette
+          /tmp/sit-src/sit -T APPL -C Gzt9 -o package/Gazette.sit package/Gazette
+
+      - name: Upload disk image + app bundle
         uses: actions/upload-artifact@v4
         with:
-          name: Gazette-os9-ppc-retro68
-          path: build/Gazette
+          name: Gazette-carbon-ppc-macos9
+          path: |
+            build/Gazette.dsk
+            build/Gazette.APPL
+            build/Gazette.bin
+            package/Gazette.sit
+          if-no-files-found: error
