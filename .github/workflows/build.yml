@@ -42,8 +42,9 @@ jobs:
           "$IAL" "$TOOLCHAIN" /root/Gazette/third_party/InterfacesAndLibraries false true false
 
           # Stage Apple Universal Interfaces (Carbon headers — Carbon.h, etc.).
-          # AUI was released with Mac OS X and includes the Carbon framework headers.
-          "$IAL" "$TOOLCHAIN" /root/Gazette/third_party/AUI/Universal/Interfaces false true true
+          # AUI has an extra "Universal/" directory level; pass that so the
+          # script finds Interfaces/CIncludes/Carbon.h relative to it.
+          "$IAL" "$TOOLCHAIN" /root/Gazette/third_party/AUI/Universal false true true
 
           # Verify Carbon headers are available
           test -f "$TOOLCHAIN/powerpc-apple-macos/include/Carbon/Carbon.h"
