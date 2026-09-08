@@ -8,12 +8,14 @@ on:
       - 'src/**'
       - 'CMakeLists.txt'
       - 'third_party/InterfacesAndLibraries/**'
+      - 'third_party/AUI/**'
       - '.github/workflows/build.yml'
   pull_request:
     paths:
       - 'src/**'
       - 'CMakeLists.txt'
       - 'third_party/InterfacesAndLibraries/**'
+      - 'third_party/AUI/**'
       - '.github/workflows/build.yml'
   workflow_dispatch:
 
@@ -32,15 +34,24 @@ jobs:
             -i ghcr.io/autc04/retro68 /bin/bash <<'EOF'
           set -euo pipefail
 
-          # Stage Apple's Universal Interfaces (Carbon). The trailing arguments are
-          # BUILD_68K BUILD_PPC BUILD_CARBON: Carbon PPC for Mac OS 9.
-          /Retro68-build/bin/interfaces-and-libraries.sh \
-            /Retro68-build/toolchain /root/Gazette/third_party/InterfacesAndLibraries false true true
+          TOOLCHAIN=/Retro68-build/toolchain
+          IAL=/Retro68-build/bin/interfaces-and-libraries.sh
+
+          # Stage Apple's Universal Interfaces (PPC only, no Carbon — MPW 3.5).
+          # This gives us Classic Toolbox headers for Mac OS 9.
+          "$IAL" "$TOOLCHAIN" /root/Gazette/third_party/InterfacesAndLibraries false true false
+
+          # Stage Apple Universal Interfaces (Carbon headers — Carbon.h, etc.).
+          # AUI was released with Mac OS X and includes the Carbon framework headers.
+          "$IAL" "$TOOLCHAIN" /root/Gazette/third_party/AUI/Universal/Interfaces false true true
+
+          # Verify Carbon headers are available
+          test -f "$TOOLCHAIN/powerpc-apple-macos/include/Carbon/Carbon.h"
 
           mkdir -p build
           cd build
           cmake .. \
-            -DCMAKE_TOOLCHAIN_FILE=/Retro68-build/toolchain/powerpc-apple-macos/cmake/retrocarbon.toolchain.cmake
+            -DCMAKE_TOOLCHAIN_FILE=$TOOLCHAIN/powerpc-apple-macos/cmake/retrocarbon.toolchain.cmake
           cmake --build . --verbose
           ls -la
           EOF

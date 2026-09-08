@@ -1,26 +1,8 @@
 # Gazette — .gitignore for Carbon development
 
-# Build artifacts
+# Build output. Note the absence of *.o and *.a globs: Apple's Interfaces &
+# Libraries ships static Open Transport glue as .o files and assembler
+# includes as .a files, and ignoring those silently breaks the PPC link.
 build/
-*.o
-*.a
-*.so
-Gazette
-Gazette.app/
 
-# macOS metadata (except InterfacesAndLibraries which needs resource forks)
 .DS_Store
-Thumbs.db
-
-# IDE files (if any)
-.idea/
-.vscode/
-*.xcodeproj/
-
-# Icon resources (generated, not committed)
-*.icns
-Resources/*.iconset/
-
-# Temporary files
-*.tmp
-*~
