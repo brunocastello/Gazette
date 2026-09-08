@@ -7,14 +7,12 @@ on:
     paths:
       - 'src/**'
       - 'CMakeLists.txt'
-      - 'third_party/InterfacesAndLibraries/**'
       - 'third_party/AUI/**'
       - '.github/workflows/build.yml'
   pull_request:
     paths:
       - 'src/**'
       - 'CMakeLists.txt'
-      - 'third_party/InterfacesAndLibraries/**'
       - 'third_party/AUI/**'
       - '.github/workflows/build.yml'
   workflow_dispatch:
@@ -37,13 +35,9 @@ jobs:
           TOOLCHAIN=/Retro68-build/toolchain
           IAL=/Retro68-build/bin/interfaces-and-libraries.sh
 
-          # Stage Apple's Universal Interfaces (PPC only, no Carbon — MPW 3.5).
-          # This gives us Classic Toolbox headers for Mac OS 9.
-          "$IAL" "$TOOLCHAIN" /root/Gazette/third_party/InterfacesAndLibraries false true false
-
           # Stage Apple Universal Interfaces (Carbon headers — Carbon.h, etc.).
-          # AUI has an extra "Universal/" directory level; pass that so the
-          # script finds Interfaces/CIncludes/Carbon.h relative to it.
+          # AUI includes all Classic Toolbox headers plus Carbon; no need for MPW 3.5.
+          # Pass Universal/ so the script finds Interfaces/CIncludes/Carbon.h relative to it.
           "$IAL" "$TOOLCHAIN" /root/Gazette/third_party/AUI/Universal false true true
 
           # Verify Carbon headers are available
