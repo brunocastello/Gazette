@@ -62,7 +62,11 @@ resource 'ALRT' (kAboutAlertID, "About Gazette") {
         OK, visible, silent;
         /* [4] */
         OK, visible, silent
-    }
+    },
+    /* Apple's Dialogs.r defaults ALRT_RezTemplateVersion to 1, so the
+       System 7 positioning field is part of the template and must be
+       supplied -- omitting it is "not enough values specified". */
+    alertPositionMainScreen
 };
 
 resource 'DITL' (kAboutAlertID, "About Gazette") {
