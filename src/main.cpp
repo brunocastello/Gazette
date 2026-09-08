@@ -1,37 +1,64 @@
 /*
- * Gazette — Carbon RSS / Atom Reader for Mac OS 9 & Mac OS X
+ * Gazette — Carbon RSS / Atom Reader for Mac OS 9 (PowerPC)
  * Copyright (c) 2026 brunocastello
  *
- * Phase 0: Skeleton — Carbon shell, event loop, menus, quit.
- * Uses Apple's Universal Interfaces (Carbon API).
+ * Phase 0: Skeleton — Carbon shell, Platinum window, menus, quit.
+ *
+ * Built against Apple's Universal Interfaces 3.4 with TARGET_API_MAC_CARBON=1
+ * (defined by Retro68's retrocarbon toolchain file, which is what makes these
+ * headers expose the Carbon-safe subset of the Toolbox).
+ *
+ * Retro68 links the interface headers *flat* into the toolchain's include
+ * directory, so it is <MacWindows.h>, not <Carbon/MacWindows.h>. The <Carbon.h>
+ * umbrella is staged too, but it drags in the whole of ApplicationServices and
+ * CoreServices — Quartz, ATSUI, Navigation, ICA — none of which this app
+ * touches. Including only what we use keeps the build honest and fast.
+ *
+ * The event loop is the classic WaitNextEvent loop rather than the Carbon
+ * Event Manager. CarbonLib supports it fully on Mac OS 9, it is the single
+ * cooperative loop AGENT.md mandates, and its idle branch is where Phase 1
+ * will poll non-blocking network I/O without ever blocking the UI.
  */
 
-#include <Carbon/Carbon.h>
+#include <MacTypes.h>
+#include <Quickdraw.h>
+#include <QuickdrawText.h>
+#include <Fonts.h>
+#include <MacWindows.h>
+#include <Menus.h>
+#include <Dialogs.h>
+#include <Events.h>
+#include <Appearance.h>
+#include <Sound.h>
+
 #include "core/gazette_core.h"
 
 /* ------------------------------------------------------------------ */
-/* Forward declarations                                              */
+/* Forward declarations                                                */
 /* ------------------------------------------------------------------ */
 
 static Boolean InitGazette(void);
-static void   RunGazette(void);
-static void   DoExitGazette(void);
+static Boolean BuildMenuBar(void);
+static void    RunGazette(void);
+static void    DoExitGazette(void);
 
-static void   HandleMenuChoice(MenuRef menuRef, SInt32 itemIndex);
-static void   DoEvent(EventRef event);
+static void    HandleEvent(const EventRecord *event);
+static void    HandleMouseDown(const EventRecord *event);
+static void    HandleMenuChoice(long menuResult);
 
-static void   HandleAbout(void);
-static void   HandleQuit(void);
-static void   DrawPlatinumWindow(WindowRef window);
+static void    InvalWholeWindow(WindowRef window);
+static void    HandleAbout(void);
+static void    HandleQuit(void);
+static void    DrawGazetteWindow(WindowRef window);
 
 /* ------------------------------------------------------------------ */
-/* Application globals                                               */
+/* Application globals                                                 */
 /* ------------------------------------------------------------------ */
 
-static Boolean gDone = false;
+static Boolean   gDone       = false;
 static WindowRef gMainWindow = nil;
 
-/* Menu IDs — Carbon convention */
+/* Menu IDs */
 enum {
     kMenuApple  = 128,
     kMenuFile   = 129,
@@ -39,299 +66,299 @@ enum {
     kMenuWindow = 131
 };
 
-/* Menu item IDs */
+/* Menu item indices, in the order AppendMenu() adds them below. */
 enum {
-    kMenuItemQuit       = 1,
-    kMenuItemAbout      = 1,
-    kMenuItemUndo       = 1,
-    kMenuItemCut        = 2,
-    kMenuItemCopy       = 3,
-    kMenuItemPaste      = 4,
-    kMenuItemClear      = 5,
-    kMenuItemCloseWin   = 1
+    kAppleItemAbout = 1
+};
+
+enum {
+    kFileItemClose = 1,
+    /* 2 is a divider */
+    kFileItemQuit  = 3
+};
+
+enum {
+    kWindowItemGazette = 1
+};
+
+/* Must match kAboutAlertID in Resources/Gazette.r. */
+enum {
+    kAboutAlertID = 128
+};
+
+/* WaitNextEvent sleep, in ticks. Short enough that Phase 1's network poll
+   stays responsive, long enough to be a good cooperative citizen. */
+enum {
+    kSleepTicks = 10
 };
 
 /* ------------------------------------------------------------------ */
-/* Entry point — Carbon main                                         */
+/* Entry point                                                         */
 /* ------------------------------------------------------------------ */
 
-int main(int argc, char *argv[])
+int main(void)
 {
-    (void)argc;
-    (void)argv;
-
     if (!InitGazette()) {
+        SysBeep(30);
         DoExitGazette();
+        return 1;
     }
 
     RunGazette();
-    DoExitGazette(); /* should not reach here */
+    DoExitGazette();
 
     return 0;
 }
 
 /* ------------------------------------------------------------------ */
-/* Initialization — create menus, window, cursor                       */
+/* Initialization                                                      */
+/*                                                                     */
+/* No InitGraf/InitWindows/InitMenus/MaxApplZone here: those are all    */
+/* CALL_NOT_IN_CARBON. CarbonLib sets the Toolbox up before main() runs.*/
 /* ------------------------------------------------------------------ */
 
 static Boolean InitGazette(void)
 {
-    /* Carbon handles memory management; SIZE resource is optional. */
+    OSStatus         err;
+    Rect             bounds;
+    WindowAttributes attrs;
 
     InitCursor();
 
-    /* Create menus programmatically (no resource fork needed) */
-    {
-        MenuRef appleMenu, fileMenu, editMenu, windowMenu;
-
-        /* Apple menu (ID 128) — system populates first item */
-        appleMenu = CreateMenu(kMenuApple, "\pGazette");
-        InsertMenuItemWithAccel(appleMenu, "\pAbout Gazette...", kMenuItemAbout, 'Q', 0);
-        InsertMenuSeparator(appleMenu);
-        InsertMenuItemWithAccel(appleMenu, "\pServices", 0, 0, 0);
-        InsertMenuSeparator(appleMenu);
-
-        /* File menu (ID 129) */
-        fileMenu = CreateMenu(kMenuFile, "\pFile");
-        InsertMenuItemWithAccel(fileMenu, "\pQuit", kMenuItemQuit, 'Q', 0);
-        InsertMenu(fileMenu, nil);
-
-        /* Edit menu (ID 130) */
-        editMenu = CreateMenu(kMenuEdit, "\pEdit");
-        InsertMenuItemWithAccel(editMenu, "\pUndo", kMenuItemUndo, 'Z', 0);
-        InsertMenuSeparator(editMenu);
-        InsertMenuItemWithAccel(editMenu, "\pCut", kMenuItemCut, 'X', 0);
-        InsertMenuItemWithAccel(editMenu, "\pCopy", kMenuItemCopy, 'C', 0);
-        InsertMenuItemWithAccel(editMenu, "\pPaste", kMenuItemPaste, 'V', 0);
-        InsertMenuItemWithAccel(editMenu, "\pClear", kMenuItemClear, 0, 0);
-        InsertMenu(editMenu, nil);
-
-        /* Window menu (ID 131) */
-        windowMenu = CreateMenu(kMenuWindow, "\pWindow");
-        InsertMenuItemWithAccel(windowMenu, "\pClose Window", kMenuItemCloseWin, 'W', 0);
-        InsertMenu(windowMenu, nil);
-
-        DrawMenuBar();
+    if (!BuildMenuBar()) {
+        return false;
     }
 
-    /* Create the main window */
-    {
-        Rect bounds = { 40, 60, 520, 780 };
-        Str255 title;
+    SetRect(&bounds, 60, 60, 60 + 640, 60 + 440);
 
-        StringCp(title, "\pGazette — RSS / Atom Reader");
-        gMainWindow = CreateWindow(
-            kDocumentWindowClass,
-            nil,
-            &bounds,
-            title,
-            kWindowStandardHandlerAttribute | kWindowTearOffMenuAttribute |
-            kWindowLiveResizeAttribute,
-            nil
-        );
+    /* No kWindowStandardHandlerAttribute: that installs the Carbon Event
+       Manager's standard handler, which would compete with the
+       WaitNextEvent loop below. */
+    attrs = kWindowStandardDocumentAttributes;
 
-        if (gMainWindow) {
-            ShowWindow(gMainWindow);
-            SelectWindow(gMainWindow);
-
-            /* Draw initial Platinum grey fill */
-            DrawPlatinumWindow(gMainWindow);
-        }
+    err = CreateNewWindow(kDocumentWindowClass, attrs, &bounds, &gMainWindow);
+    if (err != noErr || gMainWindow == nil) {
+        return false;
     }
 
-    return gMainWindow != nil;
+    SetWTitle(gMainWindow, "\pGazette");
+
+    /* Ask the Appearance Manager for the Platinum dialog background rather
+       than hard-coding a grey, so the window tracks the user's theme. */
+    SetThemeWindowBackground(gMainWindow, kThemeBrushDialogBackgroundActive, false);
+
+    ShowWindow(gMainWindow);
+    SelectWindow(gMainWindow);
+
+    return true;
 }
 
 /* ------------------------------------------------------------------ */
-/* Main event loop — single GetNextEvent, cooperative multitasking     */
+/* Menu bar — built programmatically, no MBAR/MENU resources needed     */
+/*                                                                     */
+/* AppendMenu() metacharacters: ';' separates items, '(' disables one,  */
+/* a lone '-' is a divider, and '/X' assigns a command key.             */
+/* ------------------------------------------------------------------ */
+
+static Boolean BuildMenuBar(void)
+{
+    MenuRef appleMenu, fileMenu, editMenu, windowMenu;
+
+    /* "\024" is the Apple logo in MacRoman. */
+    appleMenu = NewMenu(kMenuApple, "\p\024");
+    if (appleMenu == nil) {
+        return false;
+    }
+    /* "\311" is the MacRoman ellipsis. */
+    AppendMenu(appleMenu, "\pAbout Gazette\311");
+    InsertMenu(appleMenu, 0);
+
+    fileMenu = NewMenu(kMenuFile, "\pFile");
+    if (fileMenu == nil) {
+        return false;
+    }
+    AppendMenu(fileMenu, "\pClose/W;(-;Quit/Q");
+    InsertMenu(fileMenu, 0);
+
+    editMenu = NewMenu(kMenuEdit, "\pEdit");
+    if (editMenu == nil) {
+        return false;
+    }
+    AppendMenu(editMenu, "\pUndo/Z;(-;Cut/X;Copy/C;Paste/V;Clear");
+    InsertMenu(editMenu, 0);
+
+    windowMenu = NewMenu(kMenuWindow, "\pWindow");
+    if (windowMenu == nil) {
+        return false;
+    }
+    AppendMenu(windowMenu, "\pGazette");
+    InsertMenu(windowMenu, 0);
+
+    DrawMenuBar();
+
+    return true;
+}
+
+/* ------------------------------------------------------------------ */
+/* Main event loop — one cooperative WaitNextEvent loop                 */
 /* ------------------------------------------------------------------ */
 
 static void RunGazette(void)
 {
-    EventRef   event;
-    MenuRef    menuRef = nil;
-    SInt32     itemIndex = 0;
+    EventRecord event;
 
     while (!gDone) {
-        /* Wait for any event, yielding to the system */
-        if (GetNextEvent(kHighLevelEventMask | keyDownMask | mouseUpMask, &event) == noErr) {
-            /* Dispatch the event */
-            DoEvent(event);
-
-            /* Check if a menu was selected (from MenuSelect) */
-            GetEventParameter(event, kEventParamMenuRef, typeMenuRef, NULL, sizeof(MenuRef), NULL, &menuRef);
-            GetEventParameter(event, kEventParamMenuItemIndex, typeSInt32, NULL, sizeof(SInt32), NULL, &itemIndex);
-
-            if (menuRef) {
-                HandleMenuChoice(menuRef, itemIndex);
-            }
-
-            ReleaseEvent(event);
+        if (WaitNextEvent(everyEvent, &event, kSleepTicks, nil)) {
+            HandleEvent(&event);
         } else {
-            /* No event — yield to the system (cooperative multitasking) */
-            WaitNextEvent(kHighLevelEventMask | keyDownMask, &event, 60);
-            DoEvent(event);
-            ReleaseEvent(event);
+            /* Idle. Phase 1 polls non-blocking network I/O from here — it
+               must never block, or the whole machine stops cooperating. */
         }
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* Menu handling — dispatch menu item actions                          */
-/* ------------------------------------------------------------------ */
-
-static void HandleMenuChoice(MenuRef menuRef, SInt32 itemIndex)
+static void HandleEvent(const EventRecord *event)
 {
-    SInt32 menuID = 0;
+    switch (event->what) {
+        case mouseDown:
+            HandleMouseDown(event);
+            break;
 
-    GetMenuItemCommandID(menuRef, itemIndex, (EventCommandID *)&menuID);
-    (void)GetMenuID(menuRef, &menuID);
+        case keyDown:
+        case autoKey:
+            /* MenuEvent() does the cmdKey test and the command-key lookup
+               itself, and is the Carbon-blessed replacement for MenuKey(). */
+            HandleMenuChoice((long)MenuEvent(event));
+            break;
 
-    /* Determine which menu this belongs to */
-    if (menuRef) {
-        GetMenuID(menuRef, &menuID);
+        case updateEvt: {
+            WindowRef window = (WindowRef)event->message;
+
+            BeginUpdate(window);
+            DrawGazetteWindow(window);
+            EndUpdate(window);
+            break;
+        }
+
+        case activateEvt:
+            InvalWholeWindow((WindowRef)event->message);
+            break;
+
+        default:
+            break;
+    }
+}
+
+static void HandleMouseDown(const EventRecord *event)
+{
+    WindowRef      window = nil;
+    WindowPartCode part;
+
+    part = FindWindow(event->where, &window);
+
+    switch (part) {
+        case inMenuBar:
+            HandleMenuChoice(MenuSelect(event->where));
+            break;
+
+        case inContent:
+            if (window != FrontWindow()) {
+                SelectWindow(window);
+            }
+            break;
+
+        case inDrag:
+            /* A NULL bounding box means "the whole desktop"; that is legal
+               from CarbonLib 1.0 forward. */
+            DragWindow(window, event->where, nil);
+            break;
+
+        case inGrow: {
+            /* GrowWindow/SizeWindow rather than ResizeWindow: the pair is
+               available all the way back to CarbonLib 1.0. */
+            Rect limits;
+            long newSize;
+
+            SetRect(&limits, 320, 240, 32767, 32767);
+            newSize = GrowWindow(window, event->where, &limits);
+            if (newSize != 0) {
+                SizeWindow(window, (short)(newSize & 0xFFFF),
+                           (short)(newSize >> 16), true);
+                InvalWholeWindow(window);
+            }
+            break;
+        }
+
+        case inZoomIn:
+        case inZoomOut:
+            if (TrackBox(window, event->where, part)) {
+                ZoomWindow(window, part, true);
+                InvalWholeWindow(window);
+            }
+            break;
+
+        case inGoAway:
+            if (TrackGoAway(window, event->where)) {
+                /* Phase 0 has a single window, so closing it quits. */
+                HandleQuit();
+            }
+            break;
+
+        default:
+            break;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Menu dispatch                                                       */
+/* ------------------------------------------------------------------ */
+
+static void HandleMenuChoice(long menuResult)
+{
+    short menuID   = (short)(menuResult >> 16);
+    short menuItem = (short)(menuResult & 0xFFFF);
+
+    if (menuID == 0) {
+        return;
     }
 
     switch (menuID) {
         case kMenuApple:
-            if (itemIndex == kMenuItemAbout) {
+            if (menuItem == kAppleItemAbout) {
                 HandleAbout();
             }
             break;
 
         case kMenuFile:
-            if (itemIndex == kMenuItemQuit) {
+            if (menuItem == kFileItemClose || menuItem == kFileItemQuit) {
                 HandleQuit();
             }
             break;
 
+        case kMenuEdit:
+            /* Phase 4 wires these up to the reader pane. */
+            break;
+
         case kMenuWindow:
-            if (itemIndex == kMenuItemCloseWin) {
-                /* Close current window — for Phase 3 multi-window support */
-                if (gMainWindow) {
-                    CloseWindow(gMainWindow);
-                    gMainWindow = nil;
-                }
+            if (menuItem == kWindowItemGazette && gMainWindow != nil) {
+                SelectWindow(gMainWindow);
             }
             break;
 
         default:
-            SysBeep(10);
             break;
     }
+
+    HiliteMenu(0);
 }
 
 /* ------------------------------------------------------------------ */
-/* Event dispatch — mouse clicks, keyboard                           */
-/* ------------------------------------------------------------------ */
-
-static void DoEvent(EventRef event)
-{
-    SInt32 message;
-    GetEventParameter(event, kEventParamMessage, typeSInt32, NULL, sizeof(SInt32), NULL, &message);
-
-    switch (message) {
-        case kEventMouseDown: {
-            Point where;
-            WindowRef window = nil;
-
-            GetEventParameter(event, kEventParamMouseLocation, typeQDPoint, NULL, sizeof(Point), NULL, &where);
-            GetEventParameter(event, kEventParamMouseWindow, typeWindowRef, NULL, sizeof(WindowRef), NULL, &window);
-
-            switch (FindWindow(where, &window)) {
-                case inMenuBar: {
-                    MenuRef menuRef;
-                    SInt32 itemIndex;
-
-                    MenuSelect(where, &menuRef, &itemIndex);
-                    if (menuRef) {
-                        HandleMenuChoice(menuRef, itemIndex);
-                        DrawMenuBar();
-                    }
-                    break;
-                }
-
-                case inSysWindow:
-                    SystemClick(event, window);
-                    break;
-
-                case inContent:
-                    if (window && FrontWindow() != window) {
-                        SelectWindow(window);
-                    }
-                    break;
-
-                case inGoAway:
-                    if (TrackGoAway(window, where)) {
-                        gDone = true;
-                    }
-                    break;
-
-                default:
-                    break;
-            }
-            break;
-        }
-
-        case kEventKeyboardKeyPress: {
-            SInt32 keyCode, modifiers;
-
-            GetEventParameter(event, kEventParamKeyCode, typeSInt32, NULL, sizeof(SInt32), NULL, &keyCode);
-            GetEventParameter(event, kEventParamKeyModifiers, typeSInt32, NULL, sizeof(SInt32), NULL, &modifiers);
-
-            /* Command-key shortcuts — dispatch directly (Carbon style) */
-            if (modifiers & cmdKey) {
-                switch (keyCode) {
-                    case kVK_q: /* Cmd+Q */
-                        HandleQuit();
-                        break;
-
-                    case kVK_comma: /* Cmd+, → About */
-                        HandleAbout();
-                        break;
-
-                    case kVK_w: /* Cmd+W — close window */
-                        if (gMainWindow) {
-                            CloseWindow(gMainWindow);
-                            gMainWindow = nil;
-                        }
-                        break;
-
-                    default:
-                        break;
-                }
-            }
-            break;
-        }
-
-        default:
-            break;
-    }
-}
-
-/* ------------------------------------------------------------------ */
-/* Menu actions                                                      */
+/* Menu actions                                                        */
 /* ------------------------------------------------------------------ */
 
 static void HandleAbout(void)
 {
-    /* Simple About box — Carbon alert dialog (stub for Phase 3) */
-    CFStringRef title = CFStringCreateWithCString(nil, "About Gazette", kCFStringEncodingASCII);
-    CFStringRef message = CFStringCreateWithCString(
-        nil,
-        "Gazette v0.1\n"
-        "RSS / Atom Reader for Mac OS 9 & Mac OS X\n"
-        "\n"
-        "Built with Carbon. Uses Gateway networking\n"
-        "and NewsProxy feed intelligence.\n"
-        "\n"
-        "Platinum UI. PowerPC.",
-        kCFStringEncodingASCII
-    );
-
-    CFShow(title); /* Stub: replace with proper alert dialog in Phase 3 */
-    CFRelease(message);
-    CFRelease(title);
+    (void)Alert(kAboutAlertID, nil);
 }
 
 static void HandleQuit(void)
@@ -340,31 +367,47 @@ static void HandleQuit(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Draw a basic Platinum-style window (Carbon version)                 */
+/* Drawing                                                             */
+/*                                                                     */
+/* SetThemeWindowBackground() already gave the port the Platinum dialog */
+/* pattern, so EraseRect() paints the correct background for us.        */
 /* ------------------------------------------------------------------ */
 
-static void DrawPlatinumWindow(WindowRef window)
+/* InvalWindowRect() takes a real Rect — unlike DragWindow's bounding box,
+   NULL is not documented as meaning "everything". */
+static void InvalWholeWindow(WindowRef window)
 {
     Rect bounds;
-    CGrafPtr oldPort;
 
-    GetWindowBounds(window, &bounds);
-    GetPort(&oldPort);
-    SetPort(window);
+    if (window == nil) {
+        return;
+    }
 
-    /* Fill with Platinum grey (RGB 254, 254, 254) */
-    RGBColor platinum = { 0xFEFE, 0xFEFE, 0xFEFE };
-    RGBBackColor(&platinum);
+    GetWindowPortBounds(window, &bounds);
+    InvalWindowRect(window, &bounds);
+}
+
+static void DrawGazetteWindow(WindowRef window)
+{
+    GrafPtr savePort;
+    Rect    bounds;
+
+    GetPort(&savePort);
+    SetPortWindowPort(window);
+
+    GetWindowPortBounds(window, &bounds);
     EraseRect(&bounds);
 
-    /* Draw a subtle border */
-    PenNormal();
-    RGBColor black = { 0, 0, 0 };
-    RGBForeColor(&black);
+    TextFont(systemFont);
+    TextSize(12);
 
-    FrameRoundRect(&bounds, 12, 12);
+    MoveTo(bounds.left + 16, bounds.top + 28);
+    DrawString("\pGazette - Phase 0 skeleton");
 
-    SetPort(oldPort);
+    MoveTo(bounds.left + 16, bounds.top + 48);
+    DrawString("\pSidebar, article list and reader pane arrive in Phase 3.");
+
+    SetPort(savePort);
 }
 
 /* ------------------------------------------------------------------ */
@@ -373,23 +416,8 @@ static void DrawPlatinumWindow(WindowRef window)
 
 static void DoExitGazette(void)
 {
-    if (gMainWindow) {
-        CloseWindow(gMainWindow);
+    if (gMainWindow != nil) {
+        DisposeWindow(gMainWindow);
         gMainWindow = nil;
     }
-
-    /* Dispose all menus */
-    {
-        MenuRef menu;
-        short id;
-
-        for (id = kMenuApple; id <= kMenuWindow; id++) {
-            menu = GetMenuRef(id);
-            if (menu) {
-                DisposeMenu(menu);
-            }
-        }
-    }
-
-    ExitToShell();
 }

@@ -8,6 +8,12 @@
 #ifndef GAZETTE_CORE_H
 #define GAZETTE_CORE_H
 
+/* The seam trades in plain types only. MacTypes.h is the one exception:
+   it is present in both Multiversal and Apple's Universal Interfaces, so
+   including it here keeps Boolean/true/false meaningful on either side of
+   the seam (and lets gazette_core.c compile without pulling in Carbon). */
+#include <MacTypes.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif

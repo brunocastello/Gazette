@@ -6,12 +6,14 @@ on:
   push:
     paths:
       - 'src/**'
+      - 'Resources/**'
       - 'CMakeLists.txt'
       - 'third_party/AUI/**'
       - '.github/workflows/build.yml'
   pull_request:
     paths:
       - 'src/**'
+      - 'Resources/**'
       - 'CMakeLists.txt'
       - 'third_party/AUI/**'
       - '.github/workflows/build.yml'
@@ -34,21 +36,46 @@ jobs:
 
           TOOLCHAIN=/Retro68-build/toolchain
           IAL=/Retro68-build/bin/interfaces-and-libraries.sh
+          AUI=/root/Gazette/third_party/AUI/Universal
+          PPC_INCLUDE="$TOOLCHAIN/powerpc-apple-macos/include"
+          RINCLUDES="$TOOLCHAIN/powerpc-apple-macos/RIncludes"
 
-          # Stage Apple Universal Interfaces (Carbon headers — Carbon.h, etc.).
-          # AUI includes all Classic Toolbox headers plus Carbon; no need for MPW 3.5.
-          # Pass Universal/ so the script finds Interfaces/CIncludes/Carbon.h relative to it.
-          "$IAL" "$TOOLCHAIN" /root/Gazette/third_party/AUI/Universal false true true
+          # interfaces-and-libraries.sh stages Apple's headers by symlinking each
+          # one into the toolchain's include directory. Its prepare-headers.sh
+          # deliberately whitelists Apple's fenv.h -- "newlib does not provide
+          # fenv.h, so use Apple's" -- but the newlib in the current Retro68
+          # image *does* ship one, as a real file rather than a symlink. The
+          # script only unlinks symlinks before restaging, so the real file
+          # survives and the symlink fails with
+          #     ln: failed to create symbolic link './fenv.h': File exists
+          # aborting the whole staging step. Delete newlib's copy first: the
+          # script's own rule is that the universal interfaces get right of way.
+          rm -f "$PPC_INCLUDE/fenv.h"
 
-          # Verify Carbon headers are available
-          test -f "$TOOLCHAIN/powerpc-apple-macos/include/Carbon/Carbon.h"
+          # Stage Apple's Universal Interfaces (Carbon headers -- Carbon.h etc.).
+          # Arguments: <toolchain> <interfaces dir> <68k> <ppc> <carbon>.
+          # AUI covers the whole Classic Toolbox as well as Carbon, so MPW 3.5
+          # is not needed. Pass Universal/ so the script finds Carbon.h and
+          # CarbonLib below it.
+          "$IAL" "$TOOLCHAIN" "$AUI" false true true
 
-          mkdir -p build
-          cd build
-          cmake .. \
-            -DCMAKE_TOOLCHAIN_FILE=$TOOLCHAIN/powerpc-apple-macos/cmake/retrocarbon.toolchain.cmake
-          cmake --build . --verbose
-          ls -la
+          # Headers are linked flat into the include directory, so the umbrella
+          # header is <Carbon.h> -- there is no Carbon/ subdirectory.
+          test -f "$PPC_INCLUDE/Carbon.h"
+          test -f "$PPC_INCLUDE/MacWindows.h"
+          test -f "$RINCLUDES/Dialogs.r"
+          test -f "$RINCLUDES/Processes.r"
+
+          # Retro68's own Rez templates must survive alongside Apple's RIncludes;
+          # add_application() rezzes the app against RetroCarbonAPPL.r.
+          echo "Retro68 Rez templates:"
+          ls "$RINCLUDES" | grep -i 'APPL\.r$' || echo "  (none found -- Rez will fail)"
+
+          cmake -S . -B build \
+            -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN/powerpc-apple-macos/cmake/retrocarbon.toolchain.cmake"
+          cmake --build build --verbose
+
+          ls -la build
           EOF
 
       - name: Package release assets (.sit archive)
