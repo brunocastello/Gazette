@@ -8,10 +8,9 @@ build/
 Gazette
 Gazette.app/
 
-# macOS metadata (resource forks, DS_Store)
+# macOS metadata (except InterfacesAndLibraries which needs resource forks)
 .DS_Store
 Thumbs.db
-._*
 
 # IDE files (if any)
 .idea/
