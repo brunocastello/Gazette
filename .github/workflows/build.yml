@@ -35,11 +35,6 @@ jobs:
           TOOLCHAIN=/Retro68-build/toolchain
           IAL=/Retro68-build/bin/interfaces-and-libraries.sh
 
-          # Clean the toolchain's powerpc-apple-macos directory so the script
-          # can create fresh symlinks without "File exists" errors from previous
-          # partial runs. The script will recreate everything from scratch.
-          rm -rf "$TOOLCHAIN/powerpc-apple-macos"
-
           # Stage Apple Universal Interfaces (Carbon headers — Carbon.h, etc.).
           # AUI includes all Classic Toolbox headers plus Carbon; no need for MPW 3.5.
           # Pass Universal/ so the script finds Interfaces/CIncludes/Carbon.h relative to it.
