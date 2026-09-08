@@ -1,0 +1,26 @@
+# Gazette — .gitignore for Carbon development
+
+# Build artifacts
+build/
+*.o
+*.a
+*.so
+Gazette
+Gazette.app/
+
+# macOS metadata
+.DS_Store
+Thumbs.db
+
+# IDE files (if any)
+.idea/
+.vscode/
+*.xcodeproj/
+
+# Icon resources (generated, not committed)
+*.icns
+Resources/*.iconset/
+
+# Temporary files
+*.tmp
+*~

@@ -1,0 +1,173 @@
+# CLAUDE.md — Gazette
+
+Native Mac OS 9 (Classic Toolbox, PowerPC) RSS / Atom / Google News reader.  
+**Name:** Gazette  
+**Goal:** A beautiful, fast, native replacement for (and spiritual successor to) Alex Robb’s Newsstand 1.1, with full Platinum look-and-feel, modern HTTPS feed fetching, Google News support, custom RSS/Atom, and sensible offline caching — all running entirely on Mac OS 9 with no helper Mac required.
+
+This is a real client application, not a proxy. It reuses Gateway’s networking/TLS stack and the feed-handling intelligence from NewsProxy.
+
+## Icon
+
+Application icon should evoke a classic newspaper / gazette / newsstand:
+
+- Prefer an isometric or clean 3/4 view of a folded newspaper, a small newsstand kiosk, or a stack of papers with a “Gazette” masthead feel.
+- Classic Mac icon style (suitable for 32×32, 16×16 and larger).
+- Platinum-era friendly colours; avoid flat modern design language.
+- Transparent or solid background as required for resource forks.
+
+Creator code: `Gzt e` or `Gzt9` (choose an unused four-character code). Keep signature style consistent with Post, Gateway and other brunocastello classic projects.
+
+## Non-negotiable constraints (read once, obey forever)
+
+1. Target: Classic Mac OS 9, PowerPC only, pre-Carbon Toolbox. Use Retro68 (`retroppc` target). Never Carbon.
+2. UI must feel like a native Apple Platinum application from the Newsstand / OE5 era — clean sidebar, article list, readable text pane, proper toolbar and menus. Do not invent a modern or OS X-like interface.
+3. Memory: SIZE resource 8 MB preferred / 4 MB minimum (same discipline as Gateway/Post). Stream network data. Prefer `NewPtrClear`. Cooperative multitasking only — never block the event loop.
+4. Networking & TLS: reuse / extract from Gateway (`gw_net` + Certainly/BearSSL). All outbound HTTPS (Google News, RSS, Atom, article pages) goes through this stack. Do not reimplement TLS.
+5. Interfaces separation (critical — identical rule to Gateway and Post):
+   - `main.cpp` / pure UI code → Multiversal Interfaces only.
+   - Networking, TLS, feed fetching → Apple’s Universal Interfaces.
+   - Portable feed parsing, Google News helpers, text processing → zero system headers, host-testable on Linux.
+   Thin C seam header with only plain types.
+6. No C++ static constructors / non-trivial file-scope objects.
+7. All network I/O is non-blocking and polled from the single `WaitNextEvent` loop.
+8. Text output must be OS-9 friendly: ASCII transliteration of accents/diacritics/typographic punctuation and flattened whitespace (exactly as NewsProxy does) so the original Newsstand-style text rendering stays clean.
+
+## Primary sources to reuse (copy / adapt, do not rewrite)
+
+**From Gateway** (https://github.com/brunocastello/Gateway):
+- `third_party/certainly/` + BearSSL (already patched)
+- `src/net/gw_net.[ch]` — Open Transport non-blocking I/O and stream abstraction
+- Portable utilities: `gw_log`, `gw_util`, `gw_prefs`, `gw_http`, `gw_b64`, etc. as needed
+- Build system, dual Multiversal/Universal staging, host-test pattern, `docs/inventory.md` memory & cooperative rules
+
+**From NewsProxy** (https://github.com/brunocastello/NewsProxy):
+- Google News country / section / topic ID maps
+- Feed auto-discovery logic
+- Google News redirect / batchexecute URL decoding technique
+- RSS 2.0 + Atom parsing approach
+- Article body strategy (prefer feed summary; fall back to simple HTML stripping when full page is fetched)
+- ASCII transliteration and whitespace flattening for Mac OS 9 text compatibility
+- Endpoint/format knowledge only if a compatibility mode with the original Newsstand binary is ever desired (not required for Gazette itself)
+
+Gazette is a standalone app. It does **not** need to speak the old Newsstand XML protocol unless explicitly added later as an optional compatibility server.
+
+## Feature targets
+
+### Core (Newsstand parity + necessary modernisation)
+- Google News support for the same countries and curated topics/sections that Newsstand 1.1 offered
+- User-added custom RSS 2.0 and Atom feeds
+- Feed auto-discovery when a site homepage URL is given
+- Sidebar organised by sections / topics / user feeds
+- Article list with title, source, date
+- Clean plain-text (or very lightly formatted) article reader pane
+- Manual and automatic refresh
+- Basic local caching of feed lists and article bodies so the app is usable offline after first fetch
+- Progress / status feedback that does not freeze the UI
+
+### Strongly desired
+- Per-feed or global full-text fetch option (simple HTML tag stripping + transliteration; no heavy readability engine)
+- Mark as read / unread, simple starring or pinning
+- Search within downloaded articles
+- Multiple windows or a clean single-window Platinum layout with resizable panes
+- Keyboard navigation that feels native
+- Import/export of feed list (OPML if it can be kept simple)
+
+### Explicitly out of scope for v1
+- Full modern HTML/CSS rendering engine
+- JavaScript execution
+- Podcast / media enclosure playback
+- Synchronisation with cloud services
+- Complex database; prefer simple, recoverable file-based storage
+
+## Architecture sketch
+
+```
+src/
+  main.cpp              # Toolbox shell, WaitNextEvent, menus, windows (Multiversal only)
+  ui/                   # Platinum sidebar, lists, reader pane, dialogs
+  core/                 # thin C seam between UI and engine
+  net/                  # extracted/adapted from Gateway (gw_net + Certainly)
+  feeds/                # feed model, Google News, RSS/Atom parser, refresh logic
+  extract/              # HTML stripping, transliteration, summary vs full-text
+  store/                # local cache of feeds and articles
+  prefs/                # user settings, feed list
+  portable/             # pure C, host-testable parsing and text helpers
+third_party/
+  certainly/            # vendored from Gateway
+docs/
+  CLAUDE.md             # this file
+  design.md
+  newsstand-parity.md   # checklist against original Newsstand 1.1
+```
+
+Single cooperative event loop. Network fetches and parsing progress via poll functions. UI stays responsive.
+
+## Implementation order (follow strictly)
+
+**Phase 0 – Skeleton**
+- Retro68 CMake project, dual interface staging, SIZE resource.
+- Empty Platinum window + menus that can quit.
+- Host-test target.
+- Prefs loading.
+- Application icon resources (newspaper / gazette theme).
+
+**Phase 1 – Networking foundation**
+- Extract/adapt Gateway networking + Certainly.
+- Ability to fetch an HTTPS URL and receive the body (streamed).
+- Basic HTTP GET with redirects and sensible User-Agent.
+
+**Phase 2 – Feed engine**
+- RSS 2.0 and Atom parser (portable).
+- Google News topic/section fetching using the maps from NewsProxy.
+- Feed auto-discovery.
+- Simple in-memory feed + article list.
+- Display titles in a basic list window.
+
+**Phase 3 – Full Platinum UI + caching**
+- Sidebar + article list + reader pane (Newsstand-inspired layout).
+- Local cache so restart shows previously fetched content.
+- Manual refresh + simple auto-refresh.
+- Article body display with transliteration.
+
+**Phase 4 – Polish and extras**
+- Custom feed management UI.
+- Full-text fetch option with HTML stripping.
+- Search, read/unread state, OPML import/export if still lightweight.
+- Keyboard shortcuts and final Platinum visual refinement.
+
+Never begin heavy visual polish or extra features before Phase 2 produces real live headlines on SheepShaver or real hardware.
+
+## Coding standards
+
+- C99 for engine, C++17 only for Toolbox shell and UI helpers.
+- Explicit memory ownership (`NewPtr` / `DisposePtr`).
+- No exceptions.
+- Log freely (adapt Gateway log facilities).
+- Small, testable pure functions in `portable/`.
+- Comments explain OS-9-specific decisions.
+- Keep files focused.
+
+## Testing
+
+- `tests/host/` for parsers, transliteration, Google News URL helpers, etc.
+- Live testing against real Google News and public RSS feeds on emulator + real PowerPC hardware.
+- Verify text rendering stays clean on OS 9 (no high Unicode, no smart quotes, etc.).
+
+## References the model must use
+
+- Gateway: networking, TLS, cooperative patterns, memory rules (`docs/inventory.md`)
+- NewsProxy: Google News maps, feed logic, transliteration, article strategy
+- Alex Robb’s Newsstand 1.1 (behaviour, layout, feature set) — the north-star UX
+- Classic Mac Toolbox documentation
+- RSS 2.0 and Atom specifications (keep parsing pragmatic, not pedantic)
+
+## Final reminder
+
+When in doubt:
+- Make it feel like a first-class Platinum app that could have shipped in 2001.
+- Prefer Newsstand’s clarity and simplicity over feature bloat.
+- Reuse Gateway’s networking/TLS and NewsProxy’s feed intelligence.
+- Stay strictly inside OS 9 memory and cooperative constraints.
+- Advance one phase at a time.
+
+The name of the application is **Gazette**.
