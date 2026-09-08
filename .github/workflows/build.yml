@@ -1,6 +1,6 @@
-# Gazette — GitHub Actions CI Workflow
+# Gazette — GitHub Actions CI Workflow (PPC-focused)
 
-name: Build Gazette (Carbon)
+name: Build Gazette (Carbon PPC)
 
 on:
   push:
@@ -19,11 +19,11 @@ concurrency:
 
 jobs:
   # ================================================================== #
-  # Carbon build — Mac OS 9 / Mac OS X (Carbon available)             #
+  # Carbon PPC build — Mac OS X (PowerPC)                             #
   # ================================================================== #
 
-  carbon-build:
-    name: Carbon Build (macOS ${{ matrix.os-version }})
+  carbon-ppc-build:
+    name: Carbon PPC Build (macOS ${{ matrix.os-version }})
     runs-on: ${{ matrix.runner }}
 
     strategy:
@@ -46,104 +46,64 @@ jobs:
       - name: Install CMake
         uses: lukka/get-cmake@v3.28.1
 
-      - name: Configure CMake (Carbon)
+      - name: Configure CMake (PPC only)
         run: |
           mkdir build && cd build
           cmake .. \
-            -DCMAKE_OSX_ARCHITECTURES="x86_64" \
+            -DCMAKE_OSX_ARCHITECTURES="ppc" \
             -DCMAKE_BUILD_TYPE=Release
 
-      - name: Build Gazette (Carbon)
+      - name: Build Gazette (PPC)
         run: |
           cd build
           make -j$(nproc)
 
-      - name: Upload Carbon artifact
+      - name: Upload PPC artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Gazette-carbon-macos11
+          name: Gazette-carbon-ppc-macos11
           path: build/Gazette
           if-no-files-found: warn
 
   # ================================================================== #
-  # Portable build — Linux (host tests only, no Carbon needed)          #
+  # Classic Mac OS 9 PPC build (via Retro68 cross-compiler)           #
   # ================================================================== #
 
-  portable-build:
-    name: Portable Build (Linux)
+  os9-ppc-build:
+    name: Classic Mac OS 9 PPC Build (Retro68)
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install CMake and build tools
+      - name: Install Retro68 toolchain
         run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake make g++
-
-      - name: Configure CMake (portable)
-        run: |
+          git clone --depth 1 https://github.com/retro68/retro68.git ~/retro68
+          cd ~/retro68
           mkdir build && cd build
-          cmake ..
-
-      - name: Build host tests (portable)
-        run: |
-          cd build
-          make -j$(nproc) host_tests
-
-      - name: Run host tests
-        run: |
-          cd build
-          ./host_tests
-
-      - name: Upload portable test binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: Gazette-host-tests-linux
-          path: build/host_tests
-
-  # ================================================================== #
-  # Universal Binary — ppc + x86_64 (Carbon, macOS 11)                  #
-  # ================================================================== #
-
-  universal-build:
-    name: Universal Binary (ppc + x86_64)
-    runs-on: macos-11
-
-    needs: carbon-build
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Select Xcode version (Carbon-compatible)
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: "13.4.2"
+          cmake .. -DCMAKE_INSTALL_PREFIX=$HOME/.retro68
+          make -j$(nproc)
+          sudo make install
 
       - name: Install CMake
         uses: lukka/get-cmake@v3.28.1
 
-      - name: Configure CMake (Universal Binary)
+      - name: Configure CMake (Retro68 PPC)
         run: |
           mkdir build && cd build
           cmake .. \
-            -DCMAKE_OSX_ARCHITECTURES="ppc;x86_64" \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_TOOLCHAIN_FILE=$HOME/.retro68/share/retro68/cmake/Modules/Platform/Darwin.cmake \
+            -DCMAKE_C_COMPILER=retrocc \
+            -DCMAKE_CXX_COMPILER=retroc++
 
-      - name: Build Universal Binary
+      - name: Build Gazette (Classic Mac OS 9 PPC)
         run: |
           cd build
           make -j$(nproc)
 
-      - name: Verify architecture (lipo)
-        run: |
-          cd build
-          lipo -info Gazette || echo "lipo not available, skipping verification"
-
-      - name: Upload Universal Binary artifact
+      - name: Upload Classic Mac OS 9 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Gazette-universal-macos11
+          name: Gazette-os9-ppc-retro68
           path: build/Gazette
