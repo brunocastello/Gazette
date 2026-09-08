@@ -1,6 +1,6 @@
-# Gazette — Carbon RSS / Atom Reader for Mac OS 9 & Mac OS X
+# Gazette — Carbon RSS / Atom Reader for Mac OS 9
 
-A native, Carbon-based RSS and Atom feed reader that runs on **Mac OS 9.x** and **Mac OS X (10.3+)**.
+A native, Carbon-based RSS and Atom feed reader for **Mac OS 9.x** on **PowerPC**.
 
 **Gazette** is a spiritual successor to Alex Robb's Newsstand 1.1 — a beautiful, fast, native replacement with full Platinum look-and-feel, modern HTTPS feed fetching, Google News support, and sensible offline caching.
 
@@ -12,62 +12,86 @@ A native, Carbon-based RSS and Atom feed reader that runs on **Mac OS 9.x** and 
 - **Offline caching** — feed lists and article bodies cached locally
 - **Non-blocking networking** — all HTTPS via Gateway's Certainly/TLS stack
 
-## Requirements
+## What it actually targets
 
-- **macOS** (any version with Carbon framework, which is all macOS from 10.3 onward)
-- **CMake** 3.20+
-- **Xcode command line tools** (for `clang`, `iconutil`)
+Gazette is cross-compiled with [Retro68](https://github.com/autc04/Retro68) into a
+**PowerPC CFM (PEF) application with a real resource fork**, linked against CarbonLib.
+
+- **Runs on:** Mac OS 9.x, PowerPC, with CarbonLib 1.0 or later installed
+- **Does not run on:** any Intel or Apple Silicon macOS — this is a CFM binary, not Mach-O
+- **68K:** not supported, and not planned (Carbon is PowerPC-only)
+
+Every Toolbox call in the source is checked against the `Availability:` block in
+Apple's Universal Interfaces headers; anything not marked *"CarbonLib: in CarbonLib
+1.0 and later"* is off limits. See `AGENT.md` for the full constraint list.
 
 ## Building
 
-### Step 1 — Install Xcode command line tools
+There is no macOS-native or Linux-native build. The toolchain is Retro68, and the
+supported way to run it is the official Docker image — which is exactly what CI does.
+
+### Requirements
+
+- **Docker**
+- **Apple Universal Interfaces 3.4**, already vendored at `third_party/AUI/`
+
+### Build
 
 ```bash
-xcode-select --install
+docker run --rm -v "$PWD:/root/Gazette" -w /root/Gazette -it \
+  ghcr.io/autc04/retro68 /bin/bash
 ```
 
-### Step 2 — Build the Carbon application
+Then, inside the container:
 
 ```bash
-cd /path/to/Gazette
+TOOLCHAIN=/Retro68-build/toolchain
 
-# Create a build directory (out-of-tree recommended)
-mkdir build && cd build
+# See "The fenv.h workaround" below.
+rm -f "$TOOLCHAIN/powerpc-apple-macos/include/fenv.h"
 
-# Configure with CMake (uses system Carbon framework automatically)
-cmake .. -DCMAKE_OSX_ARCHITECTURES="ppc;x86_64"
+# Stage Apple's Universal Interfaces: <toolchain> <interfaces> <68k> <ppc> <carbon>
+/Retro68-build/bin/interfaces-and-libraries.sh "$TOOLCHAIN" \
+  /root/Gazette/third_party/AUI/Universal false true true
 
-# Build the executable
-make -j$(nproc)
+cmake -S . -B build \
+  -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN/powerpc-apple-macos/cmake/retrocarbon.toolchain.cmake"
+cmake --build build
 ```
 
-The output will be a `Gazette` executable (or `Gazette.app` bundle) that runs on:
-- **Mac OS 9.x** (PowerPC) — Classic Mac OS with Carbon support
-- **Mac OS X 10.3+** (Tiger and later) — Universal Binary with Carbon
+### Output
 
-### Step 3 — Build an icon (optional)
+`add_application()` runs MakePEF and Rez over the linked XCOFF and produces, in `build/`:
 
-To create a proper app icon for the Carbon bundle:
+| File | What it is |
+|------|------------|
+| `Gazette.dsk` | Disk image — mount it in SheepShaver or Basilisk II |
+| `Gazette.bin` | MacBinary II — for transfer to real hardware |
+| `Gazette.APPL` | Raw application, data fork only |
+| `Gazette.ad` + `%Gazette.ad` | AppleDouble pair (data fork + resource fork) |
 
-```bash
-# Create an iconset directory with all required sizes
-mkdir -p Resources/Gazette.iconset
+CI additionally packages the AppleDouble pair into `Gazette.sit`, a StuffIt 1.5.1
+archive that StuffIt Expander on OS 9 — or The Unarchiver on a modern machine —
+will expand with the resource fork intact.
 
-# Generate from a source image (e.g., 1024×1024 PNG)
-sips -z 16 16 source.png --out Resources/Gazette.iconset/icon_16x16.png
-sips -z 32 32 source.png --out Resources/Gazette.iconset/icon_16x16@2x.png
-sips -z 32 32 source.png --out Resources/Gazette.iconset/icon_32x32.png
-sips -z 64 64 source.png --out Resources/Gazette.iconset/icon_32x32@2x.png
-sips -z 128 128 source.png --out Resources/Gazette.iconset/icon_128x128.png
-sips -z 256 256 source.png --out Resources/Gazette.iconset/icon_128x128@2x.png
-sips -z 256 256 source.png --out Resources/Gazette.iconset/icon_256x256.png
-sips -z 512 512 source.png --out Resources/Gazette.iconset/icon_256x256@2x.png
-sips -z 512 512 source.png --out Resources/Gazette.iconset/icon_512x512.png
-sips -z 1024 1024 source.png --out Resources/Gazette.iconset/icon_512x512@2x.png
+### The fenv.h workaround
 
-# Build .icns from the iconset (CMake will copy it into the bundle)
-iconutil -c icns Resources/Gazette.iconset -o build/Gazette.icns
-```
+Retro68's `interfaces-and-libraries.sh` stages Apple's headers by symlinking them
+into the toolchain's include directory, and its `prepare-headers.sh` deliberately
+whitelists Apple's `fenv.h` on the premise that *"newlib does not provide fenv.h"*.
+Current Retro68 images **do** ship one, as a real file rather than a symlink, and
+the staging script only unlinks symlinks before restaging — so the leftover real
+file makes the symlink fail with `ln: failed to create symbolic link './fenv.h':
+File exists`, aborting the whole step.
+
+Deleting newlib's copy first resolves it, and Apple's is the one we want anyway:
+`CoreServices.h` includes `<fenv.h>` directly.
+
+### Icon
+
+Not drawn yet. When it is, it belongs in the **resource fork** — `ICN#`, `icl8`,
+`ics#` plus `BNDL` and `FREF`, rezzed in through `Resources/Gazette.r`. A `.icns`
+file is meaningless for a CFM application on Mac OS 9.
 
 The icon theme should evoke a classic newspaper / gazette / newsstand:
 - Isometric or clean 3/4 view of a folded newspaper, small newsstand kiosk
@@ -75,64 +99,44 @@ The icon theme should evoke a classic newspaper / gazette / newsstand:
 
 ## Continuous Integration
 
-All builds are performed via **GitHub Actions** — nothing is compiled locally.
+`.github/workflows/build.yml` defines a single job.
 
-### Workflow overview (`.github/workflows/build.yml`)
+| Job | Runner | Toolchain | Artifact |
+|-----|--------|-----------|----------|
+| `build` | `ubuntu-latest` | `ghcr.io/autc04/retro68` (Docker) | `Gazette-carbon-ppc-macos9` |
 
-| Job | Platform | Output |
-|-----|----------|--------|
-| `carbon-build` | macOS 12 (Monterey) — last with Carbon | `Gazette-carbon-macos12` (x86_64) |
-| `portable-build` | Ubuntu Linux (latest) | `Gazette-host-tests-linux` (host tests only) |
-| `universal-build` | macOS 12 (Monterey) — Carbon available | `Gazette-universal-macos12` (ppc + x86_64) |
+It stages the Universal Interfaces, builds with the `retrocarbon` toolchain, packages
+the `.sit`, and uploads `Gazette.dsk`, `Gazette.APPL`, `Gazette.bin` and `Gazette.sit`.
 
-### Triggering a build
-
-Push to `main` or open a pull request — the workflow runs automatically.
-Build artifacts (binaries) are uploaded as GitHub Actions artifacts and can be downloaded from the Actions tab.
-
-### Local CI simulation (optional)
-
-To run the same checks locally:
-
-```bash
-# Linux — portable tests only (no Carbon available)
-mkdir build && cd build
-cmake ..
-make -j$(nproc) host_tests
-./host_tests
-
-# macOS — full Carbon build (requires Xcode 14.x or earlier)
-mkdir build && cd build
-cmake .. -DCMAKE_OSX_ARCHITECTURES="ppc;x86_64"
-make -j$(nproc)
-```
+It runs on push and pull request when `src/`, `Resources/`, `CMakeLists.txt`,
+`third_party/AUI/` or the workflow itself changes, and can be started by hand from
+the Actions tab (`workflow_dispatch`).
 
 ## Project Structure
 
 ```
 .
-├── CMakeLists.txt          # Carbon build configuration (ppc + x86_64)
+├── CMakeLists.txt          # Retro68 add_application() target (Carbon / PowerPC)
 ├── README.md               # This file
-├── .gitignore              # Build artifacts
-├── AGENT.md                # Project spec (implementation phases)
+├── AGENT.md                # Project spec: constraints, phases, coding standards
+├── .gitignore
 │
-├── .github/workflows/      # GitHub Actions CI configuration
-│   └── build.yml           # Carbon + portable builds (CI)
+├── .github/workflows/
+│   └── build.yml           # Retro68 Carbon PPC build + .sit packaging
 │
-├── Resources/              # Minimal resources for Carbon bundle
-│   ├── Gazette.r           # SIZE resource (memory preferences)
-│   └── Strings.r           # Placeholder for localization
+├── Resources/
+│   ├── Gazette.r           # SIZE (8 MB / 4 MB), About alert, vers
+│   └── Strings.r           # Placeholder for localization (not yet in the build)
 │
 ├── src/
-│   ├── main.cpp            # Carbon shell: CreateWindow, GetNextEvent, menus
-│   ├── core/               # Thin C seam (no system headers)
-│   │   ├── gazette_core.h  # Feed list & article opaque types
-│   │   └── gazette_core.c  # Feed list (array-based) + stubs
-│   ├── ui/                 # Carbon window helpers (Phase 3)
-│   │   ├── platinum_window.h/.c
-│   ├── net/                # Gateway + Certainly (Phase 1)
+│   ├── main.cpp            # Carbon shell: CreateNewWindow, WaitNextEvent, menus
+│   ├── core/               # Thin C seam (MacTypes.h only)
+│   │   └── gazette_core.h/.c
+│   ├── ui/                 # Platinum window helpers (Phase 3)
+│   │   └── platinum_window.h/.c
+│   ├── net/                # Gateway gw_net + Certainly (Phase 1)
 │   │   └── gazette_net.h/.c
-│   ├── feeds/              # RSS 2.0 / Atom parser (Phase 2)
+│   ├── feeds/              # RSS 2.0 / Atom parser, Google News (Phase 2)
 │   │   └── gazette_feeds.h/.c
 │   ├── extract/            # HTML stripping, transliteration (Phase 3)
 │   │   └── gazette_extract.h/.c
@@ -143,35 +147,43 @@ make -j$(nproc)
 │   └── portable/           # Pure C, host-testable (Phase 2)
 │       └── gazette_portable.h/.c
 │
-├── third_party/certainly/  # (placeholder — vendored from Gateway)
+├── third_party/
+│   ├── AUI/                # Apple Universal Interfaces 3.4 (Carbon headers, CarbonLib)
+│   └── certainly/          # (placeholder — to be vendored from Gateway)
 │
-├── tests/host/             # Host-testable parsers (Linux/Intel)
-│   └── test_portable.c
+└── tests/host/             # Host-testable parsers (Linux/Intel)
+    └── test_portable.c     # Stub; not wired into the build yet
 ```
 
 ## Implementation Phases (per AGENT.md)
 
-| Phase | Status  | Description                                    |
-|-------|---------|-------------------------------------------------|
-| 0     | **Done** | Skeleton: Carbon shell, CreateWindow, menus created programmatically, WaitNextEvent loop, quit |
-| 1     | TODO    | Networking: Gateway `gw_net` + Certainly, HTTPS fetch, HTTP GET with redirects |
-| 2     | TODO    | Feed engine: RSS 2.0 / Atom parser, Google News maps, feed auto-discovery |
-| 3     | TODO    | Full Platinum UI: sidebar + article list + reader pane, local caching |
-| 4     | TODO    | Polish: custom feed management, full-text fetch, search, read/unread, OPML import/export |
+| Phase | Status | Description |
+|-------|--------|-------------|
+| 0 | **Mostly done** | Skeleton: Carbon shell, window, menus, WaitNextEvent loop, quit, SIZE resource. Icon, prefs loading and the host-test target are still open. |
+| 1 | TODO | Networking: Gateway `gw_net` + Certainly, HTTPS fetch, HTTP GET with redirects |
+| 2 | TODO | Feed engine: RSS 2.0 / Atom parser, Google News maps, feed auto-discovery |
+| 3 | TODO | Full Platinum UI: sidebar + article list + reader pane, local caching |
+| 4 | TODO | Polish: custom feed management, full-text fetch, search, read/unread, OPML import/export |
 
-## Carbon vs. Classic Toolbox — Key Differences
+## Carbon on Mac OS 9 — what changes
 
-| Aspect              | Classic Toolbox (old)          | Carbon (new)                          |
-|---------------------|--------------------------------|---------------------------------------|
-| Menus               | Loaded from resource fork      | Created programmatically (`CreateMenu`) |
-| Windows             | `GetNewCWindow` from resource  | `CreateWindow` with class/attributes   |
-| Events              | `EventRecord` (struct)         | `EventRef` (opaque handle)             |
-| Memory              | Manual (`MaxMem`, `NewPtr`)   | Managed by OS (SIZE resource optional) |
-| Compatibility       | Mac OS 9 only                  | Mac OS 9.x **and** Mac OS X (10.3+)  |
-| Icons               | Resource fork (`ICON`, `mask`) | `.icns` file in app bundle            |
+Carbon is not a different UI toolkit; it is the subset of the Toolbox that survived
+into Mac OS X, plus some newer replacements. Practical consequences for this codebase:
+
+| Aspect | Classic Toolbox | What Gazette does |
+|--------|-----------------|-------------------|
+| Startup | `InitGraf`, `InitWindows`, `InitMenus`, `MaxApplZone` | None of these exist (`CALL_NOT_IN_CARBON`); CarbonLib sets up before `main()` |
+| Windows | `NewCWindow`, or `GetNewCWindow` from a `WIND` | `CreateNewWindow()` with a window class and attributes |
+| Menus | `GetNewMBar` from `MBAR` / `MENU` resources | `NewMenu` + `AppendMenu`, built programmatically |
+| Events | `WaitNextEvent` + `EventRecord` | Same — CarbonLib supports it, and it keeps one cooperative loop for network polling |
+| Ports | `SetPort((GrafPtr)window)` | `SetPortWindowPort()`; `WindowRef` is opaque |
+| Closing | `CloseWindow` | `DisposeWindow` — `CloseWindow` is not in Carbon |
+| Memory | SIZE resource | Still required on OS 9, and CarbonLib needs more headroom |
+| Icons | Resource fork | Unchanged — resource fork, not `.icns` |
 
 ## References
 
+- [Retro68](https://github.com/autc04/Retro68) — the cross-compiler and Rez this project builds with
 - [Carbon Framework](https://developer.apple.com/library/archive/documentation/Carbon/Conceptual/CarbonOverview/CarbonOverview.html) — Apple's Carbon API documentation
 - [Gateway](https://github.com/brunocastello/Gateway) — Networking/TLS stack (Certainly/BearSSL)
 - [NewsProxy](https://github.com/brunocastello/NewsProxy) — Feed intelligence, Google News maps

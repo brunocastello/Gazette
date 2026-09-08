@@ -1,6 +1,6 @@
-# CLAUDE.md — Gazette
+# AGENT.md — Gazette
 
-Native Mac OS 9 (Classic Toolbox, PowerPC) RSS / Atom / Google News reader.  
+Native Mac OS 9 (Carbon, PowerPC) RSS / Atom / Google News reader.  
 **Name:** Gazette  
 **Goal:** A beautiful, fast, native replacement for (and spiritual successor to) Alex Robb’s Newsstand 1.1, with full Platinum look-and-feel, modern HTTPS feed fetching, Google News support, custom RSS/Atom, and sensible offline caching — all running entirely on Mac OS 9 with no helper Mac required.
 
@@ -15,21 +15,22 @@ Application icon should evoke a classic newspaper / gazette / newsstand:
 - Platinum-era friendly colours; avoid flat modern design language.
 - Transparent or solid background as required for resource forks.
 
-Creator code: `Gzt e` or `Gzt9` (choose an unused four-character code). Keep signature style consistent with Post, Gateway and other brunocastello classic projects.
+Creator code: `Gzt9`, set via `add_application(... CREATOR "Gzt9")` in `CMakeLists.txt`. Keep signature style consistent with Post, Gateway and other brunocastello classic projects.
+
+Icons live in the resource fork (`ICN#` / `icl8` / `ics#` plus `BNDL` and `FREF`), rezzed in through `Resources/Gazette.r` — not as a `.icns` file, which has no meaning for a CFM application on Mac OS 9.
 
 ## Non-negotiable constraints (read once, obey forever)
 
-1. Target: Classic Mac OS 9, PowerPC only, pre-Carbon Toolbox. Use Retro68 (`retroppc` target). Never Carbon.
+1. Target: Mac OS 9 with CarbonLib 1.0 or later, PowerPC only. Build with Retro68's `retrocarbon` toolchain against Apple's Universal Interfaces 3.4 (vendored in `third_party/AUI/`). Before using any Toolbox call, check its `Availability:` block in the header — if it does not say "CarbonLib: in CarbonLib 1.0 and later", it cannot be used. Many familiar classic calls (`InitGraf`, `InitWindows`, `InitMenus`, `MaxApplZone`, `CloseWindow`, `SystemClick`) are `CALL_NOT_IN_CARBON` and simply do not exist here.
 2. UI must feel like a native Apple Platinum application from the Newsstand / OE5 era — clean sidebar, article list, readable text pane, proper toolbar and menus. Do not invent a modern or OS X-like interface.
-3. Memory: SIZE resource 8 MB preferred / 4 MB minimum (same discipline as Gateway/Post). Stream network data. Prefer `NewPtrClear`. Cooperative multitasking only — never block the event loop.
+3. Memory: SIZE resource 8 MB preferred / 4 MB minimum (same discipline as Gateway/Post), declared in `Resources/Gazette.r`. CarbonLib is hungrier on OS 9 than the classic Toolbox was, so the headroom is deliberate. Stream network data. Prefer `NewPtrClear`. Cooperative multitasking only — never block the event loop.
 4. Networking & TLS: reuse / extract from Gateway (`gw_net` + Certainly/BearSSL). All outbound HTTPS (Google News, RSS, Atom, article pages) goes through this stack. Do not reimplement TLS.
-5. Interfaces separation (critical — identical rule to Gateway and Post):
-   - `main.cpp` / pure UI code → Multiversal Interfaces only.
-   - Networking, TLS, feed fetching → Apple’s Universal Interfaces.
-   - Portable feed parsing, Google News helpers, text processing → zero system headers, host-testable on Linux.
-   Thin C seam header with only plain types.
+5. Interfaces: one set, Apple’s Universal Interfaces. Carbon needs `Carbon.h` and `CarbonLib`, which the Multiversal Interfaces do not provide, so the dual Multiversal/Universal separation Gateway and Post use does not apply here. Two rules survive from it:
+   - Include only the headers you actually use (`<MacWindows.h>`, `<Menus.h>`, …), never the `<Carbon.h>` umbrella — it drags in the whole of ApplicationServices and CoreServices for nothing. Retro68 links the headers *flat*, so it is `<MacWindows.h>`, not `<Carbon/MacWindows.h>`.
+   - Portable feed parsing, Google News helpers and text processing keep zero system headers and stay host-testable on Linux.
+   The `core/` seam stays thin and plain-typed; `MacTypes.h` is the only system header it may include.
 6. No C++ static constructors / non-trivial file-scope objects.
-7. All network I/O is non-blocking and polled from the single `WaitNextEvent` loop.
+7. All network I/O is non-blocking and polled from the single `WaitNextEvent` loop. Use the classic `EventRecord` loop, not the Carbon Event Manager (`RunApplicationEventLoop`): CarbonLib supports it fully on Mac OS 9, and it is the only shape that leaves an idle point to poll network I/O from. Do not set `kWindowStandardHandlerAttribute` on windows — it installs a Carbon Event handler that competes with the loop.
 8. Text output must be OS-9 friendly: ASCII transliteration of accents/diacritics/typographic punctuation and flattened whitespace (exactly as NewsProxy does) so the original Newsstand-style text rendering stays clean.
 
 ## Primary sources to reuse (copy / adapt, do not rewrite)
@@ -38,7 +39,7 @@ Creator code: `Gzt e` or `Gzt9` (choose an unused four-character code). Keep sig
 - `third_party/certainly/` + BearSSL (already patched)
 - `src/net/gw_net.[ch]` — Open Transport non-blocking I/O and stream abstraction
 - Portable utilities: `gw_log`, `gw_util`, `gw_prefs`, `gw_http`, `gw_b64`, etc. as needed
-- Build system, dual Multiversal/Universal staging, host-test pattern, `docs/inventory.md` memory & cooperative rules
+- Build system, host-test pattern, `docs/inventory.md` memory & cooperative rules (the dual Multiversal/Universal staging does not carry over — see constraint 5)
 
 **From NewsProxy** (https://github.com/brunocastello/NewsProxy):
 - Google News country / section / topic ID maps
@@ -83,7 +84,7 @@ Gazette is a standalone app. It does **not** need to speak the old Newsstand XML
 
 ```
 src/
-  main.cpp              # Toolbox shell, WaitNextEvent, menus, windows (Multiversal only)
+  main.cpp              # Carbon shell, WaitNextEvent, menus, windows
   ui/                   # Platinum sidebar, lists, reader pane, dialogs
   core/                 # thin C seam between UI and engine
   net/                  # extracted/adapted from Gateway (gw_net + Certainly)
@@ -93,20 +94,24 @@ src/
   prefs/                # user settings, feed list
   portable/             # pure C, host-testable parsing and text helpers
 third_party/
+  AUI/                  # Apple Universal Interfaces 3.4 (Carbon headers + CarbonLib)
   certainly/            # vendored from Gateway
+Resources/
+  Gazette.r             # SIZE, About alert, vers — and icons, once drawn
 docs/
-  CLAUDE.md             # this file
   design.md
   newsstand-parity.md   # checklist against original Newsstand 1.1
 ```
+
+`AGENT.md` (this file) lives at the repository root.
 
 Single cooperative event loop. Network fetches and parsing progress via poll functions. UI stays responsive.
 
 ## Implementation order (follow strictly)
 
 **Phase 0 – Skeleton**
-- Retro68 CMake project, dual interface staging, SIZE resource.
-- Empty Platinum window + menus that can quit.
+- Retro68 CMake project via `add_application()`, AUI staged in CI, SIZE resource. ✅
+- Empty Platinum window + menus that can quit. ✅
 - Host-test target.
 - Prefs loading.
 - Application icon resources (newspaper / gazette theme).
@@ -139,7 +144,7 @@ Never begin heavy visual polish or extra features before Phase 2 produces real l
 
 ## Coding standards
 
-- C99 for engine, C++17 only for Toolbox shell and UI helpers.
+- C99 for engine, C++17 only for Toolbox shell and UI helpers. GNU extensions stay on (`gnu99` / `gnu++17`): Apple’s headers rely on them, and Pascal string literals (`"\pGazette"`) are a Retro68 extension.
 - Explicit memory ownership (`NewPtr` / `DisposePtr`).
 - No exceptions.
 - Log freely (adapt Gateway log facilities).
