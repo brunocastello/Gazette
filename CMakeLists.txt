@@ -44,7 +44,7 @@ set(GAZETTE_HEADERS
 # Build targets                                                     #
 # ------------------------------------------------------------------ #
 
-add_executable(Gazette MACOSX_DEFAULT_ENCODING ${GAZETTE_SOURCES})
+add_executable(Gazette ${GAZETTE_SOURCES})
 
 # Include directories
 target_include_directories(Gazette PRIVATE
