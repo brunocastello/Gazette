@@ -72,7 +72,14 @@ typedef struct {
     int    state;
     int    closing;                 /* the tag being read starts with '/' */
 
-    char   tag[64];                 /* the tag's leading token, as read */
+    /*
+     * The tag as read, attributes and all — not just its name, because which
+     * block a <div> opens is written in its class and its id and nowhere
+     * else. 512 covers the tags that carry a marker; a marker further into
+     * one than that is missed, which costs an unwanted block and nothing
+     * worse.
+     */
+    char   tag[512];
     size_t tagLen;
     int    tagOverflow;             /* a tag longer than tag[] can hold */
 

@@ -2042,9 +2042,74 @@ static void TestExtract(void)
              Extract(&e, "<p>Ten&nbsp;degrees&mdash;said AT&amp;T</p>", 0),
              "Ten degrees--said AT&T");
 
+    /* Publishers sprinkle zero-width characters through prose to control line
+       breaking. They are invisible where they came from and have to stay
+       invisible here, rather than becoming the '?' an unmapped one gets. */
+    CheckStr("zero-width characters vanish",
+             Extract(&e, "<p>the &zwnj;iPhone 18 Pro&zwnj; is here</p>", 0),
+             "the iPhone 18 Pro is here");
+
     CheckStr("a headline and its body", Extract(&e,
              "<body><h1>The Headline</h1><p>The body.</p></body>", 0),
              "The Headline\nThe body.");
+
+    /*
+     * The blocks a news page wraps around its article. None of them is a
+     * distinct element — they are all <div> — so what says so is the class,
+     * the id or the ARIA role.
+     */
+    CheckStr("a comment thread goes",
+             Extract(&e, "<body><p>The story.</p>"
+                         "<div id=\"comments\"><p>First post</p></div></body>", 0),
+             "The story.");
+
+    CheckStr("so does a more-stories rail",
+             Extract(&e, "<body><div data-track=\"popular-stories\">"
+                         "<p>Other thing</p></div><p>The story.</p></body>", 0),
+             "The story.");
+
+    /* Hashed class names are why the match is a substring: the readable half
+       is the half that survives a CSS module's hashing. */
+    CheckStr("a hashed class name still matches",
+             Extract(&e, "<body><p>The story.</p>"
+                         "<div class=\"comments--LTB1t961\"><p>Nope</p></div>"
+                         "<div class=\"sidebar--1d3u_-lK\"><p>Nor this</p></div>"
+                         "</body>", 0),
+             "The story.");
+
+    CheckStr("an ARIA landmark is taken at its word",
+             Extract(&e, "<body><div role=\"complementary\"><p>Aside</p></div>"
+                         "<p>The story.</p></body>", 0),
+             "The story.");
+
+    /*
+     * The guard that matters most: only the values of class, id, data-track
+     * and role are searched. A page whose prose is about social media, or
+     * whose links point at a comments page, keeps its article.
+     */
+    CheckStr("prose containing a marker word is not a marker",
+             Extract(&e, "<body><p>Calls on social media to share the "
+                         "comment went unheeded.</p></body>", 0),
+             "Calls on social media to share the comment went unheeded.");
+
+    CheckStr("a marker in some other attribute is not one either",
+             Extract(&e, "<body><div data-url=\"/2026/09/09/apple-comments/\">"
+                         "<p>The story.</p></div></body>", 0),
+             "The story.");
+
+    /*
+     * And the guard that keeps a mistake from being fatal: an element with no
+     * close tag must never start a skip, or the scanner hunts for an </img>
+     * that is never coming and the rest of the page goes with it.
+     */
+    CheckStr("a void element never starts a skip",
+             Extract(&e, "<body><img class=\"share-icon\" src=\"x.png\">"
+                         "<p>The story.</p></body>", 0),
+             "The story.");
+
+    CheckStr("an unquoted or absent value is simply not a match",
+             Extract(&e, "<body><div class><p>The story.</p></div></body>", 0),
+             "The story.");
 
     {
         /* Chunked the same page every way it can be split. */
@@ -2052,7 +2117,9 @@ static void TestExtract(void)
             "<html><head><style>a{b:c}</style></head><body>"
             "<!-- a comment with a > in it -->"
             "<nav>Menu</nav><h1>Title</h1>"
-            "<p>First&nbsp;paragraph.</p><p>Second.</p></body></html>";
+            "<p>First&nbsp;paragraph.</p><p>Second.</p>"
+            "<div class=\"commentBlock--9f\"><p>Not this</p></div>"
+            "</body></html>";
         static const char want[] = "Title\nFirst paragraph.\nSecond.";
 
         CheckStr("whole", Extract(&e, page, 0), want);

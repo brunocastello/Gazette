@@ -65,7 +65,17 @@ static const GzEntity kEntities[] = {
     { "agrave", 0x00E0}, { "ccedil", 0x00E7}, { "ntilde", 0x00F1},
     { "uuml",   0x00FC}, { "ouml",   0x00F6}, { "auml",   0x00E4},
     { "szlig",  0x00DF}, { "aacute", 0x00E1}, { "iacute", 0x00ED},
-    { "oacute", 0x00F3}, { "uacute", 0x00FA}
+    { "oacute", 0x00F3}, { "uacute", 0x00FA},
+
+    /*
+     * The invisible ones. Publishers sprinkle these through prose to control
+     * line breaking -- MacRumors wraps "&zwnj;iPhone 18 Pro&zwnj;" -- and an
+     * unknown entity is left as written, so without these the reader pane
+     * shows the reference itself in the middle of a sentence.
+     */
+    { "zwnj",   0x200C}, { "zwj",    0x200D}, { "shy",    0x00AD},
+    { "ensp",   0x2002}, { "emsp",   0x2003}, { "thinsp", 0x2009},
+    { "lrm",    0x200E}, { "rlm",    0x200F}
 };
 
 /* Write cp as UTF-8 into out (at least 4 bytes). Returns bytes written.

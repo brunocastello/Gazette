@@ -360,6 +360,17 @@ static const GzAsciiSub kAsciiSubs[] = {
     { 0x201CUL, "\""   }, { 0x201DUL, "\""   },
     { 0x2013UL, "-"    }, { 0x2014UL, "--"   },
     { 0x2026UL, "..."  }, { 0x00A0UL, " "    },
+
+    /*
+     * Zero-width and formatting characters become nothing at all rather than
+     * the '?' an unmapped code point gets: they are invisible where they came
+     * from and have to stay invisible here. The wider spaces become one
+     * ordinary space, which is as much as Geneva can offer.
+     */
+    { 0x200CUL, ""     }, { 0x200DUL, ""     }, { 0x00ADUL, ""     },
+    { 0x200EUL, ""     }, { 0x200FUL, ""     }, { 0xFEFFUL, ""     },
+    { 0x2002UL, " "    }, { 0x2003UL, " "    }, { 0x2009UL, " "    },
+    { 0x202FUL, " "    }, { 0x2007UL, " "    },
     { 0x2022UL, "*"    }, { 0x00B7UL, "*"    },
     { 0x00B0UL, " deg" },
     { 0x00AEUL, "(R)"  }, { 0x00A9UL, "(C)"  }, { 0x2122UL, "(TM)" },

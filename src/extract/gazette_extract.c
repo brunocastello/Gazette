@@ -60,6 +60,48 @@ static const char *const kRawTextTags[] = {
     "script", "style", "textarea"
 };
 
+/*
+ * The blocks a news page wraps around its article: the comment thread, the
+ * "more stories" rail, the newsletter box, the share buttons. None of them is
+ * a distinct element — they are all <div> — and what says so is the class or
+ * the id, which is the only place the page names what a box is for.
+ *
+ * Matched as substrings, because a modern page's class names are hashed:
+ * MacRumors ships "comments--LTB1t961" and "sidebar--1d3u_-lK", and the
+ * readable half is the half that survives the hashing. Only the values of
+ * class, id and data-track are searched, never the whole tag, so a URL in
+ * some other attribute that happens to contain one of these words cannot
+ * throw the article away.
+ */
+static const char *const kUnwantedMarkers[] = {
+    "comment", "disqus", "sidebar", "related", "popular", "trending",
+    "newsletter", "subscribe", "share", "social", "promo", "sponsor",
+    "advert", "recirc", "morestories", "more-stories", "readmore",
+    "read-more", "breadcrumb", "pagination", "menu", "navbar", "navigation",
+    "masthead", "toolbar", "cookie", "consent", "modal", "popup", "overlay",
+    "footer", "widget"
+};
+
+/* The ARIA landmarks that say, in the page's own words, that a region is not
+   the article. */
+static const char *const kUnwantedRoles[] = {
+    "navigation", "complementary", "banner", "contentinfo", "search",
+    "dialog", "menubar", "menu", "toolbar"
+};
+
+/*
+ * Only these may be skipped on the strength of a class or an id. The list is
+ * a whitelist rather than a blacklist for one reason: an element with no
+ * close tag must never start a skip. <img class="share-icon"> would set the
+ * scanner hunting for an </img> that is never coming, and the rest of the
+ * page would go with it.
+ */
+static const char *const kContainerTags[] = {
+    "div", "section", "aside", "nav", "footer", "header", "form", "main",
+    "article", "ul", "ol", "li", "dl", "table", "figure", "figcaption",
+    "blockquote", "p", "span", "h1", "h2", "h3", "h4", "h5", "h6"
+};
+
 void GazetteHtmlTagName(const char *tag, size_t len, char *out, size_t cap)
 {
     size_t start = 0;
@@ -115,15 +157,139 @@ static int IsSkipTag(const char *name)
     return NameIn(name, kSkipTags, sizeof kSkipTags / sizeof kSkipTags[0]);
 }
 
+static char Lower(char c)
+{
+    return (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+}
+
+static int IsContainerTag(const char *name)
+{
+    return NameIn(name, kContainerTags,
+                  sizeof kContainerTags / sizeof kContainerTags[0]);
+}
+
+/*
+ * The value of one attribute out of a tag's raw text. Returns 1 and points
+ * *value at it, or 0 when the tag does not carry it.
+ *
+ * Deliberately small-minded about HTML: the name has to be preceded by
+ * whitespace so "data-track" does not match inside "x-data-track", the value
+ * has to be quoted, and anything else is treated as absent. Every page that
+ * matters writes attributes that way, and being wrong here means missing an
+ * unwanted block, not eating a wanted one.
+ */
+static int FindAttr(const char *tag, size_t len, const char *name,
+                    const char **value, size_t *valueLen)
+{
+    size_t nameLen = strlen(name);
+    size_t i;
+
+    for (i = 1; i + nameLen + 2 < len; i++) {
+        size_t at;
+        char   quote;
+
+        if (tag[i - 1] != ' ' && tag[i - 1] != '\t' && tag[i - 1] != '\n' &&
+            tag[i - 1] != '\r') {
+            continue;
+        }
+        for (at = 0; at < nameLen; at++) {
+            if (Lower(tag[i + at]) != name[at]) {
+                break;
+            }
+        }
+        if (at < nameLen) {
+            continue;
+        }
+
+        at = i + nameLen;
+        while (at < len && (tag[at] == ' ' || tag[at] == '\t')) {
+            at++;
+        }
+        if (at >= len || tag[at] != '=') {
+            continue;                   /* a different attribute, or a flag */
+        }
+        at++;
+        while (at < len && (tag[at] == ' ' || tag[at] == '\t')) {
+            at++;
+        }
+        if (at >= len || (tag[at] != '"' && tag[at] != '\'')) {
+            continue;
+        }
+        quote = tag[at++];
+
+        *value = tag + at;
+        while (at < len && tag[at] != quote) {
+            at++;
+        }
+        *valueLen = (size_t)(tag + at - *value);
+        return 1;
+    }
+    return 0;
+}
+
+/* 1 when any of the words appears in the value, compared case-insensitively
+   and as a substring — see kUnwantedMarkers for why a substring. */
+static int ValueHasAny(const char *value, size_t len,
+                       const char *const *words, size_t count)
+{
+    size_t w;
+
+    for (w = 0; w < count; w++) {
+        size_t wordLen = strlen(words[w]);
+        size_t i;
+
+        if (wordLen > len) {
+            continue;
+        }
+        for (i = 0; i + wordLen <= len; i++) {
+            size_t k;
+
+            for (k = 0; k < wordLen; k++) {
+                if (Lower(value[i + k]) != words[w][k]) {
+                    break;
+                }
+            }
+            if (k == wordLen) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+/* Whether this tag opens one of the blocks a page wraps around its article. */
+static int TagIsUnwanted(const char *tag, size_t len, const char *name)
+{
+    static const char *const kNamed[] = { "class", "id", "data-track" };
+    const char *value;
+    size_t      valueLen;
+    size_t      i;
+
+    if (!IsContainerTag(name)) {
+        return 0;
+    }
+
+    for (i = 0; i < sizeof kNamed / sizeof kNamed[0]; i++) {
+        if (FindAttr(tag, len, kNamed[i], &value, &valueLen) &&
+            ValueHasAny(value, valueLen, kUnwantedMarkers,
+                        sizeof kUnwantedMarkers /
+                        sizeof kUnwantedMarkers[0])) {
+            return 1;
+        }
+    }
+
+    if (FindAttr(tag, len, "role", &value, &valueLen) &&
+        ValueHasAny(value, valueLen, kUnwantedRoles,
+                    sizeof kUnwantedRoles / sizeof kUnwantedRoles[0])) {
+        return 1;
+    }
+    return 0;
+}
+
 static int IsRawTextTag(const char *name)
 {
     return NameIn(name, kRawTextTags,
                   sizeof kRawTextTags / sizeof kRawTextTags[0]);
-}
-
-static char Lower(char c)
-{
-    return (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
 }
 
 /* ------------------------------------------------------------------ */
@@ -263,7 +429,8 @@ static void FinishTag(GazetteExtract *e)
         return;
     }
 
-    if (!e->closing && IsSkipTag(name)) {
+    if (!e->closing && (IsSkipTag(name) ||
+                        TagIsUnwanted(e->tag, e->tagLen, name))) {
         /* "<br/>"-style self-closing: it opens nothing, so there is nothing
            to skip until. */
         if (e->tagLen > 0 && e->tag[e->tagLen - 1] == '/') {
