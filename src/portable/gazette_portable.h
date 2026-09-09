@@ -84,6 +84,19 @@ int gz_prefs_get_nth(const char *text, size_t len, const char *key, int n,
 /* Same as gz_prefs_get, but parses the value as a decimal number. */
 long gz_prefs_get_num(const char *text, size_t len, const char *key, long def);
 
+/*
+ * Walk the settings in file order. Start with *off at 0; each call fills key
+ * and value with the next setting and advances *off, returning 1 until there
+ * are none left.
+ *
+ * The lookups above are order-independent, which is right for a setting but
+ * wrong for a list: the feed list is a tree the user arranges by hand and by
+ * dragging, and both the order of the feeds and which group each one falls
+ * under are carried by nothing but the order of the lines.
+ */
+int gz_prefs_next(const char *text, size_t len, size_t *off,
+                  char *key, size_t keyCap, char *value, size_t valueCap);
+
 /* ------------------------------------------------------------------ */
 /* Text for Mac OS 9                                                   */
 /*                                                                     */

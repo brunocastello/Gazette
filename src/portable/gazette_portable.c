@@ -232,30 +232,28 @@ const char *gz_header_find(const char *head, size_t head_len,
 /* Preference text                                                     */
 /* ------------------------------------------------------------------ */
 
-int gz_prefs_get_nth(const char *text, size_t len, const char *key, int n,
-                     char *out, size_t cap)
+int gz_prefs_next(const char *text, size_t len, size_t *off,
+                  char *key, size_t keyCap, char *value, size_t valueCap)
 {
-    size_t off  = 0;
-    size_t klen;
-    int    seen = 0;
-
-    if (out != NULL && cap > 0) {
-        out[0] = '\0';
+    if (key != NULL && keyCap > 0) {
+        key[0] = '\0';
     }
-    if (text == NULL || key == NULL || n < 0) {
+    if (value != NULL && valueCap > 0) {
+        value[0] = '\0';
+    }
+    if (text == NULL || off == NULL) {
         return 0;
     }
-    klen = strlen(key);
 
-    while (off < len) {
-        size_t      eol = gz_next_line(text, len, off);
+    while (*off < len) {
+        size_t      eol = gz_next_line(text, len, *off);
         size_t      line_len;
         const char *line;
         const char *sep;
         size_t      i;
 
-        line = gz_trim(text + off, eol - off, &line_len);
-        off  = eol;
+        line = gz_trim(text + *off, eol - *off, &line_len);
+        *off = eol;
 
         if (line_len == 0 || line[0] == '#' || line[0] == ';') {
             continue;
@@ -279,20 +277,50 @@ int gz_prefs_get_nth(const char *text, size_t len, const char *key, int n,
             size_t      val_len;
             const char *val;
 
-            if (name_len != klen || gz_strnicmp(name, key, klen) != 0) {
+            if (name_len == 0) {
                 continue;
             }
-
-            val = gz_trim(sep + 1, line_len - (size_t)(sep + 1 - line), &val_len);
+            val = gz_trim(sep + 1, line_len - (size_t)(sep + 1 - line),
+                          &val_len);
             if (val_len == 0) {
                 continue;       /* an empty value counts as absent */
             }
-            if (seen++ != n) {
-                continue;
-            }
-            gz_copy_n(out, cap, val, val_len);
+            gz_copy_n(key, keyCap, name, name_len);
+            gz_copy_n(value, valueCap, val, val_len);
             return 1;
         }
+    }
+
+    return 0;
+}
+
+int gz_prefs_get_nth(const char *text, size_t len, const char *key, int n,
+                     char *out, size_t cap)
+{
+    /* Every value has to fit here on the way past, whether or not it is the
+       one being asked for. A feed line is the long one. */
+    char   name[64];
+    char   value[768];
+    size_t off  = 0;
+    int    seen = 0;
+
+    if (out != NULL && cap > 0) {
+        out[0] = '\0';
+    }
+    if (text == NULL || key == NULL || n < 0) {
+        return 0;
+    }
+
+    while (gz_prefs_next(text, len, &off, name, sizeof name,
+                         value, sizeof value)) {
+        if (gz_stricmp(name, key) != 0) {
+            continue;
+        }
+        if (seen++ != n) {
+            continue;
+        }
+        gz_copy_n(out, cap, value, strlen(value));
+        return 1;
     }
 
     return 0;

@@ -229,17 +229,18 @@ static void TestPrefsModel(void)
     CheckTrue("the default feed is enabled", p.feeds[0].enabled);
 
     CheckTrue("a feed can be added",
-              GazettePrefsAddFeed(&p, "https://example.com/rss", "Example"));
+              GazettePrefsAddFeed(&p, "https://example.com/rss", "Example", -1) >= 0);
     CheckLong("feed count grows", p.feedCount, 2);
     CheckLong("a duplicate URL is rejected",
-              GazettePrefsAddFeed(&p, "https://EXAMPLE.com/rss", "Again"), 0);
+              GazettePrefsAddFeed(&p, "https://EXAMPLE.com/rss", "Again", -1), -1);
     CheckLong("find is case-insensitive",
               GazettePrefsFindFeed(&p, "HTTPS://example.com/RSS"), 1);
 
     CheckStr("a feed with no title falls back to its URL",
-             (GazettePrefsAddFeed(&p, "https://plain.example/feed", NULL),
+             (GazettePrefsAddFeed(&p, "https://plain.example/feed", NULL, -1),
               p.feeds[2].title),
              "https://plain.example/feed");
+    CheckLong("a new feed sits at the top level", p.feeds[2].group, -1);
 
     CheckTrue("a feed can be removed",
               GazettePrefsRemoveFeed(&p, "https://example.com/rss"));
@@ -259,7 +260,9 @@ static void TestPrefsModel(void)
         GazettePrefsSetDefaults(&full);
         for (i = 0; i < kGazetteMaxFeeds + 10; i++) {
             snprintf(url, sizeof url, "https://feed%d.example/rss", i);
-            added += GazettePrefsAddFeed(&full, url, NULL);
+            if (GazettePrefsAddFeed(&full, url, NULL, -1) >= 0) {
+                added++;
+            }
         }
         CheckLong("the feed list stops at its capacity",
                   full.feedCount, kGazetteMaxFeeds);
@@ -338,9 +341,14 @@ static void TestPrefsRoundTrip(void)
     int          i;
 
     GazettePrefsSetDefaults(&before);
-    GazettePrefsAddFeed(&before, "https://a.example/rss", "Feed A");
-    GazettePrefsAddFeed(&before, "https://b.example/rss", "Feed B");
+    GazettePrefsAddFeed(&before, "https://a.example/rss", "Feed A", -1);
+    GazettePrefsAddFeed(&before, "https://b.example/rss", "Feed B", -1);
     before.feeds[2].enabled = 0;
+    GazettePrefsAddGroup(&before, "A Group");
+    GazettePrefsAddFeed(&before, "https://c.example/rss", "Feed C", 0);
+    GazettePrefsAddGroup(&before, "Closed Group");
+    before.groups[1].collapsed = 1;
+    GazettePrefsAddFeed(&before, "https://d.example/rss", "Feed D", 1);
     before.refreshMinutes = 45;
     before.maxArticles    = 12;
     before.fullText       = 1;
@@ -353,6 +361,11 @@ static void TestPrefsRoundTrip(void)
     GazettePrefsParse(text, len, &after);
 
     CheckLong("round-trip keeps the feed count", after.feedCount, before.feedCount);
+    CheckLong("round-trip keeps the group count", after.groupCount, before.groupCount);
+    CheckStr("round-trip keeps a group name", after.groups[0].name, "A Group");
+    CheckLong("round-trip keeps a collapsed triangle",
+              after.groups[1].collapsed, 1);
+    CheckStr("round-trip keeps the country", after.country, before.country);
     CheckLong("round-trip keeps refresh-minutes",
               after.refreshMinutes, before.refreshMinutes);
     CheckLong("round-trip keeps max-articles", after.maxArticles, before.maxArticles);
@@ -366,6 +379,8 @@ static void TestPrefsRoundTrip(void)
         CheckStr("round-trip keeps each title", after.feeds[i].title, before.feeds[i].title);
         CheckLong("round-trip keeps each enabled flag",
                   after.feeds[i].enabled, before.feeds[i].enabled);
+        CheckLong("round-trip keeps each feed's group",
+                  after.feeds[i].group, before.feeds[i].group);
     }
 
     /* A buffer too small must report failure rather than write a half file
@@ -1385,6 +1400,229 @@ static void TestGoogleNews(void)
     }
 }
 
+
+/* ------------------------------------------------------------------ */
+/* Groups                                                              */
+/* ------------------------------------------------------------------ */
+
+/* The feed order is the sidebar order, so it is the thing to assert on: a
+   comma-joined list of titles reads as the tree the user would see. */
+static void CheckOrder(const char *what, const GazettePrefs *p,
+                       const char *want)
+{
+    char got[512];
+    int  i;
+
+    got[0] = '\0';
+    for (i = 0; i < p->feedCount; i++) {
+        if (i > 0) {
+            strcat(got, ",");
+        }
+        strcat(got, p->feeds[i].title);
+    }
+    CheckStr(what, got, want);
+}
+
+static void TestGroups(void)
+{
+    GazettePrefs p;
+
+    memset(&p, 0, sizeof p);
+    p.refreshMinutes = 30;
+    p.maxArticles    = 100;
+
+    CheckLong("a group can be added", GazettePrefsAddGroup(&p, "News"), 0);
+    CheckLong("and another", GazettePrefsAddGroup(&p, "Blogs"), 1);
+    CheckLong("an empty group name is refused",
+              GazettePrefsAddGroup(&p, ""), -1);
+
+    /* Duplicate names are allowed: a group name is a label, not a key. */
+    CheckTrue("duplicate group names are allowed",
+              GazettePrefsAddGroup(&p, "News") == 2);
+    GazettePrefsRemoveGroup(&p, 2);
+
+    GazettePrefsAddFeed(&p, "https://e/top", "Top", -1);
+    GazettePrefsAddFeed(&p, "https://e/n1", "N1", 0);
+    GazettePrefsAddFeed(&p, "https://e/b1", "B1", 1);
+    GazettePrefsAddFeed(&p, "https://e/n2", "N2", 0);
+
+    /* Top-level feeds first, then each group's in turn. The array is held in
+       that order so the window, the file and a drag all read one sequence. */
+    CheckOrder("feeds are held in sidebar order", &p, "Top,N1,N2,B1");
+    CheckLong("group feed counts", GazettePrefsGroupFeedCount(&p, 0), 2);
+    CheckLong("the other group", GazettePrefsGroupFeedCount(&p, 1), 1);
+    CheckLong("the top level is a group too",
+              GazettePrefsGroupFeedCount(&p, -1), 1);
+    CheckLong("first feed in a group", GazettePrefsFirstFeedInGroup(&p, 1), 3);
+    CheckLong("an empty group has none",
+              GazettePrefsFirstFeedInGroup(&p, 5), -1);
+
+    CheckTrue("a group can be renamed",
+              GazettePrefsRenameGroup(&p, 1, "Weblogs"));
+    CheckStr("and keeps the new name", p.groups[1].name, "Weblogs");
+    CheckLong("renaming an absent group fails",
+              GazettePrefsRenameGroup(&p, 9, "No"), 0);
+
+    /* Moving a group takes its feeds with it. */
+    CheckLong("a group can be moved", GazettePrefsMoveGroup(&p, 1, 0), 0);
+    CheckOrder("its feeds move with it", &p, "Top,B1,N1,N2");
+    CheckStr("and it is where it was put", p.groups[0].name, "Weblogs");
+    CheckStr("the other shifted along", p.groups[1].name, "News");
+
+    /* Removing a group must never take subscriptions with it. */
+    CheckTrue("a group can be removed", GazettePrefsRemoveGroup(&p, 0));
+    CheckLong("group count shrinks", p.groupCount, 1);
+    CheckLong("its feeds survive", p.feedCount, 4);
+    CheckOrder("moved to the top level", &p, "Top,B1,N1,N2");
+    CheckLong("and are now top-level",
+              p.feeds[GazettePrefsFindFeed(&p, "https://e/b1")].group, -1);
+    CheckLong("the remaining group renumbered",
+              p.feeds[GazettePrefsFindFeed(&p, "https://e/n1")].group, 0);
+
+    {
+        /* A drag: the feed lands in the group it was dropped on, wherever the
+           drop position claimed to be. */
+        GazettePrefs q;
+
+        memset(&q, 0, sizeof q);
+        GazettePrefsAddGroup(&q, "G");
+        GazettePrefsAddFeed(&q, "https://e/1", "One", -1);
+        GazettePrefsAddFeed(&q, "https://e/2", "Two", -1);
+        GazettePrefsAddFeed(&q, "https://e/3", "Three", 0);
+        CheckOrder("before the drag", &q, "One,Two,Three");
+
+        CheckTrue("dragging into a group works",
+                  GazettePrefsMoveFeed(&q, 0, 2, 0) >= 0);
+        CheckOrder("the dragged feed joins the group", &q, "Two,Three,One");
+        CheckLong("and is in it",
+                  q.feeds[GazettePrefsFindFeed(&q, "https://e/1")].group, 0);
+
+        CheckTrue("dragging back out works",
+                  GazettePrefsMoveFeed(&q, 2, 0, -1) >= 0);
+        CheckOrder("and it returns to the top", &q, "One,Two,Three");
+
+        /* Reordering within the top level. */
+        CheckTrue("reordering within a level works",
+                  GazettePrefsMoveFeed(&q, 0, 1, -1) >= 0);
+        CheckOrder("swapped", &q, "Two,One,Three");
+
+        CheckLong("moving a feed that is not there fails",
+                  GazettePrefsMoveFeed(&q, 9, 0, -1), -1);
+    }
+
+    {
+        /* The group list is bounded too. */
+        GazettePrefs q;
+        char         name[32];
+        int          i;
+        int          added = 0;
+
+        memset(&q, 0, sizeof q);
+        for (i = 0; i < kGazetteMaxGroups + 5; i++) {
+            snprintf(name, sizeof name, "Group %d", i);
+            if (GazettePrefsAddGroup(&q, name) >= 0) {
+                added++;
+            }
+        }
+        CheckLong("the group list stops at its capacity",
+                  q.groupCount, kGazetteMaxGroups);
+        CheckLong("adds beyond capacity are refused", added, kGazetteMaxGroups);
+    }
+}
+
+static void TestGroupParsing(void)
+{
+    static const char text[] =
+        "country = BR\r"
+        "feed = https://e/loose | Loose\r"
+        "group = News\r"
+        "feed = https://e/n1 | N1\r"
+        "feed-off = https://e/n2 | N2\r"
+        "group-closed = Blogs\r"
+        "feed = https://e/b1 | B1\r";
+    GazettePrefs p;
+
+    CheckLong("parse reads every feed",
+              GazettePrefsParse(text, sizeof text - 1, &p), 4);
+    CheckLong("and every group", p.groupCount, 2);
+    CheckStr("group names", p.groups[0].name, "News");
+    CheckStr("and the second", p.groups[1].name, "Blogs");
+    CheckLong("a closed group stays closed", p.groups[1].collapsed, 1);
+    CheckLong("an open one stays open", p.groups[0].collapsed, 0);
+    CheckStr("the country is read", p.country, "BR");
+
+    /* Membership is carried by the order of the lines and nothing else. */
+    CheckOrder("the tree is in sidebar order", &p, "Loose,N1,N2,B1");
+    CheckLong("a feed before any group is top-level", p.feeds[0].group, -1);
+    CheckLong("a feed after one belongs to it", p.feeds[1].group, 0);
+    CheckLong("and so does the next", p.feeds[2].group, 0);
+    CheckLong("until the following group", p.feeds[3].group, 1);
+    CheckLong("feed-off is still disabled", p.feeds[2].enabled, 0);
+
+    {
+        /* Groups declared with no feeds at all still exist, and the starter
+           feed is only displaced by an actual feed line. */
+        static const char groupsOnly[] = "group = Empty\r";
+        GazettePrefs q;
+
+        GazettePrefsParse(groupsOnly, sizeof groupsOnly - 1, &q);
+        CheckLong("a group with no feeds survives", q.groupCount, 1);
+        CheckLong("and the starter feed is untouched", q.feedCount, 1);
+    }
+
+    {
+        /* A feed naming a group that never opened cannot happen through the
+           file, but a hand edit can leave a group line out. */
+        static const char noGroup[] = "feed = https://e/a | A\r";
+        GazettePrefs q;
+
+        GazettePrefsParse(noGroup, sizeof noGroup - 1, &q);
+        CheckLong("one feed", q.feedCount, 1);
+        CheckLong("at the top level", q.feeds[0].group, -1);
+        CheckLong("and no groups", q.groupCount, 0);
+    }
+}
+
+static void TestPrefsIterator(void)
+{
+    static const char text[] =
+        "# a comment\r"
+        "a = 1\r"
+        "b: 2\r"
+        "not a setting\r"
+        "c =\r"
+        "a = 3\r";
+    size_t off = 0;
+    char   key[32];
+    char   value[32];
+
+    /* Order matters here in a way it does not for the lookups: this is what
+       carries the sidebar's shape. */
+    CheckTrue("first setting",
+              gz_prefs_next(text, sizeof text - 1, &off, key, sizeof key,
+                            value, sizeof value));
+    CheckStr("its key", key, "a");
+    CheckStr("its value", value, "1");
+
+    CheckTrue("second setting",
+              gz_prefs_next(text, sizeof text - 1, &off, key, sizeof key,
+                            value, sizeof value));
+    CheckStr("':' separates too", key, "b");
+    CheckStr("value", value, "2");
+
+    /* "not a setting" has no separator and "c =" has no value; both skipped. */
+    CheckTrue("third setting",
+              gz_prefs_next(text, sizeof text - 1, &off, key, sizeof key,
+                            value, sizeof value));
+    CheckStr("a repeated key comes back again", key, "a");
+    CheckStr("with its own value", value, "3");
+
+    CheckLong("and then it ends",
+              gz_prefs_next(text, sizeof text - 1, &off, key, sizeof key,
+                            value, sizeof value), 0);
+    CheckStr("clearing the key", key, "");
+}
+
 /* ------------------------------------------------------------------ */
 
 int main(void)
@@ -1395,6 +1633,9 @@ int main(void)
     TestPrefsModel();
     TestPrefsParse();
     TestPrefsRoundTrip();
+    TestPrefsIterator();
+    TestGroups();
+    TestGroupParsing();
     TestHeaderBlocks();
     TestURLSplit();
     TestURLResolve();

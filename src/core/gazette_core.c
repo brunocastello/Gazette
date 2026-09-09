@@ -103,13 +103,64 @@ const char *GazetteCoreFeedURL(int index)
     return gPrefs.feeds[index].url;
 }
 
-Boolean GazetteCoreAddFeed(const char *url, const char *title)
+int GazetteCoreFeedGroup(int index)
 {
-    if (!gInited || !GazettePrefsAddFeed(&gPrefs, url, title)) {
+    if (!gInited || index < 0 || index >= gPrefs.feedCount) {
+        return -1;
+    }
+    return gPrefs.feeds[index].group;
+}
+
+Boolean GazetteCoreFeedEnabled(int index)
+{
+    if (!gInited || index < 0 || index >= gPrefs.feedCount) {
         return false;
     }
-    gPrefsDirty = true;
-    return true;
+    return gPrefs.feeds[index].enabled ? true : false;
+}
+
+int GazetteCoreGroupCount(void)
+{
+    return gInited ? gPrefs.groupCount : 0;
+}
+
+const char *GazetteCoreGroupName(int index)
+{
+    if (!gInited || index < 0 || index >= gPrefs.groupCount) {
+        return "";
+    }
+    return gPrefs.groups[index].name;
+}
+
+Boolean GazetteCoreGroupCollapsed(int index)
+{
+    if (!gInited || index < 0 || index >= gPrefs.groupCount) {
+        return false;
+    }
+    return gPrefs.groups[index].collapsed ? true : false;
+}
+
+int GazetteCoreGroupFeedCount(int index)
+{
+    return gInited ? GazettePrefsGroupFeedCount(&gPrefs, index) : 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Mutators                                                            */
+/* ------------------------------------------------------------------ */
+
+int GazetteCoreAddFeed(const char *url, const char *title, int group)
+{
+    int index;
+
+    if (!gInited) {
+        return -1;
+    }
+    index = GazettePrefsAddFeed(&gPrefs, url, title, group);
+    if (index >= 0) {
+        gPrefsDirty = true;
+    }
+    return index;
 }
 
 Boolean GazetteCoreRemoveFeed(const char *url)
@@ -119,4 +170,85 @@ Boolean GazetteCoreRemoveFeed(const char *url)
     }
     gPrefsDirty = true;
     return true;
+}
+
+Boolean GazetteCoreRenameFeed(int index, const char *title)
+{
+    if (!gInited || !GazettePrefsRenameFeed(&gPrefs, index, title)) {
+        return false;
+    }
+    gPrefsDirty = true;
+    return true;
+}
+
+int GazetteCoreMoveFeed(int from, int to, int group)
+{
+    int index;
+
+    if (!gInited) {
+        return -1;
+    }
+    index = GazettePrefsMoveFeed(&gPrefs, from, to, group);
+    if (index >= 0) {
+        gPrefsDirty = true;
+    }
+    return index;
+}
+
+int GazetteCoreAddGroup(const char *name)
+{
+    int index;
+
+    if (!gInited) {
+        return -1;
+    }
+    index = GazettePrefsAddGroup(&gPrefs, name);
+    if (index >= 0) {
+        gPrefsDirty = true;
+    }
+    return index;
+}
+
+Boolean GazetteCoreRemoveGroup(int index)
+{
+    if (!gInited || !GazettePrefsRemoveGroup(&gPrefs, index)) {
+        return false;
+    }
+    gPrefsDirty = true;
+    return true;
+}
+
+Boolean GazetteCoreRenameGroup(int index, const char *name)
+{
+    if (!gInited || !GazettePrefsRenameGroup(&gPrefs, index, name)) {
+        return false;
+    }
+    gPrefsDirty = true;
+    return true;
+}
+
+int GazetteCoreMoveGroup(int from, int to)
+{
+    int index;
+
+    if (!gInited) {
+        return -1;
+    }
+    index = GazettePrefsMoveGroup(&gPrefs, from, to);
+    if (index >= 0) {
+        gPrefsDirty = true;
+    }
+    return index;
+}
+
+void GazetteCoreSetGroupCollapsed(int index, Boolean collapsed)
+{
+    if (!gInited || index < 0 || index >= gPrefs.groupCount) {
+        return;
+    }
+    if (gPrefs.groups[index].collapsed == (collapsed ? 1 : 0)) {
+        return;
+    }
+    gPrefs.groups[index].collapsed = collapsed ? 1 : 0;
+    gPrefsDirty = true;
 }

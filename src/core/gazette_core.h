@@ -37,14 +37,47 @@ void GazetteCoreShutdown(void);
    mutators below so the engine always knows when it has become dirty. */
 const GazettePrefs *GazetteCoreGetPrefs(void);
 
-/* Feed list, as the sidebar will want it in Phase 3. */
+/* ------------------------------------------------------------------ */
+/* The sidebar's tree                                                  */
+/*                                                                     */
+/* Groups and feeds are the user's arrangement, not a built-in one.     */
+/* Feeds are held in sidebar order — the top-level ones, then each      */
+/* group's in turn — so the window, the file and a drag all read the    */
+/* same sequence and none of them re-derives it.                        */
+/* ------------------------------------------------------------------ */
+
 int         GazetteCoreFeedCount(void);
 const char *GazetteCoreFeedTitle(int index);    /* "" when index is out of range */
 const char *GazetteCoreFeedURL(int index);
+int         GazetteCoreFeedGroup(int index);    /* -1 for the top level */
+Boolean     GazetteCoreFeedEnabled(int index);
 
-/* Feed list mutators. Both mark the prefs dirty so the next save writes. */
-Boolean GazetteCoreAddFeed(const char *url, const char *title);
+int         GazetteCoreGroupCount(void);
+const char *GazetteCoreGroupName(int index);
+Boolean     GazetteCoreGroupCollapsed(int index);
+int         GazetteCoreGroupFeedCount(int index);
+
+/* Every mutator marks the preferences dirty, so the next save writes them and
+   quitting is enough to make a change permanent. */
+
+/* Returns the new feed's index, or -1. group is -1 for the top level. */
+int     GazetteCoreAddFeed(const char *url, const char *title, int group);
 Boolean GazetteCoreRemoveFeed(const char *url);
+Boolean GazetteCoreRenameFeed(int index, const char *title);
+
+/* Move a feed to a position and into a group. Returns its new index, or -1.
+   This is what a drag in the sidebar lands on. */
+int     GazetteCoreMoveFeed(int from, int to, int group);
+
+/* Returns the new group's index, or -1. */
+int     GazetteCoreAddGroup(const char *name);
+
+/* Removing a group moves its feeds to the top level rather than deleting
+   them: a folder should never silently take subscriptions with it. */
+Boolean GazetteCoreRemoveGroup(int index);
+Boolean GazetteCoreRenameGroup(int index, const char *name);
+int     GazetteCoreMoveGroup(int from, int to);
+void    GazetteCoreSetGroupCollapsed(int index, Boolean collapsed);
 
 #ifdef __cplusplus
 }

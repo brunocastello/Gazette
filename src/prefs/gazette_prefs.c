@@ -1,5 +1,5 @@
 /*
- * Gazette — preferences and feed list
+ * Gazette — preferences, groups and feed list
  * Copyright (c) 2026 brunocastello
  *
  * PORTABLE: no Mac system headers. See gazette_prefs.h.
@@ -11,13 +11,16 @@
 
 #include <string.h>
 
-/* Google News Top Stories for the US, the same endpoint shape NewsProxy
-   builds: /rss with hl (interface language), gl (country) and ceid
-   (country:language). Phase 2 generates these from the country and topic
-   maps; until then it is the one feed a fresh install starts with. */
-static const char kDefaultFeedURL[] =
+/*
+ * The one feed a fresh install starts with, so a first run has something in
+ * the window rather than an empty sidebar and no way to guess what goes in it.
+ * It is a starting point and nothing more: Gazette is a general RSS and Atom
+ * reader, this feed is subscribed to exactly like any other, and removing it
+ * is a normal thing to do.
+ */
+static const char kStarterFeedURL[] =
     "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en";
-static const char kDefaultFeedTitle[] = "Google News - Top Stories";
+static const char kStarterFeedTitle[] = "Google News - Top Stories";
 
 enum {
     kDefaultRefreshMinutes = 30,
@@ -25,25 +28,91 @@ enum {
 };
 
 /*
- * kGazetteMaxFeeds and kGazettePrefsTextMax are coupled, and silently: if the
- * feed list can hold more than the text buffer can serialise,
- * GazettePrefsSerialize starts returning 0 and preferences simply stop being
- * saved. Nothing crashes and nothing complains -- the user's edits just do not
- * survive a quit.
+ * kGazetteMaxFeeds, kGazetteMaxGroups and kGazettePrefsTextMax are coupled,
+ * and silently: if the lists can hold more than the text buffer can
+ * serialise, GazettePrefsSerialize returns 0, saving gives up, and nothing
+ * crashes or complains — the user's edits just stop surviving a quit. That
+ * would present months later as "my feeds keep disappearing".
  *
- * Worst case is every feed at full length: "feed     = " (11) + a 511-byte URL
- * + " | " (3) + a 127-byte title + CR. Plus the settings block and comments,
- * for which 256 is generous. At 64 feeds that is about 42 KB against the
- * 48 KB buffer.
+ * Worst case is every entry at full length: a feed line is "feed     = " (11)
+ * + a 511-byte URL + " | " (3) + a 127-byte title + CR, and a group line is
+ * "group-closed = " (15) + a 63-byte name + CR. Plus the settings block and
+ * comments, for which 512 is generous.
  *
  * The array below has a negative size if that ever stops holding, which turns
- * a bug that would show up months later as "my feeds keep disappearing" into
- * a compile error on the line that raised the limit.
+ * the bug into a compile error on the line that raised the limit.
  */
 typedef char gazette_prefs_text_buffer_is_large_enough[
     (kGazettePrefsTextMax >
-     kGazetteMaxFeeds * (11 + kGazetteURLLen + 3 + kGazetteTitleLen + 1) + 256)
+     kGazetteMaxFeeds * (11 + kGazetteURLLen + 3 + kGazetteTitleLen + 1) +
+     kGazetteMaxGroups * (15 + kGazetteGroupLen + 1) + 512)
     ? 1 : -1];
+
+/* ------------------------------------------------------------------ */
+/* Order                                                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The feeds array is kept in sidebar order: the top-level feeds first, then
+ * each group's feeds in group order, relative order preserved throughout.
+ *
+ * Keeping it that way rather than sorting on demand means the sidebar, the
+ * serialiser and a drag all read the same sequence, and none of them has to
+ * re-derive it. Every mutation below restores the invariant before returning.
+ */
+static void RebuildOrder(GazettePrefs *p)
+{
+    int order[kGazetteMaxFeeds];
+    int where[kGazetteMaxFeeds];
+    int n = 0;
+    int g;
+    int i;
+
+    /* Collect indices group by group, which is the order we want them in. */
+    for (i = 0; i < p->feedCount; i++) {
+        if (p->feeds[i].group < 0) {
+            order[n++] = i;
+        }
+    }
+    for (g = 0; g < p->groupCount; g++) {
+        for (i = 0; i < p->feedCount; i++) {
+            if (p->feeds[i].group == g) {
+                order[n++] = i;
+            }
+        }
+    }
+    /* A feed naming a group that no longer exists would otherwise vanish. */
+    for (i = 0; i < p->feedCount; i++) {
+        if (p->feeds[i].group >= p->groupCount) {
+            p->feeds[i].group = -1;
+            order[n++] = i;
+        }
+    }
+    if (n != p->feedCount) {
+        return;                     /* cannot happen; refuse to scramble */
+    }
+
+    /*
+     * Apply the permutation in place, following each cycle, so this costs one
+     * feed of scratch rather than a copy of the whole 83 KB array.
+     */
+    for (i = 0; i < n; i++) {
+        where[order[i]] = i;
+    }
+    for (i = 0; i < n; i++) {
+        while (where[i] != i) {
+            GazetteFeedPref tmp;
+            int             j = where[i];
+
+            tmp          = p->feeds[i];
+            p->feeds[i]  = p->feeds[j];
+            p->feeds[j]  = tmp;
+
+            where[i]     = where[j];
+            where[j]     = j;
+        }
+    }
+}
 
 /* ------------------------------------------------------------------ */
 /* Defaults                                                            */
@@ -60,12 +129,156 @@ void GazettePrefsSetDefaults(GazettePrefs *p)
     p->refreshMinutes = kDefaultRefreshMinutes;
     p->maxArticles    = kDefaultMaxArticles;
     p->fullText       = 0;
+    gz_copy_n(p->country, sizeof p->country, "US", 2);
 
-    GazettePrefsAddFeed(p, kDefaultFeedURL, kDefaultFeedTitle);
+    GazettePrefsAddFeed(p, kStarterFeedURL, kStarterFeedTitle, -1);
 }
 
 /* ------------------------------------------------------------------ */
-/* Feed list                                                           */
+/* Groups                                                             */
+/* ------------------------------------------------------------------ */
+
+int GazettePrefsAddGroup(GazettePrefs *p, const char *name)
+{
+    GazetteGroupPref *g;
+
+    if (p == NULL || name == NULL || name[0] == '\0') {
+        return -1;
+    }
+    if (p->groupCount >= kGazetteMaxGroups) {
+        return -1;
+    }
+
+    g = &p->groups[p->groupCount];
+    memset(g, 0, sizeof *g);
+    gz_copy_n(g->name, sizeof g->name, name, strlen(name));
+
+    return p->groupCount++;
+}
+
+int GazettePrefsRemoveGroup(GazettePrefs *p, int index)
+{
+    int i;
+
+    if (p == NULL || index < 0 || index >= p->groupCount) {
+        return 0;
+    }
+
+    /* The feeds are not the group's to take with it: removing a folder should
+       never silently unsubscribe anything, so they move to the top level. */
+    for (i = 0; i < p->feedCount; i++) {
+        if (p->feeds[i].group == index) {
+            p->feeds[i].group = -1;
+        } else if (p->feeds[i].group > index) {
+            p->feeds[i].group--;
+        }
+    }
+
+    for (i = index; i < p->groupCount - 1; i++) {
+        p->groups[i] = p->groups[i + 1];
+    }
+    memset(&p->groups[p->groupCount - 1], 0, sizeof p->groups[0]);
+    p->groupCount--;
+
+    RebuildOrder(p);
+    return 1;
+}
+
+int GazettePrefsRenameGroup(GazettePrefs *p, int index, const char *name)
+{
+    if (p == NULL || index < 0 || index >= p->groupCount ||
+        name == NULL || name[0] == '\0') {
+        return 0;
+    }
+    gz_copy_n(p->groups[index].name, sizeof p->groups[index].name,
+              name, strlen(name));
+    return 1;
+}
+
+int GazettePrefsMoveGroup(GazettePrefs *p, int from, int to)
+{
+    GazetteGroupPref moved;
+    int              i;
+
+    if (p == NULL || from < 0 || from >= p->groupCount) {
+        return -1;
+    }
+    if (to < 0) {
+        to = 0;
+    }
+    if (to >= p->groupCount) {
+        to = p->groupCount - 1;
+    }
+    if (to == from) {
+        return from;
+    }
+
+    moved = p->groups[from];
+
+    /* Renumber the feeds to follow their group to its new index. */
+    for (i = 0; i < p->feedCount; i++) {
+        int g = p->feeds[i].group;
+
+        if (g < 0) {
+            continue;
+        }
+        if (g == from) {
+            p->feeds[i].group = to;
+        } else if (from < to && g > from && g <= to) {
+            p->feeds[i].group = g - 1;
+        } else if (from > to && g >= to && g < from) {
+            p->feeds[i].group = g + 1;
+        }
+    }
+
+    if (from < to) {
+        for (i = from; i < to; i++) {
+            p->groups[i] = p->groups[i + 1];
+        }
+    } else {
+        for (i = from; i > to; i--) {
+            p->groups[i] = p->groups[i - 1];
+        }
+    }
+    p->groups[to] = moved;
+
+    RebuildOrder(p);
+    return to;
+}
+
+int GazettePrefsFirstFeedInGroup(const GazettePrefs *p, int group)
+{
+    int i;
+
+    if (p == NULL) {
+        return -1;
+    }
+    for (i = 0; i < p->feedCount; i++) {
+        if (p->feeds[i].group == group) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int GazettePrefsGroupFeedCount(const GazettePrefs *p, int group)
+{
+    int i;
+    int n = 0;
+
+    if (p == NULL) {
+        return 0;
+    }
+    for (i = 0; i < p->feedCount; i++) {
+        if (p->feeds[i].group == group) {
+            n++;
+        }
+    }
+    return n;
+}
+
+/* ------------------------------------------------------------------ */
+/* Feeds                                                              */
 /* ------------------------------------------------------------------ */
 
 int GazettePrefsFindFeed(const GazettePrefs *p, const char *url)
@@ -83,18 +296,22 @@ int GazettePrefsFindFeed(const GazettePrefs *p, const char *url)
     return -1;
 }
 
-int GazettePrefsAddFeed(GazettePrefs *p, const char *url, const char *title)
+int GazettePrefsAddFeed(GazettePrefs *p, const char *url, const char *title,
+                        int group)
 {
     GazetteFeedPref *entry;
 
     if (p == NULL || url == NULL || url[0] == '\0') {
-        return 0;
+        return -1;
     }
     if (p->feedCount >= kGazetteMaxFeeds) {
-        return 0;
+        return -1;
     }
     if (GazettePrefsFindFeed(p, url) >= 0) {
-        return 0;
+        return -1;
+    }
+    if (group < -1 || group >= p->groupCount) {
+        group = -1;
     }
 
     entry = &p->feeds[p->feedCount];
@@ -107,9 +324,12 @@ int GazettePrefsAddFeed(GazettePrefs *p, const char *url, const char *title)
         gz_copy_n(entry->title, sizeof entry->title, url, strlen(url));
     }
     entry->enabled = 1;
+    entry->group   = group;
 
     p->feedCount++;
-    return 1;
+    RebuildOrder(p);
+
+    return GazettePrefsFindFeed(p, url);
 }
 
 int GazettePrefsRemoveFeed(GazettePrefs *p, const char *url)
@@ -126,6 +346,56 @@ int GazettePrefsRemoveFeed(GazettePrefs *p, const char *url)
     memset(&p->feeds[p->feedCount - 1], 0, sizeof p->feeds[0]);
     p->feedCount--;
     return 1;
+}
+
+int GazettePrefsRenameFeed(GazettePrefs *p, int index, const char *title)
+{
+    if (p == NULL || index < 0 || index >= p->feedCount ||
+        title == NULL || title[0] == '\0') {
+        return 0;
+    }
+    gz_copy_n(p->feeds[index].title, sizeof p->feeds[index].title,
+              title, strlen(title));
+    return 1;
+}
+
+int GazettePrefsMoveFeed(GazettePrefs *p, int from, int to, int group)
+{
+    GazetteFeedPref moved;
+    int             i;
+
+    if (p == NULL || from < 0 || from >= p->feedCount) {
+        return -1;
+    }
+    if (group < -1 || group >= p->groupCount) {
+        group = -1;
+    }
+    if (to < 0) {
+        to = 0;
+    }
+    if (to > p->feedCount - 1) {
+        to = p->feedCount - 1;
+    }
+
+    moved       = p->feeds[from];
+    moved.group = group;
+
+    if (from < to) {
+        for (i = from; i < to; i++) {
+            p->feeds[i] = p->feeds[i + 1];
+        }
+    } else {
+        for (i = from; i > to; i--) {
+            p->feeds[i] = p->feeds[i - 1];
+        }
+    }
+    p->feeds[to] = moved;
+
+    /* The drop position and the target group can disagree — dropping onto a
+       collapsed group, say. The group wins, and RebuildOrder puts the feed
+       where that decision implies. */
+    RebuildOrder(p);
+    return GazettePrefsFindFeed(p, moved.url);
 }
 
 /* ------------------------------------------------------------------ */
@@ -159,32 +429,16 @@ static void SplitFeedValue(const char *value,
     gz_copy_n(title, titleCap, part, partLen);
 }
 
-/* Read every occurrence of key as a feed line, marking each entry enabled
-   or not. Returns how many were added. */
-static int ReadFeedKey(const char *text, size_t len, const char *key,
-                       int enabled, GazettePrefs *p)
-{
-    char value[kGazetteURLLen + kGazetteTitleLen + 8];
-    char url[kGazetteURLLen];
-    char title[kGazetteTitleLen];
-    int  n     = 0;
-    int  added = 0;
-
-    while (gz_prefs_get_nth(text, len, key, n++, value, sizeof value)) {
-        SplitFeedValue(value, url, sizeof url, title, sizeof title);
-        if (GazettePrefsAddFeed(p, url, title)) {
-            p->feeds[p->feedCount - 1].enabled = enabled;
-            added++;
-        }
-        if (p->feedCount >= kGazetteMaxFeeds) {
-            break;
-        }
-    }
-    return added;
-}
-
 int GazettePrefsParse(const char *text, size_t len, GazettePrefs *p)
 {
+    char   key[64];
+    char   value[kGazetteURLLen + kGazetteTitleLen + 8];
+    char   url[kGazetteURLLen];
+    char   title[kGazetteTitleLen];
+    size_t off        = 0;
+    int    group      = -1;
+    int    sawAnyFeed = 0;
+
     if (p == NULL) {
         return 0;
     }
@@ -201,6 +455,7 @@ int GazettePrefsParse(const char *text, size_t len, GazettePrefs *p)
                                          p->maxArticles);
     p->fullText       = gz_prefs_get_num(text, len, "full-text",
                                          p->fullText) ? 1 : 0;
+    (void)gz_prefs_get(text, len, "country", p->country, sizeof p->country);
 
     if (p->refreshMinutes < 0) {
         p->refreshMinutes = 0;
@@ -208,19 +463,62 @@ int GazettePrefsParse(const char *text, size_t len, GazettePrefs *p)
     if (p->maxArticles < 1) {
         p->maxArticles = 1;
     }
-
-    /* A file that names any feed at all replaces the default list outright —
-       otherwise a user who deliberately removed Google News would find it
-       back on the next launch. */
-    if (gz_prefs_get_nth(text, len, "feed", 0, NULL, 0) ||
-        gz_prefs_get_nth(text, len, "feed-off", 0, NULL, 0)) {
-        p->feedCount = 0;
-        memset(p->feeds, 0, sizeof p->feeds);
-
-        ReadFeedKey(text, len, "feed", 1, p);
-        ReadFeedKey(text, len, "feed-off", 0, p);
+    if (p->country[0] == '\0') {
+        gz_copy_n(p->country, sizeof p->country, "US", 2);
     }
 
+    /*
+     * A file that names any feed at all replaces the starter list outright —
+     * otherwise a user who deliberately removed a feed would find it back on
+     * the next launch. The walk is sequential because the tree is carried by
+     * the order of the lines and by nothing else.
+     */
+    while (gz_prefs_next(text, len, &off, key, sizeof key,
+                         value, sizeof value)) {
+        int enabled;
+
+        if (gz_stricmp(key, "group") == 0 ||
+            gz_stricmp(key, "group-closed") == 0) {
+            group = GazettePrefsAddGroup(p, value);
+            if (group >= 0 && gz_stricmp(key, "group-closed") == 0) {
+                p->groups[group].collapsed = 1;
+            }
+            continue;
+        }
+
+        if (gz_stricmp(key, "feed") == 0) {
+            enabled = 1;
+        } else if (gz_stricmp(key, "feed-off") == 0) {
+            enabled = 0;
+        } else {
+            continue;
+        }
+
+        if (!sawAnyFeed) {
+            /* The first feed line in the file discards the starter list. Done
+               here rather than up front so the groups seen before it survive. */
+            int i;
+
+            for (i = 0; i < p->feedCount; i++) {
+                memset(&p->feeds[i], 0, sizeof p->feeds[i]);
+            }
+            p->feedCount = 0;
+            sawAnyFeed   = 1;
+        }
+
+        SplitFeedValue(value, url, sizeof url, title, sizeof title);
+        {
+            int index = GazettePrefsAddFeed(p, url, title, group);
+
+            if (index >= 0) {
+                p->feeds[index].enabled = enabled;
+            }
+        }
+    }
+
+    /* Groups declared before the first feed line still count as declared, so
+       a file that lists only groups keeps them and the starter feed both. */
+    RebuildOrder(p);
     return p->feedCount;
 }
 
@@ -265,9 +563,22 @@ static void AppendNum(char *out, size_t cap, size_t *len, long value)
     Append(out, cap, len, q);
 }
 
+static void AppendFeed(char *out, size_t cap, size_t *len,
+                       const GazetteFeedPref *f)
+{
+    Append(out, cap, len, f->enabled ? "feed     = " : "feed-off = ");
+    Append(out, cap, len, f->url);
+    if (f->title[0] != '\0') {
+        Append(out, cap, len, " | ");
+        Append(out, cap, len, f->title);
+    }
+    Append(out, cap, len, "\r");
+}
+
 size_t GazettePrefsSerialize(const GazettePrefs *p, char *out, size_t cap)
 {
     size_t len = 0;
+    int    g;
     int    i;
 
     if (out == NULL || cap == 0) {
@@ -278,11 +589,12 @@ size_t GazettePrefsSerialize(const GazettePrefs *p, char *out, size_t cap)
         return 0;
     }
 
-    /* Classic Mac text files are CR-terminated, and SimpleText and
-       BBEdit both expect that on OS 9. gz_prefs_get_nth trims \r and \n
-       alike, so reading back stays indifferent to which a hand edit left. */
+    /* Classic Mac text files are CR-terminated, and SimpleText and BBEdit
+       both expect that on OS 9. The reader trims \r and \n alike, so a hand
+       edit from another machine still loads. */
     Append(out, cap, &len, "# Gazette Preferences\r");
     Append(out, cap, &len, "# Edited by hand or by Gazette; either is fine.\r");
+    Append(out, cap, &len, "# The order of the lines is the order of the sidebar.\r");
     Append(out, cap, &len, "\r");
 
     Append(out, cap, &len, "refresh-minutes = ");
@@ -297,17 +609,34 @@ size_t GazettePrefsSerialize(const GazettePrefs *p, char *out, size_t cap)
     AppendNum(out, cap, &len, p->fullText ? 1 : 0);
     Append(out, cap, &len, "\r");
 
-    Append(out, cap, &len, "\r");
-    Append(out, cap, &len, "# feed = <url> | <title>   (feed-off = the same, disabled)\r");
+    Append(out, cap, &len, "country         = ");
+    Append(out, cap, &len, p->country);
+    Append(out, cap, &len, "\r\r");
+
+    Append(out, cap, &len,
+           "# feed = <url> | <title>   (feed-off = the same, disabled)\r");
+    Append(out, cap, &len,
+           "# Feeds after a group line belong to it; feeds before any belong "
+           "to none.\r\r");
 
     for (i = 0; i < p->feedCount; i++) {
-        Append(out, cap, &len, p->feeds[i].enabled ? "feed     = " : "feed-off = ");
-        Append(out, cap, &len, p->feeds[i].url);
-        if (p->feeds[i].title[0] != '\0') {
-            Append(out, cap, &len, " | ");
-            Append(out, cap, &len, p->feeds[i].title);
+        if (p->feeds[i].group < 0) {
+            AppendFeed(out, cap, &len, &p->feeds[i]);
         }
+    }
+
+    for (g = 0; g < p->groupCount; g++) {
         Append(out, cap, &len, "\r");
+        Append(out, cap, &len,
+               p->groups[g].collapsed ? "group-closed = " : "group        = ");
+        Append(out, cap, &len, p->groups[g].name);
+        Append(out, cap, &len, "\r");
+
+        for (i = 0; i < p->feedCount; i++) {
+            if (p->feeds[i].group == g) {
+                AppendFeed(out, cap, &len, &p->feeds[i]);
+            }
+        }
     }
 
     if (len >= cap) {
