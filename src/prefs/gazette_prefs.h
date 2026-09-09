@@ -171,6 +171,40 @@ int GazettePrefsFirstFeedInGroup(const GazettePrefs *p, int group);
 /* How many feeds a group holds. */
 int GazettePrefsGroupFeedCount(const GazettePrefs *p, int group);
 
+/* ------------------------------------------------------------------ */
+/* The sidebar's rows                                                  */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The tree flattened into the lines the sidebar actually draws: every group,
+ * the feeds of the open ones, and the top-level feeds ahead of them all. A
+ * closed group contributes its own row and nothing else.
+ *
+ * This is a view of the model rather than part of it, but it is arithmetic
+ * over the feed order and nothing more, so it lives here where a host test
+ * can reach it instead of inside a Toolbox drawing routine where it could
+ * only be checked by looking at the screen.
+ */
+enum { kGazetteRowGroup = 0, kGazetteRowFeed = 1 };
+
+typedef struct {
+    int kind;                   /* kGazetteRowGroup or kGazetteRowFeed */
+    int index;                  /* into groups[] or feeds[] accordingly */
+} GazetteSidebarRow;
+
+/* How many rows the sidebar shows. */
+int GazettePrefsRowCount(const GazettePrefs *p);
+
+/* What row n is. Returns 1 and fills out, or returns 0 and leaves it. */
+int GazettePrefsRowAt(const GazettePrefs *p, int row, GazetteSidebarRow *out);
+
+/* The row a feed is drawn on, or -1 when its group is closed and it is not
+   drawn at all. */
+int GazettePrefsRowForFeed(const GazettePrefs *p, int feed);
+
+/* The row a group's own line is drawn on, or -1. */
+int GazettePrefsRowForGroup(const GazettePrefs *p, int group);
+
 #ifdef __cplusplus
 }
 #endif

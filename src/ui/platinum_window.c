@@ -37,6 +37,12 @@ enum {
     kTextInset     = 4,
     kDateColumn    = 46,        /* headline text starts here, after the time  */
 
+    /* The sidebar is an outline: a column for the disclosure triangle, then
+       one indent for a group's feeds. A top-level feed is a group's sibling,
+       so it starts where a group's name does. */
+    kTriangleColumn = 11,       /* width of the triangle's own column */
+    kGroupIndent    = 12,
+
     kMinSidebar    = 96,
     kMaxSidebarPad = 160,       /* how much room the right side must keep     */
     kMinListHeight = 3 * kRowHeight,
@@ -274,7 +280,7 @@ static void Layout(void)
 
     RewrapReader();
 
-    SyncScroll(gSidebarScroll, GazetteCoreFeedCount(),
+    SyncScroll(gSidebarScroll, GazetteCoreSidebarRowCount(),
                VisibleRowsIn(&gSidebarRect, kRowHeight));
     SyncScroll(gListScroll, GazetteFeedsArticleCount(),
                VisibleRowsIn(&gListRect, kRowHeight));
@@ -533,6 +539,34 @@ static void EndListArea(RgnHandle saveClip)
     }
 }
 
+/*
+ * Platinum's disclosure triangle, drawn rather than embedded as a CDEF 4
+ * control: there is one per group and they scroll with the list, so a real
+ * control would have to be created, moved and hidden on every scroll and
+ * every collapse. At this size it is nine pixels of solid black either
+ * pointing right (shut) or down (open), which is exactly what the CDEF
+ * draws in the Platinum theme.
+ */
+static void DrawTriangle(short left, short baseline, Boolean open)
+{
+    short top = (short)(baseline - 8);
+    short i;
+
+    if (open) {
+        /* Pointing down: a row of nine narrowing by two from each end. */
+        for (i = 0; i < 5; i++) {
+            MoveTo((short)(left + i), (short)(top + 2 + i));
+            LineTo((short)(left + 8 - i), (short)(top + 2 + i));
+        }
+    } else {
+        /* Pointing right: a column of nine narrowing the same way. */
+        for (i = 0; i < 5; i++) {
+            MoveTo((short)(left + 2 + i), (short)(top + i));
+            LineTo((short)(left + 2 + i), (short)(top + 8 - i));
+        }
+    }
+}
+
 static void DrawSidebar(void)
 {
     RgnHandle clip = NULL;
@@ -552,27 +586,66 @@ static void DrawSidebar(void)
     TextFont(kFontIDGeneva);
     TextSize(9);
 
-    count = GazetteCoreFeedCount();
+    count = GazetteCoreSidebarRowCount();
     rows  = VisibleRowsIn(&gSidebarRect, kRowHeight);
     top   = (gSidebarScroll != NULL) ? GetControlValue(gSidebarScroll) : 0;
     line  = (short)(gSidebarRect.top + 11);
 
     for (i = top; i < count && i < top + rows; i++) {
-        MoveTo((short)(gSidebarRect.left + kTextInset), line);
-        DrawTruncated(GazetteCoreFeedTitle(i),
-                      (short)(gSidebarRect.right - gSidebarRect.left -
-                              2 * kTextInset));
+        GazetteSidebarRow row;
+        short             textLeft;
+        Boolean           selected = false;
 
-        if (i == gSelectedFeed) {
-            Rect row;
+        if (!GazetteCoreSidebarRowAt(i, &row)) {
+            break;
+        }
 
-            SetRect(&row, gSidebarRect.left, (short)(line - 10),
+        if (row.kind == kGazetteRowGroup) {
+            /* The group's own line: triangle, then the name in bold, the way
+               a folder reads in a Finder list view. */
+            SetThemeTextColor(kThemeTextColorListView, 8, true);
+            DrawTriangle((short)(gSidebarRect.left + kTextInset), line,
+                         !GazetteCoreGroupCollapsed(row.index));
+
+            textLeft = (short)(gSidebarRect.left + kTextInset +
+                               kTriangleColumn);
+            TextFace(bold);
+            MoveTo(textLeft, line);
+            DrawTruncated(GazetteCoreGroupName(row.index),
+                          (short)(gSidebarRect.right - textLeft - kTextInset));
+            TextFace(normal);
+        } else {
+            textLeft = (short)(gSidebarRect.left + kTextInset +
+                               kTriangleColumn);
+            if (GazetteCoreFeedGroup(row.index) >= 0) {
+                textLeft = (short)(textLeft + kGroupIndent);
+            }
+
+            /* A switched-off feed keeps its place and is drawn the way an
+               unavailable item is drawn anywhere else in Platinum, so it
+               reads as off rather than as missing. */
+            SetThemeTextColor(GazetteCoreFeedEnabled(row.index)
+                                  ? kThemeTextColorListView
+                                  : kThemeTextColorDialogInactive,
+                              8, true);
+            MoveTo(textLeft, line);
+            DrawTruncated(GazetteCoreFeedTitle(row.index),
+                          (short)(gSidebarRect.right - textLeft - kTextInset));
+
+            selected = (row.index == gSelectedFeed);
+        }
+
+        if (selected) {
+            Rect box;
+
+            SetRect(&box, gSidebarRect.left, (short)(line - 10),
                     gSidebarRect.right, (short)(line + 3));
-            InvertRect(&row);
+            InvertRect(&box);
         }
         line = (short)(line + kRowHeight);
     }
 
+    ForeColor(blackColor);
     EndListArea(clip);
 }
 
@@ -908,16 +981,37 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
     }
 
     if (PtInRect(where, &gSidebarRect)) {
-        short top   = (gSidebarScroll != NULL)
-                          ? GetControlValue(gSidebarScroll) : 0;
-        int   index = top + (where.v - gSidebarRect.top) / kRowHeight;
+        short             top = (gSidebarScroll != NULL)
+                                    ? GetControlValue(gSidebarScroll) : 0;
+        int               index = top + (where.v - gSidebarRect.top) / kRowHeight;
+        GazetteSidebarRow row;
 
-        if (index >= 0 && index < GazetteCoreFeedCount() &&
-            index != gSelectedFeed) {
-            gSelectedFeed = index;
+        if (!GazetteCoreSidebarRowAt(index, &row)) {
+            return;
+        }
+
+        if (row.kind == kGazetteRowGroup) {
+            /*
+             * Anywhere on the line toggles it, not only the triangle. A group
+             * has no view of its own to select yet, so a click that landed on
+             * the name and did nothing would just read as a dead row.
+             */
+            GazetteCoreSetGroupCollapsed(row.index,
+                                         !GazetteCoreGroupCollapsed(row.index));
+
+            /* The rows below it have moved, so the bar's range and the whole
+               pane both have to be brought back into agreement. */
+            SyncScroll(gSidebarScroll, GazetteCoreSidebarRowCount(),
+                       VisibleRowsIn(&gSidebarRect, kRowHeight));
+            DrawSidebar();
+            return;
+        }
+
+        if (row.index != gSelectedFeed) {
+            gSelectedFeed = row.index;
             DrawSidebar();
             if (gOnFeedChosen != NULL) {
-                gOnFeedChosen(index);
+                gOnFeedChosen(row.index);
             }
         }
         return;
@@ -1085,7 +1179,10 @@ void GazetteUISelectFeed(int index)
         return;
     }
     gSelectedFeed = index;
-    RevealRow(gSidebarScroll, index, VisibleRowsIn(&gSidebarRect, kRowHeight));
+    /* -1 when the feed's group is shut: it is still the selection, there is
+       just no row to scroll to. */
+    RevealRow(gSidebarScroll, GazetteCoreSidebarRowForFeed(index),
+              VisibleRowsIn(&gSidebarRect, kRowHeight));
     if (gWindow != NULL) {
         DrawSidebar();
     }

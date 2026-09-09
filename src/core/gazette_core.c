@@ -252,3 +252,25 @@ void GazetteCoreSetGroupCollapsed(int index, Boolean collapsed)
     gPrefs.groups[index].collapsed = collapsed ? 1 : 0;
     gPrefsDirty = true;
 }
+
+/* ------------------------------------------------------------------ */
+/* The sidebar's rows                                                  */
+/* ------------------------------------------------------------------ */
+
+int GazetteCoreSidebarRowCount(void)
+{
+    return gInited ? GazettePrefsRowCount(&gPrefs) : 0;
+}
+
+Boolean GazetteCoreSidebarRowAt(int row, GazetteSidebarRow *out)
+{
+    if (!gInited) {
+        return false;
+    }
+    return GazettePrefsRowAt(&gPrefs, row, out) ? true : false;
+}
+
+int GazetteCoreSidebarRowForFeed(int feed)
+{
+    return gInited ? GazettePrefsRowForFeed(&gPrefs, feed) : -1;
+}

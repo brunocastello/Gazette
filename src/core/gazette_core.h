@@ -57,6 +57,15 @@ const char *GazetteCoreGroupName(int index);
 Boolean     GazetteCoreGroupCollapsed(int index);
 int         GazetteCoreGroupFeedCount(int index);
 
+/*
+ * The tree flattened into the lines the sidebar draws — see
+ * GazettePrefsRowCount. The window indexes rows, not feeds: a closed group
+ * hides its own, and a scroll bar counts what is on screen.
+ */
+int     GazetteCoreSidebarRowCount(void);
+Boolean GazetteCoreSidebarRowAt(int row, GazetteSidebarRow *out);
+int     GazetteCoreSidebarRowForFeed(int feed);
+
 /* Every mutator marks the preferences dirty, so the next save writes them and
    quitting is enough to make a change permanent. */
 

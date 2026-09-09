@@ -68,8 +68,15 @@ static void RebuildOrder(GazettePrefs *p)
     int g;
     int i;
 
-    /* Collect indices group by group, which is the order we want them in. */
+    /* Collect indices group by group, which is the order we want them in.
+       A feed naming a group that no longer exists is a top-level feed: it
+       would otherwise vanish, and it has to be adopted here rather than
+       appended afterwards, because the top level being a prefix of the array
+       is what the sidebar's row arithmetic reads. */
     for (i = 0; i < p->feedCount; i++) {
+        if (p->feeds[i].group >= p->groupCount) {
+            p->feeds[i].group = -1;
+        }
         if (p->feeds[i].group < 0) {
             order[n++] = i;
         }
@@ -79,13 +86,6 @@ static void RebuildOrder(GazettePrefs *p)
             if (p->feeds[i].group == g) {
                 order[n++] = i;
             }
-        }
-    }
-    /* A feed naming a group that no longer exists would otherwise vanish. */
-    for (i = 0; i < p->feedCount; i++) {
-        if (p->feeds[i].group >= p->groupCount) {
-            p->feeds[i].group = -1;
-            order[n++] = i;
         }
     }
     if (n != p->feedCount) {
@@ -275,6 +275,118 @@ int GazettePrefsGroupFeedCount(const GazettePrefs *p, int group)
         }
     }
     return n;
+}
+
+/* ------------------------------------------------------------------ */
+/* The sidebar's rows                                                  */
+/*                                                                     */
+/* All of this is arithmetic over the order RebuildOrder maintains: the */
+/* top-level feeds are a prefix of the array, and each group's feeds    */
+/* are contiguous after them, in group order. Nothing here searches.    */
+/* ------------------------------------------------------------------ */
+
+static int TopLevelCount(const GazettePrefs *p)
+{
+    int i;
+
+    for (i = 0; i < p->feedCount && p->feeds[i].group < 0; i++) {
+    }
+    return i;
+}
+
+/* A group's line, plus its feeds when it is open. */
+static int RowsForGroup(const GazettePrefs *p, int group)
+{
+    if (p->groups[group].collapsed) {
+        return 1;
+    }
+    return 1 + GazettePrefsGroupFeedCount(p, group);
+}
+
+int GazettePrefsRowCount(const GazettePrefs *p)
+{
+    int n;
+    int g;
+
+    if (p == NULL) {
+        return 0;
+    }
+    n = TopLevelCount(p);
+    for (g = 0; g < p->groupCount; g++) {
+        n += RowsForGroup(p, g);
+    }
+    return n;
+}
+
+int GazettePrefsRowAt(const GazettePrefs *p, int row, GazetteSidebarRow *out)
+{
+    int top;
+    int g;
+
+    if (p == NULL || out == NULL || row < 0) {
+        return 0;
+    }
+
+    top = TopLevelCount(p);
+    if (row < top) {
+        out->kind  = kGazetteRowFeed;
+        out->index = row;
+        return 1;
+    }
+    row -= top;
+
+    for (g = 0; g < p->groupCount; g++) {
+        int n;
+
+        if (row == 0) {
+            out->kind  = kGazetteRowGroup;
+            out->index = g;
+            return 1;
+        }
+        row--;
+
+        n = p->groups[g].collapsed ? 0 : GazettePrefsGroupFeedCount(p, g);
+        if (row < n) {
+            out->kind  = kGazetteRowFeed;
+            out->index = GazettePrefsFirstFeedInGroup(p, g) + row;
+            return 1;
+        }
+        row -= n;
+    }
+    return 0;
+}
+
+int GazettePrefsRowForGroup(const GazettePrefs *p, int group)
+{
+    int row;
+    int g;
+
+    if (p == NULL || group < 0 || group >= p->groupCount) {
+        return -1;
+    }
+    row = TopLevelCount(p);
+    for (g = 0; g < group; g++) {
+        row += RowsForGroup(p, g);
+    }
+    return row;
+}
+
+int GazettePrefsRowForFeed(const GazettePrefs *p, int feed)
+{
+    int group;
+
+    if (p == NULL || feed < 0 || feed >= p->feedCount) {
+        return -1;
+    }
+    group = p->feeds[feed].group;
+    if (group < 0) {
+        return feed;            /* the top level is the first rows, in order */
+    }
+    if (group >= p->groupCount || p->groups[group].collapsed) {
+        return -1;              /* drawn nowhere: its group is shut */
+    }
+    return GazettePrefsRowForGroup(p, group) + 1 +
+           (feed - GazettePrefsFirstFeedInGroup(p, group));
 }
 
 /* ------------------------------------------------------------------ */

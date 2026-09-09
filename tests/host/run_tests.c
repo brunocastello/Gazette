@@ -1533,6 +1533,103 @@ static void TestGroups(void)
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* The sidebar's rows                                                  */
+/* ------------------------------------------------------------------ */
+
+/* The rows the sidebar would draw, as a comma-joined list with group lines
+   in brackets. That reads as the pane itself, which is the point: the window
+   draws exactly this sequence and can only be checked by eye. */
+static void CheckRows(const char *what, const GazettePrefs *p, const char *want)
+{
+    char got[512];
+    int  n = GazettePrefsRowCount(p);
+    int  i;
+
+    got[0] = '\0';
+    for (i = 0; i < n; i++) {
+        GazetteSidebarRow row;
+
+        if (!GazettePrefsRowAt(p, i, &row)) {
+            strcat(got, i > 0 ? ",?" : "?");
+            continue;
+        }
+        if (i > 0) {
+            strcat(got, ",");
+        }
+        if (row.kind == kGazetteRowGroup) {
+            strcat(got, "[");
+            strcat(got, p->groups[row.index].name);
+            strcat(got, "]");
+        } else {
+            strcat(got, p->feeds[row.index].title);
+        }
+    }
+    CheckStr(what, got, want);
+}
+
+static void TestSidebarRows(void)
+{
+    GazettePrefs      p;
+    GazetteSidebarRow row;
+
+    memset(&p, 0, sizeof p);
+    GazettePrefsAddGroup(&p, "News");
+    GazettePrefsAddGroup(&p, "Blogs");
+    GazettePrefsAddFeed(&p, "https://e/top", "Top", -1);
+    GazettePrefsAddFeed(&p, "https://e/n1", "N1", 0);
+    GazettePrefsAddFeed(&p, "https://e/n2", "N2", 0);
+    GazettePrefsAddFeed(&p, "https://e/b1", "B1", 1);
+
+    CheckRows("the tree flattens to what is drawn", &p,
+              "Top,[News],N1,N2,[Blogs],B1");
+    CheckLong("one row per line", GazettePrefsRowCount(&p), 6);
+
+    CheckLong("a top-level feed is its own row",
+              GazettePrefsRowForFeed(&p, 0), 0);
+    CheckLong("a group's line", GazettePrefsRowForGroup(&p, 0), 1);
+    CheckLong("its first feed", GazettePrefsRowForFeed(&p, 1), 2);
+    CheckLong("the second group's line", GazettePrefsRowForGroup(&p, 1), 4);
+    CheckLong("and its feed", GazettePrefsRowForFeed(&p, 3), 5);
+
+    /* Shutting a group hides its feeds and nothing else: the group keeps its
+       own line, and everything below closes up. */
+    p.groups[0].collapsed = 1;
+    CheckRows("a shut group keeps its line only", &p, "Top,[News],[Blogs],B1");
+    CheckLong("the rows below it move up", GazettePrefsRowForGroup(&p, 1), 2);
+    CheckLong("a feed inside it is drawn nowhere",
+              GazettePrefsRowForFeed(&p, 1), -1);
+    CheckLong("but its feed below still has a row",
+              GazettePrefsRowForFeed(&p, 3), 3);
+
+    p.groups[0].collapsed = 0;
+
+    /* An empty group is a line with nothing under it, open or shut. */
+    GazettePrefsAddGroup(&p, "Empty");
+    CheckRows("an empty group is still a line", &p,
+              "Top,[News],N1,N2,[Blogs],B1,[Empty]");
+
+    CheckLong("a row past the end is not a row",
+              GazettePrefsRowAt(&p, 7, &row), 0);
+    CheckLong("nor is a negative one", GazettePrefsRowAt(&p, -1, &row), 0);
+    CheckLong("a feed that is not there has no row",
+              GazettePrefsRowForFeed(&p, 99), -1);
+    CheckLong("nor does a group that is not there",
+              GazettePrefsRowForGroup(&p, 99), -1);
+
+    {
+        /* With no groups at all the sidebar is the feed list, unchanged from
+           what Phase 3 drew. */
+        GazettePrefs q;
+
+        memset(&q, 0, sizeof q);
+        GazettePrefsAddFeed(&q, "https://e/1", "One", -1);
+        GazettePrefsAddFeed(&q, "https://e/2", "Two", -1);
+        CheckRows("a flat list is still a flat list", &q, "One,Two");
+        CheckLong("row for row", GazettePrefsRowCount(&q), q.feedCount);
+    }
+}
+
 static void TestGroupParsing(void)
 {
     static const char text[] =
@@ -1638,6 +1735,7 @@ int main(void)
     TestPrefsRoundTrip();
     TestPrefsIterator();
     TestGroups();
+    TestSidebarRows();
     TestGroupParsing();
     TestHeaderBlocks();
     TestURLSplit();
