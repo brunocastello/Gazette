@@ -13,7 +13,10 @@ SOURCES = \
 	$(SRC)/portable/gazette_portable.c \
 	$(SRC)/portable/gazette_url.c \
 	$(SRC)/portable/gazette_http.c \
-	$(SRC)/prefs/gazette_prefs.c
+	$(SRC)/prefs/gazette_prefs.c \
+	$(SRC)/feeds/gazette_feed_parse.c \
+	$(SRC)/feeds/gazette_googlenews.c \
+	$(SRC)/feeds/gazette_gnews_topics.c
 
 all: test
 

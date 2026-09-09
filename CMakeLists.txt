@@ -35,8 +35,11 @@ set(GAZETTE_SOURCES
     src/net/gazette_net.c
     src/net/gazette_fetch.c
 
-    # Feed engine — RSS/Atom, Google News (Phase 2)
+    # Feed engine — RSS/Atom parser, Google News maps, article store
     src/feeds/gazette_feeds.c
+    src/feeds/gazette_feed_parse.c
+    src/feeds/gazette_googlenews.c
+    src/feeds/gazette_gnews_topics.c
 
     # HTML extraction — stripping, full-text (Phase 3)
     src/extract/gazette_extract.c

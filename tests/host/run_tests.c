@@ -9,6 +9,8 @@
  * directory.
  */
 
+#include "feeds/gazette_feed_parse.h"
+#include "feeds/gazette_googlenews.h"
 #include "portable/gazette_http.h"
 #include "portable/gazette_portable.h"
 #include "portable/gazette_url.h"
@@ -818,6 +820,568 @@ static void TestChunked(void)
     }
 }
 
+
+/* ------------------------------------------------------------------ */
+/* Entities and markup                                                 */
+/* ------------------------------------------------------------------ */
+
+static void CheckDecode(const char *what, const char *in, const char *want)
+{
+    char buf[512];
+    size_t n;
+
+    strcpy(buf, in);
+    n = GazetteDecodeEntities(buf, strlen(buf));
+    gChecks++;
+    if (strcmp(buf, want) != 0 || n != strlen(want)) {
+        gFailures++;
+        printf("FAIL  %s\n        got  \"%s\" (%lu)\n        want \"%s\" (%lu)\n",
+               what, buf, (unsigned long)n, want, (unsigned long)strlen(want));
+    }
+}
+
+static void TestEntities(void)
+{
+    CheckDecode("the five XML entities",
+                "a&amp;b&lt;c&gt;d&quot;e&apos;f", "a&b<c>d\"e'f");
+    CheckDecode("decimal numeric references", "&#65;&#66;", "AB");
+    CheckDecode("hex numeric references", "&#x41;&#x62;", "Ab");
+
+    /* U+2019 has to come out as UTF-8 so the transliterator can turn it into
+       an apostrophe; a raw byte would be mojibake. */
+    CheckDecode("a numeric reference becomes UTF-8",
+                "it&#8217;s", "it\xE2\x80\x99s");
+    CheckDecode("a named HTML entity becomes UTF-8",
+                "it&rsquo;s", "it\xE2\x80\x99s");
+
+    /* An unknown reference is far more likely to be prose than markup, and
+       dropping it would silently eat content. */
+    CheckDecode("an unknown entity is left alone", "a&foo;b", "a&foo;b");
+    CheckDecode("a bare ampersand is left alone", "AT&T", "AT&T");
+    CheckDecode("an unterminated entity is left alone", "a&amp", "a&amp");
+    CheckDecode("an empty reference is left alone", "a&;b", "a&;b");
+    CheckDecode("nothing to do", "plain text", "plain text");
+
+    /* Feeds double-escape constantly: "&amp;lt;" decodes to "&lt;", which is
+       text, not markup. One pass is deliberate. */
+    CheckDecode("only one pass", "&amp;lt;b&amp;gt;", "&lt;b&gt;");
+
+    {
+        char buf[128];
+        size_t n;
+
+        strcpy(buf, "<b>Bold</b> and <i>italic</i>");
+        n = GazetteStripMarkup(buf, strlen(buf));
+        CheckStr("markup is stripped", buf, " Bold  and  italic ");
+        CheckLong("with the reported length", (long)n, (long)strlen(buf));
+
+        strcpy(buf, "a<br>b");
+        GazetteStripMarkup(buf, strlen(buf));
+        CheckStr("a tag becomes a space, so words stay apart", buf, "a b");
+
+        strcpy(buf, "5 > 3 and 2 < 4");
+        GazetteStripMarkup(buf, strlen(buf));
+        CheckStr("a stray '>' outside a tag survives", buf, "5 > 3 and 2 ");
+
+        strcpy(buf, "no markup here");
+        GazetteStripMarkup(buf, strlen(buf));
+        CheckStr("plain text is untouched", buf, "no markup here");
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Dates                                                               */
+/* ------------------------------------------------------------------ */
+
+static void CheckDate(const char *in, long want)
+{
+    long got = GazetteParseDate(in, strlen(in));
+
+    gChecks++;
+    if (got != want) {
+        gFailures++;
+        printf("FAIL  date \"%s\"\n        got  %ld\n        want %ld\n",
+               in, got, want);
+    }
+}
+
+static void TestDates(void)
+{
+    /* RSS: RFC 822, which is what every RSS 2.0 feed sends. */
+    CheckDate("Mon, 07 Sep 2026 21:30:00 GMT", 1788816600L);
+    CheckDate("07 Sep 2026 21:30:00 GMT",      1788816600L);   /* no day name */
+    CheckDate("Mon, 7 Sep 2026 21:30:00 GMT",  1788816600L);   /* one digit   */
+    CheckDate("Mon, 07 Sep 2026 21:30 GMT",    1788816600L);   /* no seconds  */
+    CheckDate("Mon, 07 Sep 2026 21:30:00 +0000", 1788816600L);
+    CheckDate("Mon, 07 Sep 2026 23:30:00 +0200", 1788816600L);
+    CheckDate("Mon, 07 Sep 2026 17:30:00 EST",  1788820200L);
+
+    /* Atom: ISO 8601. */
+    CheckDate("2026-09-07T21:30:00Z",      1788816600L);
+    CheckDate("2026-09-07T21:30:00+02:00", 1788809400L);
+    CheckDate("2026-09-07T21:30:00.123Z",  1788816600L);   /* fractional secs */
+    CheckDate("2026-09-07T21:30:00+0200",  1788809400L);   /* no colon        */
+
+    CheckDate("2024-01-01T00:00:00Z", 1704067200L);
+    CheckDate("1999-12-31T23:59:59Z", 946684799L);
+    CheckDate("1970-01-01T00:00:01Z", 1L);
+    CheckDate("2026-03-01T00:00:00Z", 1772323200L);        /* after Feb       */
+
+    /* RFC 822 allowed two-digit years and old feeds still send them. */
+    CheckDate("Mon, 07 Sep 26 21:30:00 GMT", 1788816600L);
+
+    CheckDate("  2026-09-07T21:30:00Z  ", 1788816600L);    /* trimmed         */
+
+    /* Unreadable is 0, not a guess: an article dated by accident sorts wrong
+       forever, and a blank date column is honest. */
+    CheckDate("", 0L);
+    CheckDate("not a date at all", 0L);
+    CheckDate("Mon, 07 Xxx 2026 21:30:00 GMT", 0L);
+    CheckDate("2026-13-45T99:99:99Z", 0L);
+
+    {
+        char out[16];
+
+        GazetteFormatDate(1788816600L, 1788816600L, out, sizeof out);
+        CheckStr("a recent date shows the time", out, "Sep 07 21:30");
+
+        /* Past about half a year the time of day stops meaning anything and
+           the year starts to. */
+        GazetteFormatDate(1704067200L, 1788816600L, out, sizeof out);
+        CheckStr("an old date shows the year", out, "Jan 01 2024");
+
+        GazetteFormatDate(1788816600L, 0L, out, sizeof out);
+        CheckStr("with no clock, the time is shown", out, "Sep 07 21:30");
+
+        GazetteFormatDate(0L, 1788816600L, out, sizeof out);
+        CheckStr("an unknown date formats to nothing", out, "");
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Feed parsing                                                        */
+/* ------------------------------------------------------------------ */
+
+#define kMaxCollected 32
+
+static GazetteArticle gCollected[kMaxCollected];
+static int            gCollectedCount;
+static int            gCollectLimit;
+
+static int Collect(const GazetteArticle *a, void *context)
+{
+    (void)context;
+    if (gCollectedCount < kMaxCollected) {
+        gCollected[gCollectedCount++] = *a;
+    }
+    if (gCollectLimit > 0 && gCollectedCount >= gCollectLimit) {
+        return 0;
+    }
+    return 1;
+}
+
+/* Parse in chunks of `chunk` bytes, or all at once when chunk is 0. Every
+   token has to survive being split, so the tests run the same documents both
+   ways. */
+static void ParseFeed(GazetteFeedParser *p, const char *doc, size_t chunk)
+{
+    size_t len = strlen(doc);
+    size_t off = 0;
+
+    gCollectedCount = 0;
+    GazetteFeedParserInit(p, Collect, NULL);
+
+    if (chunk == 0) {
+        GazetteFeedParserFeed(p, doc, len);
+    } else {
+        while (off < len) {
+            size_t n = (len - off < chunk) ? len - off : chunk;
+            if (!GazetteFeedParserFeed(p, doc + off, n)) {
+                break;
+            }
+            off += n;
+        }
+    }
+    GazetteFeedParserFinish(p);
+}
+
+static const char kRSS[] =
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+    "<rss version=\"2.0\">\n"
+    "<channel>\n"
+    "  <title>Example News</title>\n"
+    "  <link>https://example.com/</link>\n"
+    "  <image><title>Example Logo</title><url>https://example.com/l.png</url></image>\n"
+    "  <item>\n"
+    "    <title>First &amp; foremost</title>\n"
+    "    <link>https://example.com/1</link>\n"
+    "    <pubDate>Mon, 07 Sep 2026 21:30:00 GMT</pubDate>\n"
+    "    <source url=\"https://cnn.com\">CNN</source>\n"
+    "  </item>\n"
+    "  <item>\n"
+    "    <title><![CDATA[Second <b>story</b>]]></title>\n"
+    "    <link>https://example.com/2</link>\n"
+    "    <pubDate>Mon, 07 Sep 2026 20:00:00 GMT</pubDate>\n"
+    "  </item>\n"
+    "  <!-- a comment with <item> inside it that must not become an article -->\n"
+    "  <item>\n"
+    "    <guid isPermaLink=\"true\">https://example.com/3</guid>\n"
+    "    <title>Third</title>\n"
+    "  </item>\n"
+    "</channel>\n"
+    "</rss>\n";
+
+static void CheckRSSResult(const GazetteFeedParser *p, const char *how)
+{
+    char label[96];
+
+    snprintf(label, sizeof label, "RSS (%s): three articles", how);
+    CheckLong(label, (long)gCollectedCount, 3);
+    if (gCollectedCount != 3) {
+        return;
+    }
+
+    snprintf(label, sizeof label, "RSS (%s): feed title", how);
+    CheckStr(label, GazetteFeedParserTitle(p), "Example News");
+
+    snprintf(label, sizeof label, "RSS (%s): entities decoded in a title", how);
+    CheckStr(label, gCollected[0].title, "First & foremost");
+
+    snprintf(label, sizeof label, "RSS (%s): link", how);
+    CheckStr(label, gCollected[0].link, "https://example.com/1");
+
+    snprintf(label, sizeof label, "RSS (%s): date", how);
+    CheckLong(label, gCollected[0].date, 1788816600L);
+
+    snprintf(label, sizeof label, "RSS (%s): source", how);
+    CheckStr(label, gCollected[0].source, "CNN");
+
+    /* CDATA keeps its content verbatim, and the markup inside it is markup. */
+    snprintf(label, sizeof label, "RSS (%s): CDATA with markup", how);
+    CheckStr(label, gCollected[1].title, "Second story");
+
+    /* A permalink guid stands in when there is no <link>. */
+    snprintf(label, sizeof label, "RSS (%s): guid used as a link", how);
+    CheckStr(label, gCollected[2].link, "https://example.com/3");
+
+    snprintf(label, sizeof label, "RSS (%s): a missing date is 0", how);
+    CheckLong(label, gCollected[2].date, 0L);
+}
+
+static const char kAtom[] =
+    "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
+    "<feed xmlns=\"http://www.w3.org/2005/Atom\">\n"
+    "  <title>Atom Example</title>\n"
+    "  <link rel=\"self\" href=\"https://example.com/feed.atom\"/>\n"
+    "  <entry>\n"
+    "    <title>Caf&#233; opens</title>\n"
+    "    <link rel=\"self\" href=\"https://example.com/wrong\"/>\n"
+    "    <link rel=\"alternate\" href=\"https://example.com/a\"/>\n"
+    "    <published>2026-09-07T21:30:00Z</published>\n"
+    "    <author><name>Jane Roe</name></author>\n"
+    "  </entry>\n"
+    "  <entry>\n"
+    "    <title type=\"html\">Tom &amp; Jerry</title>\n"
+    "    <link href=\"https://example.com/b\"/>\n"
+    "    <updated>2026-09-07T20:00:00Z</updated>\n"
+    "  </entry>\n"
+    "</feed>\n";
+
+static void CheckAtomResult(const GazetteFeedParser *p, const char *how)
+{
+    char label[96];
+
+    snprintf(label, sizeof label, "Atom (%s): two entries", how);
+    CheckLong(label, (long)gCollectedCount, 2);
+    if (gCollectedCount != 2) {
+        return;
+    }
+
+    snprintf(label, sizeof label, "Atom (%s): feed title", how);
+    CheckStr(label, GazetteFeedParserTitle(p), "Atom Example");
+
+    /* The accent is decoded to UTF-8 and then transliterated for Mac OS 9. */
+    snprintf(label, sizeof label, "Atom (%s): title transliterated", how);
+    CheckStr(label, gCollected[0].title, "Cafe opens");
+
+    /* rel="self" is the feed itself; only the alternate link is the article. */
+    snprintf(label, sizeof label, "Atom (%s): rel=self is skipped", how);
+    CheckStr(label, gCollected[0].link, "https://example.com/a");
+
+    snprintf(label, sizeof label, "Atom (%s): published date", how);
+    CheckLong(label, gCollected[0].date, 1788816600L);
+
+    snprintf(label, sizeof label, "Atom (%s): author name is the source", how);
+    CheckStr(label, gCollected[0].source, "Jane Roe");
+
+    snprintf(label, sizeof label, "Atom (%s): a link with no rel is the article", how);
+    CheckStr(label, gCollected[1].link, "https://example.com/b");
+
+    snprintf(label, sizeof label, "Atom (%s): updated is used when published is absent", how);
+    CheckLong(label, gCollected[1].date, 1788816600L - 5400L);
+}
+
+static void TestFeedParsing(void)
+{
+    static GazetteFeedParser p;
+
+    gCollectLimit = 0;
+
+    ParseFeed(&p, kRSS, 0);
+    CheckRSSResult(&p, "whole");
+
+    /* One byte at a time splits every tag name, every entity and the CDATA
+       terminator itself. If the scanner holds any state wrongly across a
+       chunk boundary, this is where it shows. */
+    ParseFeed(&p, kRSS, 1);
+    CheckRSSResult(&p, "1-byte chunks");
+
+    ParseFeed(&p, kRSS, 7);
+    CheckRSSResult(&p, "7-byte chunks");
+
+    ParseFeed(&p, kAtom, 0);
+    CheckAtomResult(&p, "whole");
+    ParseFeed(&p, kAtom, 1);
+    CheckAtomResult(&p, "1-byte chunks");
+    ParseFeed(&p, kAtom, 3);
+    CheckAtomResult(&p, "3-byte chunks");
+
+    /* A sink that stops early stops the parser, which is what caps a feed at
+       the max-articles preference without reading the rest of it. */
+    gCollectLimit = 2;
+    ParseFeed(&p, kRSS, 0);
+    CheckLong("a sink can stop the parse", (long)gCollectedCount, 2);
+    gCollectLimit = 0;
+
+    {
+        /* A download cut mid-item: the headline was read long before the
+           closing tag would have arrived, and is worth showing. */
+        static const char truncated[] =
+            "<rss><channel><title>T</title>"
+            "<item><title>Complete</title><link>https://e/1</link></item>"
+            "<item><title>Cut short</title><link>https://e/2</link>";
+        GazetteFeedParser q;
+
+        gCollectedCount = 0;
+        GazetteFeedParserInit(&q, Collect, NULL);
+        GazetteFeedParserFeed(&q, truncated, sizeof truncated - 1);
+        CheckLong("before finishing, only the complete item is out",
+                  (long)gCollectedCount, 1);
+        GazetteFeedParserFinish(&q);
+        CheckLong("finishing emits the interrupted one too",
+                  (long)gCollectedCount, 2);
+        CheckStr("with what was read of it",
+                 gCollected[1].title, "Cut short");
+    }
+
+    {
+        /* An item with neither title nor link is a template artefact, not an
+           article. */
+        static const char empty[] =
+            "<rss><channel><item></item><item><title>Real</title></item></channel></rss>";
+        GazetteFeedParser q;
+
+        gCollectedCount = 0;
+        GazetteFeedParserInit(&q, Collect, NULL);
+        GazetteFeedParserFeed(&q, empty, sizeof empty - 1);
+        GazetteFeedParserFinish(&q);
+        CheckLong("an empty item is not an article", (long)gCollectedCount, 1);
+        CheckStr("the real one survives", gCollected[0].title, "Real");
+    }
+
+    {
+        /* Namespace prefixes are ignored rather than resolved. */
+        static const char prefixed[] =
+            "<atom:feed><atom:title>Prefixed</atom:title>"
+            "<atom:entry><atom:title>Item</atom:title>"
+            "<atom:link href=\"https://e/x\"/></atom:entry></atom:feed>";
+        GazetteFeedParser q;
+
+        gCollectedCount = 0;
+        GazetteFeedParserInit(&q, Collect, NULL);
+        GazetteFeedParserFeed(&q, prefixed, sizeof prefixed - 1);
+        GazetteFeedParserFinish(&q);
+        CheckLong("a prefixed feed parses", (long)gCollectedCount, 1);
+        CheckStr("feed title", GazetteFeedParserTitle(&q), "Prefixed");
+        CheckStr("item title", gCollected[0].title, "Item");
+        CheckStr("item link", gCollected[0].link, "https://e/x");
+    }
+
+    {
+        /* ']' inside CDATA that is not the terminator. */
+        static const char brackets[] =
+            "<rss><channel><item><title><![CDATA[a]b]]c]]></title>"
+            "<link>https://e/1</link></item></channel></rss>";
+        GazetteFeedParser q;
+
+        gCollectedCount = 0;
+        GazetteFeedParserInit(&q, Collect, NULL);
+        GazetteFeedParserFeed(&q, brackets, sizeof brackets - 1);
+        GazetteFeedParserFinish(&q);
+        CheckLong("brackets inside CDATA parse", (long)gCollectedCount, 1);
+        CheckStr("and are kept", gCollected[0].title, "a]b]]c");
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Feed auto-discovery                                                 */
+/* ------------------------------------------------------------------ */
+
+static void TestDiscovery(void)
+{
+    static const char page[] =
+        "<!DOCTYPE html>\n<html><head>\n"
+        "  <title>A Site</title>\n"
+        "  <link rel=\"stylesheet\" href=\"/style.css\">\n"
+        "  <link rel=\"alternate\" type=\"application/rss+xml\""
+        "        title=\"RSS\" href=\"/feed.xml\">\n"
+        "  <link rel=\"alternate\" type=\"application/atom+xml\" href=\"/atom.xml\">\n"
+        "</head><body>Hello</body></html>";
+    GazetteFeedParser p;
+
+    GazetteFeedParserInitDiscovery(&p);
+    GazetteFeedParserFeed(&p, page, sizeof page - 1);
+    CheckStr("the first feed link is found",
+             GazetteFeedParserDiscovered(&p), "/feed.xml");
+
+    /* Same page, one byte at a time. */
+    {
+        size_t i;
+        GazetteFeedParserInitDiscovery(&p);
+        for (i = 0; i < sizeof page - 1; i++) {
+            GazetteFeedParserFeed(&p, page + i, 1);
+        }
+        CheckStr("and found the same way in 1-byte chunks",
+                 GazetteFeedParserDiscovered(&p), "/feed.xml");
+    }
+
+    {
+        static const char none[] =
+            "<html><head><link rel=\"stylesheet\" href=\"/a.css\">"
+            "<link rel=\"icon\" href=\"/f.ico\"></head></html>";
+        GazetteFeedParser q;
+
+        GazetteFeedParserInitDiscovery(&q);
+        GazetteFeedParserFeed(&q, none, sizeof none - 1);
+        CheckStr("a page with no feed discovers nothing",
+                 GazetteFeedParserDiscovered(&q), "");
+    }
+
+    {
+        /* Some pages omit rel="alternate"; none of the other rel values name
+           a feed, so type alone is enough. */
+        static const char norel[] =
+            "<html><head><link type=\"application/rss+xml\" href=\"/f.rss\">"
+            "</head></html>";
+        GazetteFeedParser q;
+
+        GazetteFeedParserInitDiscovery(&q);
+        GazetteFeedParserFeed(&q, norel, sizeof norel - 1);
+        CheckStr("a feed link with no rel is still found",
+                 GazetteFeedParserDiscovered(&q), "/f.rss");
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Google News                                                         */
+/* ------------------------------------------------------------------ */
+
+static void TestGoogleNews(void)
+{
+    char url[1024];
+    const GazetteCountry *us = GazetteCountryFind("US");
+    const GazetteCountry *br = GazetteCountryFind("br");
+
+    CheckStr("a country is found by code", us->code, "US");
+    CheckStr("case does not matter", br->code, "BR");
+    CheckStr("and it carries its parameters", br->ceid, "BR:pt");
+
+    /* NewsProxy's DEFAULT_COUNTRY: an unknown code still produces a usable
+       feed rather than a failure the user cannot interpret. */
+    CheckStr("an unknown code falls back to the US",
+             GazetteCountryFind("ZZ")->code, "US");
+    CheckStr("and so does no code at all",
+             GazetteCountryFind(NULL)->code, "US");
+
+    GazetteGoogleNewsURL(us, kGazetteTopicTop, NULL, url, sizeof url);
+    CheckStr("top stories", url,
+             "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en");
+
+    GazetteGoogleNewsURL(us, kGazetteTopicSection, "WORLD", url, sizeof url);
+    CheckStr("a section", url,
+             "https://news.google.com/rss/headlines/section/topic/WORLD"
+             "?hl=en-US&gl=US&ceid=US:en");
+
+    GazetteGoogleNewsURL(br, kGazetteTopicNation, NULL, url, sizeof url);
+    CheckStr("national news is keyed by gl, not by a section name", url,
+             "https://news.google.com/rss/headlines/section/geo/BR"
+             "?hl=pt-BR&gl=BR&ceid=BR:pt");
+
+    /* A search already opened the query string, so the parameters that follow
+       it join with '&' rather than '?'. */
+    GazetteGoogleNewsURL(us, kGazetteTopicSearch, "Apple Inc", url, sizeof url);
+    CheckStr("a search", url,
+             "https://news.google.com/rss/search?q=Apple%20Inc"
+             "&hl=en-US&gl=US&ceid=US:en");
+
+    CheckLong("a section with no name is refused",
+              (long)GazetteGoogleNewsURL(us, kGazetteTopicSection, "",
+                                         url, sizeof url), 0);
+
+    {
+        char small[16];
+        CheckLong("a URL that will not fit is refused",
+                  (long)GazetteGoogleNewsURL(us, kGazetteTopicTop, NULL,
+                                             small, sizeof small), 0);
+        CheckStr("and leaves the buffer empty", small, "");
+    }
+
+    {
+        char enc[128];
+
+        GazetteURLEncode("a b&c=d", enc, sizeof enc);
+        CheckStr("query values are percent-encoded", enc, "a%20b%26c%3Dd");
+        GazetteURLEncode("plain-Text_1.0~", enc, sizeof enc);
+        CheckStr("unreserved characters are left alone", enc, "plain-Text_1.0~");
+        CheckLong("an encoding that will not fit is refused",
+                  (long)GazetteURLEncode("aaaaaa", enc, 4), 0);
+    }
+
+    {
+        /* The generated table is data, and the thing worth checking about
+           data is that it is self-consistent. */
+        int i;
+        int bad = 0;
+
+        CheckTrue("the topic table is populated", kGazetteTopicCount > 100);
+        CheckTrue("the group table is populated", kGazetteTopicGroupCount > 0);
+
+        for (i = 0; i < kGazetteTopicCount; i++) {
+            const GazetteTopic *t = &kGazetteTopics[i];
+
+            if (t->group < 0 || t->group >= kGazetteTopicGroupCount ||
+                t->name == NULL || t->name[0] == '\0' ||
+                t->value == NULL || t->value[0] == '\0') {
+                bad++;
+                continue;
+            }
+            if (GazetteGoogleNewsURL(us, t->kind, t->value,
+                                     url, sizeof url) == 0) {
+                bad++;
+            }
+        }
+        CheckLong("every topic names a group and builds a URL", (long)bad, 0);
+
+        for (i = 0; i < kGazetteTopicGroupCount; i++) {
+            if (kGazetteTopicGroups[i] == NULL ||
+                kGazetteTopicGroups[i][0] == '\0') {
+                bad++;
+            }
+        }
+        CheckLong("every group has a name", (long)bad, 0);
+    }
+}
+
 /* ------------------------------------------------------------------ */
 
 int main(void)
@@ -835,6 +1399,11 @@ int main(void)
     TestHTTPRequest();
     TestHTTPResponse();
     TestChunked();
+    TestEntities();
+    TestDates();
+    TestFeedParsing();
+    TestDiscovery();
+    TestGoogleNews();
 
     printf("Gazette host tests: %d checks, %d failure%s\n",
            gChecks, gFailures, gFailures == 1 ? "" : "s");
