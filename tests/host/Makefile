@@ -15,6 +15,7 @@ SOURCES = \
 	$(SRC)/portable/gazette_http.c \
 	$(SRC)/prefs/gazette_prefs.c \
 	$(SRC)/feeds/gazette_feed_parse.c \
+	$(SRC)/extract/gazette_extract.c \
 	$(SRC)/feeds/gazette_googlenews.c \
 	$(SRC)/feeds/gazette_gnews_topics.c
 

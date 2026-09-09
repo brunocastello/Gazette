@@ -1,1 +1,124 @@
-/* Gazette — HTML extraction stub (Phase 3: stripping, transliteration) */
+/*
+ * Gazette — HTML to readable text
+ * Copyright (c) 2026 brunocastello
+ *
+ * PORTABLE: no system headers, host-tested (constraint 5).
+ *
+ * Two things live here. The small one is what Gazette knows about HTML tags —
+ * an element's name, and whether it ends a paragraph — which the feed parser
+ * borrows for the markup inside a description, so there is one list of block
+ * elements in the application rather than two that drift.
+ *
+ * The large one is the extractor: the article page itself, turned into
+ * something the reader pane can lay out. It is incremental for the same
+ * reason the feed parser is — the fetch hands over 4 KB at a time and a news
+ * page is hundreds of KB — and every token may be split across a chunk
+ * boundary, including in the middle of a tag name or a comment terminator.
+ *
+ * It is not a readability engine and is not trying to be (AGENT.md scopes
+ * that out). It throws away the elements that are never prose — script,
+ * style, navigation, the page furniture — turns block elements into paragraph
+ * breaks, and puts what is left through the same decode / transliterate /
+ * flatten pipeline the feed summaries go through. What comes out of a news
+ * page is the article plus some of the page's own chatter around it, which is
+ * a great deal better than the alternative and costs no judgement about which
+ * <div> is the interesting one.
+ */
+#ifndef GAZETTE_EXTRACT_H
+#define GAZETTE_EXTRACT_H
+
+#include <stddef.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* ------------------------------------------------------------------ */
+/* What Gazette knows about tags                                       */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The element name out of a tag's raw inner text — everything between the '<'
+ * and the '>' — lowercased, with any leading '/' and all attributes dropped.
+ * Writes "" for a comment, a doctype, or anything else that is not an
+ * element. cap of 24 holds every name either caller cares about.
+ */
+void GazetteHtmlTagName(const char *tag, size_t len, char *out, size_t cap);
+
+/* 1 when an element ends a paragraph: p, div, li, br, the headings and the
+   rest of the block-level list a page or a feed summary actually uses. */
+int GazetteHtmlIsBlockTag(const char *name);
+
+/* ------------------------------------------------------------------ */
+/* The extractor                                                       */
+/* ------------------------------------------------------------------ */
+
+enum {
+    /*
+     * The most text Gazette keeps from one article page. About 1300 words,
+     * which covers a news story comfortably and truncates a long feature —
+     * the right way round, since the alternative is letting a page decide how
+     * much of an 8 MB partition it gets. The fetch is abandoned the moment
+     * this fills, so a 2 MB page is not downloaded to be thrown away.
+     */
+    kGazetteExtractMax = 8192,
+
+    /* Below this, the page yielded nothing worth replacing the feed's own
+       summary with — a paywall stub, a cookie wall, a redirect notice. */
+    kGazetteExtractMin = 200
+};
+
+typedef struct {
+    int    state;
+    int    closing;                 /* the tag being read starts with '/' */
+
+    char   tag[64];                 /* the tag's leading token, as read */
+    size_t tagLen;
+    int    tagOverflow;             /* a tag longer than tag[] can hold */
+
+    char   skip[24];                /* element being skipped, "" when none */
+    int    skipDepth;
+
+    int    dashes;                  /* '-' run seen while inside a comment */
+
+    /* "</script" and how much of it has matched, while inside an element
+       whose content is not markup. */
+    char   rawPat[16];
+    size_t rawMatch;
+
+    /*
+     * The text as it is scraped, with entities still in it, and the scratch
+     * the transliteration pass writes into. Both are in the struct rather
+     * than on the stack: this runs several frames inside the fetch pump, and
+     * 8 KB of locals there is not something a Mac OS 9 stack should be asked
+     * for.
+     */
+    char   out[kGazetteExtractMax];
+    char   scratch[kGazetteExtractMax];
+    size_t outLen;
+    size_t textLen;                 /* the finished text, after Finish */
+    int    full;
+} GazetteExtract;
+
+void GazetteExtractInit(GazetteExtract *e);
+
+/* Feed the next run of page bytes. Returns 0 once there is no room for more,
+   which is the fetch's signal to stop reading — the same contract the feed
+   parser's sink has. */
+int GazetteExtractFeed(GazetteExtract *e, const char *data, size_t len);
+
+/*
+ * No more bytes are coming. Runs the pipeline over what was scraped — decode
+ * entities, transliterate to ASCII, flatten to paragraphs — and returns the
+ * finished length, which is 0 when the page held nothing usable.
+ */
+size_t GazetteExtractFinish(GazetteExtract *e);
+
+/* The finished text. "" before Finish. */
+const char *GazetteExtractText(const GazetteExtract *e);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* GAZETTE_EXTRACT_H */

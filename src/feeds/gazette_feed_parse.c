@@ -7,6 +7,7 @@
 
 #include "feeds/gazette_feed_parse.h"
 
+#include "extract/gazette_extract.h"
 #include "portable/gazette_portable.h"
 
 #include <string.h>
@@ -184,59 +185,6 @@ size_t GazetteDecodeEntities(char *s, size_t len)
     return out;
 }
 
-/*
- * The HTML elements that end a paragraph. A description is prose written for
- * a web page, and whether it is one paragraph or four is the difference
- * between something to read and a wall of text -- so these become a line
- * break rather than a space, and every other tag still becomes a space.
- *
- * The list is the block-level elements a publisher actually uses in a feed
- * summary. It does not need to be the whole of HTML: an element that is not
- * here costs a paragraph break, not correctness.
- */
-static const char *const kBlockTags[] = {
-    "p", "br", "div", "li", "ul", "ol", "tr", "table", "pre", "hr",
-    "h1", "h2", "h3", "h4", "h5", "h6",
-    "blockquote", "section", "article", "figure", "figcaption"
-};
-
-/* The element name out of a tag's raw text, lowercased, with any leading '/'
-   and any attributes dropped. Empty for a comment, a doctype or anything else
-   that is not an element. */
-static void MarkupTagName(const char *tag, size_t len, char *out, size_t cap)
-{
-    size_t start = 0;
-    size_t n     = 0;
-
-    if (start < len && tag[start] == '/') {
-        start++;
-    }
-    while (start + n < len && n + 1 < cap) {
-        char c = tag[start + n];
-
-        if (c >= 'A' && c <= 'Z') {
-            c = (char)(c - 'A' + 'a');
-        } else if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) {
-            break;
-        }
-        out[n] = c;
-        n++;
-    }
-    out[n] = '\0';
-}
-
-static int IsBlockTag(const char *name)
-{
-    size_t i;
-
-    for (i = 0; i < sizeof kBlockTags / sizeof kBlockTags[0]; i++) {
-        if (strcmp(name, kBlockTags[i]) == 0) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
 size_t GazetteStripMarkup(char *s, size_t len)
 {
     size_t in    = 0;
@@ -262,11 +210,12 @@ size_t GazetteStripMarkup(char *s, size_t len)
                 if (depth == 0) {
                     char name[24];
 
-                    MarkupTagName(s + start, in - 1 - start, name, sizeof name);
+                    GazetteHtmlTagName(s + start, in - 1 - start,
+                                       name, sizeof name);
 
                     /* A tag becomes whitespace, not nothing: "a<br>b" is two
                        words, and two paragraphs when the tag says so. */
-                    if (IsBlockTag(name)) {
+                    if (GazetteHtmlIsBlockTag(name)) {
                         if (out > 0 && s[out - 1] != '\n') {
                             if (out > 0 && s[out - 1] == ' ') {
                                 out--;      /* the break replaces the space */

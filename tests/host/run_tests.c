@@ -9,6 +9,7 @@
  * directory.
  */
 
+#include "extract/gazette_extract.h"
 #include "feeds/gazette_feed_parse.h"
 #include "feeds/gazette_googlenews.h"
 #include "portable/gazette_http.h"
@@ -1919,6 +1920,185 @@ static void TestPrefsIterator(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* The article-page extractor                                          */
+/* ------------------------------------------------------------------ */
+
+/* Run a page through the extractor, whole or in chunks of `chunk` bytes.
+   Everything has to survive being split, including a tag name and a comment
+   terminator, so the tests below run both ways. */
+static const char *Extract(GazetteExtract *e, const char *page, size_t chunk)
+{
+    size_t len = strlen(page);
+    size_t off = 0;
+
+    GazetteExtractInit(e);
+    if (chunk == 0) {
+        GazetteExtractFeed(e, page, len);
+    } else {
+        while (off < len) {
+            size_t n = (len - off < chunk) ? len - off : chunk;
+
+            if (!GazetteExtractFeed(e, page + off, n)) {
+                break;
+            }
+            off += n;
+        }
+    }
+    GazetteExtractFinish(e);
+    return GazetteExtractText(e);
+}
+
+static void TestExtractTags(void)
+{
+    char name[24];
+
+    GazetteHtmlTagName("p", 1, name, sizeof name);
+    CheckStr("a bare name", name, "p");
+
+    GazetteHtmlTagName("/DIV", 4, name, sizeof name);
+    CheckStr("a close tag, lowercased", name, "div");
+
+    GazetteHtmlTagName("a href=\"x\"", 10, name, sizeof name);
+    CheckStr("attributes are dropped", name, "a");
+
+    GazetteHtmlTagName("br/", 3, name, sizeof name);
+    CheckStr("and so is a self-closing slash", name, "br");
+
+    GazetteHtmlTagName("!doctype html", 13, name, sizeof name);
+    CheckStr("a doctype is not an element", name, "");
+
+    CheckTrue("p ends a paragraph", GazetteHtmlIsBlockTag("p"));
+    CheckTrue("so does li", GazetteHtmlIsBlockTag("li"));
+    CheckLong("span does not", GazetteHtmlIsBlockTag("span"), 0);
+    CheckLong("nor does an empty name", GazetteHtmlIsBlockTag(""), 0);
+}
+
+static void TestExtract(void)
+{
+    static GazetteExtract e;   /* 16 KB: too big for this stack, as in the app */
+
+    CheckStr("a plain page", Extract(&e, "<html><body><p>Hello there.</p>"
+                                         "<p>Second para.</p></body></html>", 0),
+             "Hello there.\nSecond para.");
+
+    /* The whole point: a news page is mostly not the article. */
+    CheckStr("script and style go entirely",
+             Extract(&e,
+                     "<html><head><title>T</title>"
+                     "<style>body { color: red; }</style></head><body>"
+                     "<script>var a = 1; if (a < 2) { x(); }</script>"
+                     "<p>The story.</p>"
+                     "<script>more();</script>"
+                     "<p>Continues.</p></body></html>", 0),
+             "The story.\nContinues.");
+
+    /* The bug this guards: '<' inside JavaScript is not a tag, and a scanner
+       that thinks it is runs past the real </script> and eats the article. */
+    CheckStr("a '<' inside a script does not swallow the page",
+             Extract(&e, "<body><script>if (a < 2 && b > 1) { x(); }</script>"
+                         "<p>Survives.</p></body>", 0),
+             "Survives.");
+
+    CheckStr("even inside something else being skipped",
+             Extract(&e, "<html><head><script>if (a < 2) y();</script></head>"
+                         "<body><p>Survives.</p></body></html>", 0),
+             "Survives.");
+
+    CheckStr("a close tag in the wrong case still ends it",
+             Extract(&e, "<body><SCRIPT>a < b</SCRIPT><p>Survives.</p></body>", 0),
+             "Survives.");
+
+    CheckStr("page furniture goes with them",
+             Extract(&e,
+                     "<body><nav><a href=\"/\">Home</a><a href=\"/x\">News</a></nav>"
+                     "<header>Masthead</header>"
+                     "<p>The story.</p>"
+                     "<aside>Related stories</aside>"
+                     "<footer>Copyright</footer></body>", 0),
+             "The story.");
+
+    /* Nesting: the close tag of an inner one must not end the skip early. */
+    CheckStr("a nested skip element unwinds properly",
+             Extract(&e, "<body><nav><div><nav>x</nav></div>y</nav>"
+                         "<p>Kept.</p></body>", 0),
+             "Kept.");
+
+    /* Source formatting is not paragraph structure. */
+    CheckStr("newlines in the markup are just whitespace",
+             Extract(&e, "<body>\n  <p>One\n     two\n  three</p>\n</body>", 0),
+             "One two three");
+
+    CheckStr("an inline tag still separates words",
+             Extract(&e, "<p>a<b>b</b>c</p>", 0), "a b c");
+
+    /* A comment may hold anything at all, '>' included, and pages park whole
+       blocks of markup inside one. It joins the text either side of it rather
+       than separating them, which is what a browser does with one. */
+    CheckStr("a comment is skipped to its real end",
+             Extract(&e, "<p>Before<!-- <p>not this</p> a > b -->After</p>", 0),
+             "BeforeAfter");
+
+    CheckStr("entities are decoded and transliterated",
+             Extract(&e, "<p>Ten&nbsp;degrees&mdash;said AT&amp;T</p>", 0),
+             "Ten degrees--said AT&T");
+
+    CheckStr("a headline and its body", Extract(&e,
+             "<body><h1>The Headline</h1><p>The body.</p></body>", 0),
+             "The Headline\nThe body.");
+
+    {
+        /* Chunked the same page every way it can be split. */
+        static const char page[] =
+            "<html><head><style>a{b:c}</style></head><body>"
+            "<!-- a comment with a > in it -->"
+            "<nav>Menu</nav><h1>Title</h1>"
+            "<p>First&nbsp;paragraph.</p><p>Second.</p></body></html>";
+        static const char want[] = "Title\nFirst paragraph.\nSecond.";
+
+        CheckStr("whole", Extract(&e, page, 0), want);
+        CheckStr("one byte at a time", Extract(&e, page, 1), want);
+        CheckStr("three bytes at a time", Extract(&e, page, 3), want);
+        CheckStr("seven bytes at a time", Extract(&e, page, 7), want);
+    }
+
+    {
+        /* A page with nothing in it must not come back as an article: the
+           feed's own summary is better than an empty pane. */
+        CheckLong("an empty page yields nothing",
+                  (long)strlen(Extract(&e, "<html><head></head><body>"
+                                           "<script>x()</script></body></html>", 0)),
+                  0);
+    }
+
+    {
+        /*
+         * Filling the buffer stops the fetch rather than reading a 2 MB page
+         * to throw most of it away. Feed says so by returning 0.
+         */
+        static char big[kGazetteExtractMax * 2];
+        size_t i;
+
+        for (i = 0; i < sizeof big - 1; i++) {
+            big[i] = (char)('a' + (i % 26));
+        }
+        big[sizeof big - 1] = '\0';
+
+        GazetteExtractInit(&e);
+        CheckLong("a page bigger than the buffer stops the fetch",
+                  GazetteExtractFeed(&e, big, strlen(big)), 0);
+        CheckTrue("and what was read is kept",
+                  GazetteExtractFinish(&e) > kGazetteExtractMin);
+    }
+
+    {
+        /* An unterminated tag at the end of a truncated download must not
+           leave half a tag in the text. */
+        CheckStr("a download cut inside a tag",
+                 Extract(&e, "<p>Kept.</p><p class=\"x", 0), "Kept.");
+    }
+}
+
+/* ------------------------------------------------------------------ */
 
 int main(void)
 {
@@ -1943,6 +2123,8 @@ int main(void)
     TestEntities();
     TestDates();
     TestFeedParsing();
+    TestExtractTags();
+    TestExtract();
     TestDiscovery();
     TestGoogleNews();
 
