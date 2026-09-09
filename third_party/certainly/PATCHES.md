@@ -560,3 +560,26 @@ the whole adaptation is `-DOTCARBONAPPLICATION=1`, set on the `certainly`
 target in `CMakeLists.txt` and carried to `src/net/` through
 `target_compile_definitions(... PUBLIC)`. Without it the file does not
 compile.
+
+## §23 — Carbon: `OTInstallNotifier` takes a UPP, not a procedure pointer
+
+*Gazette's patch, and one worth carrying back: it is correct on classic too.*
+
+`transport_ot.c` passed `ot_notifier` straight to `OTInstallNotifier` at all
+three call sites. The parameter's type is `OTNotifyUPP`, and on classic
+PowerPC `OPAQUE_UPP_TYPES` is off, so `TVECTOR_UPP_TYPE(OTNotifyProcPtr)`
+collapses to the procedure pointer itself and `NewOTNotifyUPP()` is the
+identity macro — the two types are the same and nobody notices. Under Carbon
+`OPAQUE_UPP_TYPES` is on, `OTNotifyUPP` becomes
+`struct OpaqueOTNotifyProcPtr *`, and the call fails to compile with
+*"passing argument 2 of 'OTInstallNotifier' from incompatible pointer type"*.
+
+Apple's own comment above the typedef says as much: *"Even though a
+OTNotifyUPP is a OTNotifyProcPtr on pre-Carbon system, use NewOTNotifyUPP()
+and friends to make your source code portable to OS X and Carbon."*
+
+The wrapper is a single file-scope UPP built on first use rather than one per
+transport. The notifier tells connections apart by its context argument, so
+nothing about the routine is per-connection — and a single process-lifetime
+UPP settles the question of when to call `DisposeOTNotifyUPP()`, which one UPP
+per transport would have to do on every path out of `ct_transport_destroy()`.

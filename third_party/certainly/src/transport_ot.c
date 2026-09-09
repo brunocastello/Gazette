@@ -97,6 +97,31 @@ static OSStatus    ot_setup_endpoint(CTransport *t);
 static void        ot_start_dns(CTransport *t);
 
 /*
+ * Gazette patch (PATCHES.md §23): OTInstallNotifier takes an OTNotifyUPP, not
+ * a bare procedure pointer. On classic PowerPC the two are the same type and
+ * NewOTNotifyUPP() is the identity macro, which is why passing ot_notifier
+ * directly has always worked; under Carbon OPAQUE_UPP_TYPES is on and
+ * OTNotifyUPP becomes struct OpaqueOTNotifyProcPtr *, so the call does not
+ * compile without the wrapper. Apple's own note above the typedef says to use
+ * NewOTNotifyUPP() precisely so the source works both ways.
+ *
+ * One UPP for every transport: the notifier tells connections apart by its
+ * context argument, so there is nothing per-connection about the routine
+ * itself. That also disposes of the question of when to call
+ * DisposeOTNotifyUPP -- a single process-lifetime UPP never needs it, whereas
+ * one per transport would have to be freed on every path out of destroy().
+ */
+static OTNotifyUPP gNotifierUPP = NULL;
+
+static OTNotifyUPP ot_notifier_upp(void)
+{
+    if (gNotifierUPP == NULL) {
+        gNotifierUPP = NewOTNotifyUPP(ot_notifier);
+    }
+    return gNotifierUPP;
+}
+
+/*
  * The notifier — runs at interrupt time when OT has something to tell us.
  *
  * OT event codes we care about:
@@ -260,7 +285,7 @@ static OSStatus ot_setup_endpoint(CTransport *t)
     if (err != noErr) return err;
 
     /* Install our notifier so we get async event callbacks */
-    err = OTInstallNotifier(t->endpoint, ot_notifier, t);
+    err = OTInstallNotifier(t->endpoint, ot_notifier_upp(), t);
     if (err != noErr) return err;
 
     /* Switch to async mode — all future calls return immediately */
@@ -293,7 +318,7 @@ static void ot_start_dns(CTransport *t)
         return;
     }
 
-    OTInstallNotifier(t->inetSvc, ot_notifier, t);
+    OTInstallNotifier(t->inetSvc, ot_notifier_upp(), t);
     OTSetAsynchronous(t->inetSvc);
 
     /* t->host, never the caller's buffer: this call is asynchronous and OT
@@ -360,7 +385,7 @@ CTransport *ct_transport_adopt(EndpointRef ep)
      */
     OTRemoveNotifier(ep);
 
-    err = OTInstallNotifier(ep, ot_notifier, t);
+    err = OTInstallNotifier(ep, ot_notifier_upp(), t);
     if (err == noErr) err = OTSetAsynchronous(ep);
     if (err == noErr) err = OTSetNonBlocking(ep);
     if (err != noErr) {

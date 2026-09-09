@@ -87,6 +87,16 @@ const char *gz_trim(const char *s, size_t len, size_t *out_len)
     return s;
 }
 
+int gz_starts_ci(const char *s, size_t len, const char *prefix)
+{
+    size_t plen = strlen(prefix);
+
+    if (len < plen) {
+        return 0;
+    }
+    return gz_strnicmp(s, prefix, plen) == 0;
+}
+
 long gz_parse_dec(const char *s, size_t len, long def)
 {
     long  value = 0;
@@ -96,6 +106,11 @@ long gz_parse_dec(const char *s, size_t len, long def)
 
     if (s == NULL) {
         return def;
+    }
+    /* Leading whitespace is skipped: the status line hands this " 200 OK"
+       starting at the space after "HTTP/1.1". */
+    while (i < len && gz_is_space((unsigned char)s[i])) {
+        i++;
     }
     if (i < len && (s[i] == '-' || s[i] == '+')) {
         negative = (s[i] == '-');
@@ -115,7 +130,7 @@ long gz_parse_dec(const char *s, size_t len, long def)
 }
 
 /* ------------------------------------------------------------------ */
-/* Preference text                                                     */
+/* RFC 822 header blocks                                               */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -138,6 +153,84 @@ static size_t gz_next_line(const char *text, size_t len, size_t off)
     }
     return off + 1;
 }
+
+int gz_find_head_end(const char *buf, size_t len, size_t *head_len)
+{
+    size_t i;
+
+    if (buf == NULL || head_len == NULL) {
+        return 0;
+    }
+
+    for (i = 0; i + 1 < len; i++) {
+        if (buf[i] == '\r' && buf[i + 1] == '\n' &&
+            i + 3 < len && buf[i + 2] == '\r' && buf[i + 3] == '\n') {
+            *head_len = i + 4;
+            return 1;
+        }
+        /* Bare LF is tolerated. It is not legal HTTP, and it turns up
+           anyway -- often enough that rejecting it costs more than it
+           protects. */
+        if (buf[i] == '\n' && buf[i + 1] == '\n') {
+            *head_len = i + 2;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+const char *gz_header_find(const char *head, size_t head_len,
+                           const char *name, size_t *val_len)
+{
+    size_t nlen;
+    size_t off;
+
+    if (head == NULL || name == NULL || val_len == NULL) {
+        return NULL;
+    }
+
+    nlen = strlen(name);
+    off  = gz_next_line(head, head_len, 0);     /* skip the start line */
+
+    while (off < head_len) {
+        size_t eol = off;
+        size_t line_end;
+
+        while (eol < head_len && head[eol] != '\n') {
+            eol++;
+        }
+        line_end = eol;
+        if (line_end > off && head[line_end - 1] == '\r') {
+            line_end--;
+        }
+        if (line_end == off) {
+            break;                              /* blank line: end of block */
+        }
+
+        if (line_end - off > nlen &&
+            gz_strnicmp(head + off, name, nlen) == 0 &&
+            head[off + nlen] == ':') {
+            size_t v = off + nlen + 1;
+
+            while (v < line_end && (head[v] == ' ' || head[v] == '\t')) {
+                v++;
+            }
+            while (line_end > v &&
+                   (head[line_end - 1] == ' ' || head[line_end - 1] == '\t')) {
+                line_end--;
+            }
+            *val_len = line_end - v;
+            return head + v;
+        }
+
+        off = (eol < head_len) ? eol + 1 : head_len;
+    }
+    return NULL;
+}
+
+/* ------------------------------------------------------------------ */
+/* Preference text                                                     */
+/* ------------------------------------------------------------------ */
 
 int gz_prefs_get_nth(const char *text, size_t len, const char *key, int n,
                      char *out, size_t cap)

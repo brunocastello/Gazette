@@ -42,6 +42,26 @@ const char *gz_trim(const char *s, size_t len, size_t *out_len);
    Returns def when there are no digits to read. */
 long gz_parse_dec(const char *s, size_t len, long def);
 
+/* 1 when the first strlen(prefix) bytes of s (bounded by len) match prefix,
+   case-insensitively. */
+int gz_starts_ci(const char *s, size_t len, const char *prefix);
+
+/* ------------------------------------------------------------------ */
+/* RFC 822 header blocks — shared by the HTTP response parser           */
+/* ------------------------------------------------------------------ */
+
+/* Locate the end of a header block. On success stores the offset one past the
+   terminating CRLFCRLF (or LFLF) in *head_len and returns 1; returns 0 while
+   the block is still incomplete, which is what a streamed read sees first. */
+int gz_find_head_end(const char *buf, size_t len, size_t *head_len);
+
+/* Find a header value inside a header block. head points at the start line;
+   the search skips it, so a response's "HTTP/1.1 200 OK" can never be mistaken
+   for a field. Returns a pointer to the first byte of the trimmed value and
+   stores its length in *val_len, or NULL when the field is absent. */
+const char *gz_header_find(const char *head, size_t head_len,
+                           const char *name, size_t *val_len);
+
 /* ------------------------------------------------------------------ */
 /* Preference text — "key = value", one setting per line                */
 /*                                                                     */
