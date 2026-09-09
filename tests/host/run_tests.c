@@ -288,15 +288,18 @@ static void TestPrefsParse(void)
     CheckLong("parse reads max-articles", p.maxArticles, 25);
     CheckLong("parse reads full-text", p.fullText, 1);
 
-    /* Enabled feeds come first, then the disabled ones. */
+    /* File order, exactly — including the disabled one, which keeps its place
+       rather than being sorted to the end. The order of the lines is the order
+       of the sidebar, and a feed switched off is still where the user put it. */
     CheckStr("first feed url", p.feeds[0].url, "https://a.example/rss");
     CheckStr("first feed title", p.feeds[0].title, "Feed A");
     CheckTrue("first feed is enabled", p.feeds[0].enabled);
-    CheckStr("second feed url", p.feeds[1].url, "https://c.example/rss");
+    CheckStr("a disabled feed keeps its place",
+             p.feeds[1].url, "https://b.example/rss");
+    CheckLong("and is not enabled", p.feeds[1].enabled, 0);
+    CheckStr("third feed url", p.feeds[2].url, "https://c.example/rss");
     CheckStr("a feed with no title uses its URL",
-             p.feeds[1].title, "https://c.example/rss");
-    CheckStr("the disabled feed comes last", p.feeds[2].url, "https://b.example/rss");
-    CheckLong("and is not enabled", p.feeds[2].enabled, 0);
+             p.feeds[2].title, "https://c.example/rss");
 
     /* A file that lists feeds replaces the defaults outright — otherwise
        deleting Google News would not stick across a launch. */
