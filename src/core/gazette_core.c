@@ -200,6 +200,15 @@ Boolean GazetteCoreSetFeedURL(int index, const char *url)
     return true;
 }
 
+void GazetteCoreSetFullText(Boolean on)
+{
+    if (!gInited || gPrefs.fullText == (on ? 1 : 0)) {
+        return;
+    }
+    gPrefs.fullText = on ? 1 : 0;
+    gPrefsDirty     = true;
+}
+
 int GazetteCoreMoveFeed(int from, int to, int group)
 {
     int index;

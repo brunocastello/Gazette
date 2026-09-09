@@ -117,6 +117,43 @@ long GazetteFeedsFetchedAt(void);
 /* Forget a feed's cache, for when the feed itself is removed. */
 void GazetteFeedsForgetCache(const char *url);
 
+/* ------------------------------------------------------------------ */
+/* Full article text                                                   */
+/*                                                                     */
+/* The feed's own summary is what the reader pane shows. With the      */
+/* full-text preference on, opening an article also fetches the page   */
+/* it links to and extracts the prose from it.                         */
+/*                                                                     */
+/* Lazy and one article at a time on purpose. Fetching every page a    */
+/* refresh brought in would be a hundred connections and several       */
+/* minutes on a modem, nearly all of it for articles nobody opens.     */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Start fetching one article's own page. Refused while a refresh is running:
+ * there is one connection, and headlines matter more than the body of an
+ * article that is already readable in summary. Returns 1 if it started.
+ */
+int GazetteFeedsFullTextStart(int articleIndex, const char *url);
+
+/* One slice, from the event loop's idle branch, exactly like the refresh. */
+GazetteRefreshState GazetteFeedsFullTextPump(void);
+GazetteRefreshState GazetteFeedsFullTextGetState(void);
+
+/* Which article the held text belongs to, or -1 when none is held. The
+   reader pane asks this before using it: the answer is no after a refresh,
+   after switching feeds, and while a fetch is still running. */
+int GazetteFeedsFullTextArticle(void);
+
+/* The extracted text, or "" when there is none. */
+const char *GazetteFeedsFullText(void);
+
+/* Why the last attempt came to nothing, or "". */
+const char *GazetteFeedsFullTextErrorText(void);
+
+/* Abandon a fetch in flight and drop whatever was held. */
+void GazetteFeedsFullTextCancel(void);
+
 #ifdef __cplusplus
 }
 #endif

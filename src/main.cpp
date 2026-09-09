@@ -62,7 +62,9 @@ static void    HandleAbout(void);
 static void    HandleQuit(void);
 static void    HandleRefresh(void);
 static void    ShowFeed(int feedIndex);
+static void    ShowArticle(int articleIndex);
 static void    PumpRefresh(void);
+static void    PumpFullText(void);
 static void    CheckAutoRefresh(void);
 
 static void    AdjustMenus(void);
@@ -73,6 +75,7 @@ static void    HandleRename(void);
 static void    HandleRemove(void);
 static void    HandleToggleEnabled(void);
 static void    HandleMoveToGroup(short item);
+static void    HandleToggleFullText(void);
 
 /* ------------------------------------------------------------------ */
 /* Application globals                                                 */
@@ -121,7 +124,9 @@ enum {
     kFeedsItemRemove   = 6,
     /* 7 is a divider */
     kFeedsItemEnabled  = 8,
-    kFeedsItemMoveTo   = 9
+    kFeedsItemMoveTo   = 9,
+    /* 10 is a divider */
+    kFeedsItemFullText = 11
 };
 
 /* Move to Group: the top level, a divider, then one item per group. */
@@ -187,7 +192,7 @@ static Boolean InitGazette(void)
         return false;
     }
 
-    if (!GazetteUIOpen(ShowFeed)) {
+    if (!GazetteUIOpen(ShowFeed, ShowArticle)) {
         return false;
     }
 
@@ -244,7 +249,8 @@ static Boolean BuildMenuBar(void)
     AppendMenu(feedsMenu,
                "\pNew Feed\311/N;New Group\311;(-;"
                "Edit Feed\311;Rename\311;Remove;(-;"
-               "Turn Off;Move to Group");
+               "Turn Off;Move to Group;(-;"
+               "Full Article Text/T");
     InsertMenu(feedsMenu, 0);
 
     /* "Move to Group" is a hierarchical item: the submenu goes in with
@@ -287,6 +293,7 @@ static void RunGazette(void)
                pass and returns. Blocking here would stop the whole machine
                cooperating, not just Gazette. */
             PumpRefresh();
+            PumpFullText();
             CheckAutoRefresh();
         }
     }
@@ -452,6 +459,7 @@ static void HandleMenuChoice(long menuResult)
                 case kFeedsItemRename:   HandleRename();        break;
                 case kFeedsItemRemove:   HandleRemove();        break;
                 case kFeedsItemEnabled:  HandleToggleEnabled(); break;
+                case kFeedsItemFullText: HandleToggleFullText(); break;
                 default: break;
             }
             break;
@@ -547,6 +555,15 @@ static void AdjustMenus(void)
         DisableMenuItem(feeds, kFeedsItemEnabled);
         DisableMenuItem(feeds, kFeedsItemMoveTo);
         SetMenuItemText(feeds, kFeedsItemEnabled, "\pTurn Off");
+    }
+
+    /* A preference, not a command: it shows its state with a check mark the
+       way every other toggle in the menu bar does. */
+    {
+        const GazettePrefs *prefs = GazetteCoreGetPrefs();
+
+        MacCheckMenuItem(feeds, kFeedsItemFullText,
+                         (prefs != nil && prefs->fullText) ? true : false);
     }
 
     if (moveTo == nil) {
@@ -783,6 +800,35 @@ static void HandleToggleEnabled(void)
     GazetteUIFeedsChanged();
 }
 
+/*
+ * Full article text on or off. It is a preference rather than a one-off
+ * command, so it saves at once and takes effect on the article already open:
+ * turning it on and having to click away and back would read as it not
+ * working.
+ */
+static void HandleToggleFullText(void)
+{
+    const GazettePrefs *prefs = GazetteCoreGetPrefs();
+    Boolean             wanted;
+
+    if (prefs == nil) {
+        return;
+    }
+    wanted = prefs->fullText ? false : true;
+
+    GazetteCoreSetFullText(wanted);
+    GazetteCoreSavePrefs();
+
+    if (!wanted) {
+        /* Back to the feed's own summary, and drop what was fetched. */
+        GazetteFeedsFullTextCancel();
+        GazetteUIArticleTextChanged();
+        GazetteUISetStatus("Showing the summary each feed provides.");
+        return;
+    }
+    ShowArticle(GazetteUISelectedArticle());
+}
+
 static void HandleMoveToGroup(short item)
 {
     int kind  = 0;
@@ -858,6 +904,69 @@ static void ShowFeed(int feedIndex)
     }
 
     HandleRefresh();
+}
+
+/*
+ * An article has been opened. With the full-text preference on, that is when
+ * its own page is fetched: lazily, one at a time, and only for something the
+ * user is actually looking at.
+ */
+static void ShowArticle(int articleIndex)
+{
+    const GazettePrefs   *prefs = GazetteCoreGetPrefs();
+    const GazetteArticle *article;
+
+    /* Whatever was held is for the article that was open a moment ago. */
+    GazetteFeedsFullTextCancel();
+
+    if (prefs == nil || !prefs->fullText) {
+        return;
+    }
+    article = GazetteFeedsArticleAt(articleIndex);
+    if (article == nil || article->link[0] == '\0') {
+        return;
+    }
+    if (!gNetUp) {
+        return;                     /* the summary is already on screen */
+    }
+    /* A refresh has the connection. The summary stands; asking again is a
+       click away. */
+    if (GazetteFeedsRefreshGetState() == kGazetteRefreshRunning) {
+        return;
+    }
+
+    if (GazetteFeedsFullTextStart(articleIndex, article->link)) {
+        GazetteUISetStatus("Reading the full article\311");
+    }
+}
+
+static void PumpFullText(void)
+{
+    char message[224];
+
+    if (GazetteFeedsFullTextGetState() != kGazetteRefreshRunning) {
+        return;
+    }
+
+    switch (GazetteFeedsFullTextPump()) {
+        case kGazetteRefreshDone:
+            /* The pane is showing the summary; this is what swaps it. */
+            GazetteUIArticleTextChanged();
+            GazetteUISetStatus("Full article.");
+            break;
+
+        case kGazetteRefreshFailed:
+            /* The summary is still on screen and stays there. Saying why is
+               worth a status line and not worth a dialog: it happens on any
+               paywall, and the article is still readable. */
+            snprintf(message, sizeof message, "Summary only - %s",
+                     GazetteFeedsFullTextErrorText());
+            GazetteUISetStatus(message);
+            break;
+
+        default:
+            break;
+    }
 }
 
 static void HandleRefresh(void)
@@ -984,9 +1093,10 @@ static void CheckAutoRefresh(void)
 
 static void DoExitGazette(void)
 {
-    /* A refresh in flight must not outlive the application: cancelling it
-       closes the connection and frees the parser. */
+    /* Nothing in flight may outlive the application: cancelling closes the
+       connection and frees the parser or the extractor behind it. */
     GazetteFeedsRefreshCancel();
+    GazetteFeedsFullTextCancel();
 
     GazetteUIClose();
 

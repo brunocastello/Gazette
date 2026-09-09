@@ -83,6 +83,10 @@ Boolean GazetteCoreSetFeedEnabled(int index, Boolean enabled);
    when another feed already has that address. */
 Boolean GazetteCoreSetFeedURL(int index, const char *url);
 
+/* Fetch and show each article's own page, rather than the summary the feed
+   carries. The Feeds menu's check mark. */
+void GazetteCoreSetFullText(Boolean on);
+
 /* Move a feed to a position and into a group. Returns its new index, or -1.
    This is what a drag in the sidebar lands on. */
 int     GazetteCoreMoveFeed(int from, int to, int group);

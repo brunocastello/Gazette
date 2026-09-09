@@ -30,7 +30,13 @@ extern "C" {
 /* Called when the user picks a feed in the sidebar. */
 typedef void (*GazetteUIFeedChosen)(int feedIndex);
 
-Boolean   GazetteUIOpen(GazetteUIFeedChosen onFeedChosen);
+/* Called when the user opens an article — by clicking it or by arrowing onto
+   it. What the shell does with that is fetch the full text, when the
+   preference asks for it; the window itself has no opinion. */
+typedef void (*GazetteUIArticleChosen)(int articleIndex);
+
+Boolean   GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
+                        GazetteUIArticleChosen onArticleChosen);
 void      GazetteUIClose(void);
 WindowRef GazetteUIWindow(void);
 
@@ -56,6 +62,17 @@ void GazetteUISetStatus(const char *text);
  * being read. Resets the selection and the scroll positions.
  */
 void GazetteUIArticlesChanged(void);
+
+/*
+ * The text of the article being read has changed under the window — the full
+ * text arrived, or the attempt to get it failed. Re-wraps and redraws the
+ * reader pane and nothing else, so the headline list does not flicker and the
+ * selection is left where it is.
+ */
+void GazetteUIArticleTextChanged(void);
+
+/* Which article the reader pane is showing, or -1. */
+int GazetteUISelectedArticle(void);
 
 /* The preferences' feed list has changed. */
 void GazetteUIFeedsChanged(void);

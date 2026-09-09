@@ -9,6 +9,7 @@
 #include "ui/platinum_window.h"
 
 #include "core/gazette_core.h"
+#include "extract/gazette_extract.h"
 #include "feeds/gazette_feeds.h"
 #include "portable/gazette_portable.h"
 
@@ -48,7 +49,17 @@ enum {
     kMinListHeight = 3 * kRowHeight,
     kMinReader     = 3 * kReaderLead,
 
-    kMaxReaderLines = 192,
+    /*
+     * The reader pane holds one article. That used to be a feed's summary
+     * and is now a whole page of extracted text when the full-text
+     * preference is on, so both of these are sized for the larger of the
+     * two: kGazetteExtractMax of body, plus the title and the byline.
+     *
+     * At a narrow window width a line is about fifty characters, which puts
+     * 8 KB at some 170 lines before the blank line between each paragraph.
+     * A ReaderLine is six bytes, so the headroom here costs 3 KB.
+     */
+    kMaxReaderLines = 512,
 
     /* Control reference numbers, so one action proc can serve all three. */
     kRefSidebar = 1,
@@ -69,8 +80,9 @@ typedef struct {
 /* State                                                               */
 /* ------------------------------------------------------------------ */
 
-static WindowRef           gWindow;
-static GazetteUIFeedChosen gOnFeedChosen;
+static WindowRef              gWindow;
+static GazetteUIFeedChosen    gOnFeedChosen;
+static GazetteUIArticleChosen gOnArticleChosen;
 
 static ControlRef gSidebarScroll;
 static ControlRef gListScroll;
@@ -106,7 +118,7 @@ static char gStatus[192];
    a refresh replaces the articles, and a wrapped line index into freed
    headlines is the kind of bug that shows up as garbage on screen days
    later. */
-static char       gReaderText[2600];
+static char       gReaderText[kGazetteExtractMax + 512];
 static ReaderLine gReaderLines[kMaxReaderLines];
 static short      gReaderLineCount;
 
@@ -408,11 +420,29 @@ static void RewrapReader(void)
         bylineLen = (short)(used - bylineStart);
     }
 
-    bodyStart = (short)(used + 1);
-    gReaderText[used++] = '\0';
-    used += gz_copy_n(gReaderText + used, sizeof gReaderText - used,
-                      a->body, strlen(a->body));
-    bodyLen = (short)(used - bodyStart);
+    /*
+     * The article's own page when it has been fetched and extracted, and the
+     * feed's summary otherwise. The store answers which article the held
+     * text belongs to, so switching articles cannot show the last one's body
+     * under this one's headline.
+     */
+    {
+        const char *body = a->body;
+
+        if (GazetteFeedsFullTextArticle() == gSelectedArticle) {
+            const char *full = GazetteFeedsFullText();
+
+            if (full[0] != '\0') {
+                body = full;
+            }
+        }
+
+        bodyStart = (short)(used + 1);
+        gReaderText[used++] = '\0';
+        used += gz_copy_n(gReaderText + used, sizeof gReaderText - used,
+                          body, strlen(body));
+        bodyLen = (short)(used - bodyStart);
+    }
 
     GetPort(&savePort);
     SetPortWindowPort(gWindow);
@@ -912,6 +942,12 @@ static void SelectArticle(int index)
 
     DrawList();
     DrawReader();
+
+    /* Last, so the pane is already showing the summary when the shell decides
+       whether to go and fetch anything better. */
+    if (gSelectedArticle >= 0 && gOnArticleChosen != NULL) {
+        gOnArticleChosen(gSelectedArticle);
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1194,6 +1230,35 @@ void GazetteUIArticlesChanged(void)
                    VisibleRowsIn(&gReaderRect, kReaderLead));
     }
     GazetteUIUpdate();
+
+    /* The first article is open now, exactly as if it had been clicked. */
+    if (gSelectedArticle >= 0 && gOnArticleChosen != NULL) {
+        gOnArticleChosen(gSelectedArticle);
+    }
+}
+
+void GazetteUIArticleTextChanged(void)
+{
+    if (gWindow == NULL) {
+        return;
+    }
+    RewrapReader();
+    if (gReaderScroll != NULL) {
+        SetControlValue(gReaderScroll, 0);
+        SyncScroll(gReaderScroll, gReaderLineCount,
+                   VisibleRowsIn(&gReaderRect, kReaderLead));
+    }
+    DrawReader();
+
+    /* The scroll bar's own frame is outside the pane DrawReader repaints. */
+    if (gReaderScroll != NULL) {
+        Draw1Control(gReaderScroll);
+    }
+}
+
+int GazetteUISelectedArticle(void)
+{
+    return gSelectedArticle;
 }
 
 void GazetteUIFeedsChanged(void)
@@ -1277,7 +1342,8 @@ static ControlRef MakeScroll(long reference)
                       kControlScrollBarProc, reference);
 }
 
-Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen)
+Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
+                      GazetteUIArticleChosen onArticleChosen)
 {
     OSStatus         err;
     Rect             bounds;
@@ -1287,7 +1353,8 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen)
         return true;
     }
 
-    gOnFeedChosen = onFeedChosen;
+    gOnFeedChosen    = onFeedChosen;
+    gOnArticleChosen = onArticleChosen;
 
     SetRect(&bounds, 40, 48, 40 + 620, 48 + 420);
 

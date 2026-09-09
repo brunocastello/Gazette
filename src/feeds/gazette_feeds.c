@@ -7,6 +7,7 @@
 
 #include "feeds/gazette_feeds.h"
 
+#include "extract/gazette_extract.h"
 #include "net/gazette_fetch.h"
 #include "portable/gazette_portable.h"
 #include "store/gazette_store.h"
@@ -40,6 +41,23 @@ static long               gFetchedAt;
 /* The URL the running refresh is for, kept so the cache can be written under
    the same name it will later be read under. */
 static char               gCurrentURL[1024];
+
+/*
+ * The full-text job, kept entirely separate from the refresh above. They
+ * share the one connection by refusing to overlap rather than by sharing any
+ * state, which is the difference between two small state machines and one
+ * that has to remember what it is in the middle of.
+ *
+ * gFullText is 8 KB that stays allocated; the extractor is 16 KB that does
+ * not, and is taken for the length of one fetch the way the parser is.
+ */
+static GazetteExtract     *gExtract;
+static GazetteFetch       *gFullFetch;
+static GazetteRefreshState gFullState = kGazetteRefreshIdle;
+static int                 gFullArticle = -1;      /* what gFullText is for */
+static int                 gPendingFullArticle = -1;
+static char                gFullText[kGazetteExtractMax];
+static char                gFullError[192];
 
 /*
  * Seconds between the Macintosh epoch (1904) and the Unix one (1970).
@@ -110,6 +128,10 @@ void GazetteFeedsClear(void)
     gFeedTitle[0] = '\0';
     gCurrentFeed  = -1;
     gFetchedAt    = 0;
+
+    /* The held text is indexed by a position in the store that is about to
+       mean a different article, or none. */
+    GazetteFeedsFullTextCancel();
 }
 
 long GazetteFeedsFetchedAt(void)
@@ -180,6 +202,10 @@ int GazetteFeedsRefreshStart(int feedIndex, const char *url, long maxArticles)
     if (gState == kGazetteRefreshRunning) {
         return 0;
     }
+
+    /* There is one connection, and headlines outrank the body of an article
+       that is already readable in summary. */
+    GazetteFeedsFullTextCancel();
 
     ReleaseRefresh();
     gError[0]    = '\0';
@@ -285,6 +311,151 @@ const char *GazetteFeedsRefreshErrorText(void)
     return gError;
 }
 
+
+/* ------------------------------------------------------------------ */
+/* Full article text                                                   */
+/* ------------------------------------------------------------------ */
+
+static void ReleaseFullText(void)
+{
+    if (gFullFetch != NULL) {
+        GazetteFetchDestroy(gFullFetch);
+        gFullFetch = NULL;
+    }
+    if (gExtract != NULL) {
+        DisposePtr((Ptr)gExtract);
+        gExtract = NULL;
+    }
+}
+
+void GazetteFeedsFullTextCancel(void)
+{
+    ReleaseFullText();
+    gFullText[0]        = '\0';
+    gFullError[0]       = '\0';
+    gFullArticle        = -1;
+    gPendingFullArticle = -1;
+    gFullState          = kGazetteRefreshIdle;
+}
+
+int GazetteFeedsFullTextArticle(void)
+{
+    return gFullArticle;
+}
+
+const char *GazetteFeedsFullText(void)
+{
+    return gFullText;
+}
+
+const char *GazetteFeedsFullTextErrorText(void)
+{
+    return gFullError;
+}
+
+GazetteRefreshState GazetteFeedsFullTextGetState(void)
+{
+    return gFullState;
+}
+
+/* The fetch's body sink: the page goes straight into the extractor, which
+   stops the fetch itself once it has as much text as it keeps. */
+static int FullTextSink(const char *data, size_t len, void *context)
+{
+    (void)context;
+
+    if (gExtract == NULL) {
+        return 0;
+    }
+    return GazetteExtractFeed(gExtract, data, len);
+}
+
+int GazetteFeedsFullTextStart(int articleIndex, const char *url)
+{
+    if (gState == kGazetteRefreshRunning) {
+        return 0;                   /* the refresh has the connection */
+    }
+    if (url == NULL || url[0] == '\0') {
+        return 0;
+    }
+    if (articleIndex < 0 || articleIndex >= gArticleCount) {
+        return 0;
+    }
+
+    /* Whatever was held was for a different article, and a fetch still in
+       flight is for one the user has already moved on from. */
+    GazetteFeedsFullTextCancel();
+
+    gExtract = (GazetteExtract *)NewPtrClear((Size)sizeof(GazetteExtract));
+    if (gExtract == NULL) {
+        snprintf(gFullError, sizeof gFullError,
+                 "Not enough memory to read the article.");
+        gFullState = kGazetteRefreshFailed;
+        return 0;
+    }
+    GazetteExtractInit(gExtract);
+
+    gFullFetch = GazetteFetchStart(url, FullTextSink, NULL);
+    if (gFullFetch == NULL) {
+        snprintf(gFullError, sizeof gFullError,
+                 "Could not open the article's page.");
+        ReleaseFullText();
+        gFullState = kGazetteRefreshFailed;
+        return 0;
+    }
+
+    gPendingFullArticle = articleIndex;
+    gFullState          = kGazetteRefreshRunning;
+    return 1;
+}
+
+GazetteRefreshState GazetteFeedsFullTextPump(void)
+{
+    GazetteFetchState fetchState;
+    size_t            len;
+
+    if (gFullState != kGazetteRefreshRunning || gFullFetch == NULL) {
+        return gFullState;
+    }
+
+    fetchState = GazetteFetchPump(gFullFetch);
+
+    if (fetchState == kGazetteFetchFailed) {
+        snprintf(gFullError, sizeof gFullError, "%s",
+                 GazetteFetchErrorText(gFullFetch));
+        ReleaseFullText();
+        gFullState = kGazetteRefreshFailed;
+        return gFullState;
+    }
+
+    if (fetchState != kGazetteFetchDone) {
+        return gFullState;
+    }
+
+    /* Done also means the extractor filled up and stopped the fetch, which is
+       a success: what it has is as much as it keeps. */
+    len = GazetteExtractFinish(gExtract);
+
+    if (len < kGazetteExtractMin) {
+        /*
+         * A paywall stub, a cookie wall, a consent page, or a redirector that
+         * only works with JavaScript. The feed's own summary is better than
+         * any of those, so the failure keeps it on screen.
+         */
+        snprintf(gFullError, sizeof gFullError,
+                 "That page had no article text in it.");
+        ReleaseFullText();
+        gFullState = kGazetteRefreshFailed;
+        return gFullState;
+    }
+
+    gz_copy_n(gFullText, sizeof gFullText, GazetteExtractText(gExtract), len);
+    gFullArticle = gPendingFullArticle;
+
+    ReleaseFullText();
+    gFullState = kGazetteRefreshDone;
+    return gFullState;
+}
 
 /* ------------------------------------------------------------------ */
 /* The cache                                                           */
