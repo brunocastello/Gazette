@@ -48,6 +48,21 @@ static char               gCurrentURL[1024];
  */
 enum { kMacToUnixEpoch = 2082844800L };
 
+/*
+ * The first line of a cache file. The number is not only the field layout: a
+ * cache holds text that has already been through the whole decode / strip /
+ * transliterate pipeline, so it is also the version of that pipeline. Change
+ * what the pipeline produces and old files hold the old text -- they parse
+ * perfectly and are simply wrong, which is worse than being unreadable,
+ * because nothing announces it.
+ *
+ * 2: entities are decoded on both sides of the markup strip. Version 1 files
+ * carry the "&nbsp;" that fix removed, and refusing them is what makes the
+ * fix reach a feed the user has already read without them having to know to
+ * refresh it by hand.
+ */
+static const char kCacheMagic[] = "GAZETTE-CACHE 2";
+
 static void SaveCache(const char *url, long fetchedAt);
 
 static long UnixNow(void)
@@ -308,7 +323,7 @@ static void SaveCache(const char *url, long fetchedAt)
         return;             /* a cache that cannot be written is not an error */
     }
 
-    GazetteStoreWriteLine(f, "GAZETTE-CACHE 1");
+    GazetteStoreWriteLine(f, kCacheMagic);
     WriteTextLine(f, 'U', url);
     WriteTextLine(f, 'F', gFeedTitle);
     WriteLongLine(f, 'W', fetchedAt);
@@ -347,8 +362,8 @@ int GazetteFeedsLoadCache(int feedIndex, const char *url, long maxArticles)
     }
 
     n = GazetteStoreReadLine(f, line, (long)sizeof line);
-    if (n < 0 || strcmp(line, "GAZETTE-CACHE 1") != 0) {
-        /* A file from a future version, or not ours at all. Refusing it is
+    if (n < 0 || strcmp(line, kCacheMagic) != 0) {
+        /* A file from another version, or not ours at all. Refusing it is
            better than reading it as though the fields still mean what they
            did; the next refresh overwrites it. */
         GazetteStoreClose(f);

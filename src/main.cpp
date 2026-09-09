@@ -662,9 +662,14 @@ static void HandleEditFeed(void)
         return;
     }
 
-    if (strcmp(url, wasURL) != 0 && !GazetteCoreSetFeedURL(index, url)) {
-        GazetteUISetStatus("Another feed already has that address.");
-        return;
+    if (strcmp(url, wasURL) != 0) {
+        if (!GazetteCoreSetFeedURL(index, url)) {
+            GazetteUISetStatus("Another feed already has that address.");
+            return;
+        }
+        /* The old address's cache is keyed by an address nothing points at
+           any more. */
+        GazetteFeedsForgetCache(wasURL);
     }
     GazetteCoreRenameFeed(index, title);
 
@@ -741,6 +746,11 @@ static void HandleRemove(void)
         /* Copy the address out first: removing shifts the array that pointer
            points into. */
         snprintf(url, sizeof url, "%s", GazetteCoreFeedURL(index));
+
+        /* The cache file is keyed by the address, so nothing would ever go
+           looking for it again -- it would just sit in the Gazette Cache
+           folder for good. */
+        GazetteFeedsForgetCache(url);
         GazetteCoreRemoveFeed(url);
 
         /* The feed that shuffled up into the gap is the one to show — the
