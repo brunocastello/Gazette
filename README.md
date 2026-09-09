@@ -142,6 +142,53 @@ make -C tests/host
 Everything that touches the Toolbox (`store/`, `ui/`, `main.cpp`) is deliberately
 absent from that build. CI runs it as a gate before the Retro68 job.
 
+## Networking
+
+All HTTPS goes through [Certainly](https://github.com/minorbug/certainly) and
+BearSSL, vendored at `third_party/certainly/` as a byte-for-byte copy of
+[Gateway](https://github.com/brunocastello/Gateway)'s tree plus the two Carbon
+patches below, so fixes transfer between the projects with a plain `diff`.
+Gazette does not reimplement TLS (AGENT.md constraint 4).
+
+The plain-HTTP path is Certainly's own Open Transport client, driven directly.
+Gateway needs a full OT layer of its own because it is a proxy — it listens,
+accepts, and upgrades live plaintext connections to TLS in place. Gazette makes
+outbound client connections and nothing else, and `certainly_transport.h`
+already provides exactly that, so Gateway's ~450 lines of endpoint plumbing have
+no counterpart here.
+
+### What Carbon changes about Open Transport
+
+Two things, and only one of them is a source change.
+
+**`OTCARBONAPPLICATION=1`.** `OTOpenEndpoint`, `OTOpenInternetServices` and
+`InitOpenTransport` all read *"CarbonLib: not available"* — a Carbon application
+must call the `OTClientContext`-taking `*InContext` forms. Apple's headers
+already define the plain spellings as macros forwarding to those with a `NULL`
+context, but only inside `#if OTCARBONAPPLICATION`, which defaults to `0`. So
+the whole adaptation is that one definition, set on the `certainly` target in
+`CMakeLists.txt`. Without it nothing compiles.
+
+**UPPs are opaque under Carbon.** `OTInstallNotifier` takes an `OTNotifyUPP`.
+On classic PowerPC that collapses to the procedure pointer itself, so passing a
+notifier directly has always worked; under Carbon `OPAQUE_UPP_TYPES` is on and
+the call needs `NewOTNotifyUPP()`. See `third_party/certainly/PATCHES.md` §21–23
+for this and the `LMGetTicks()` change in the entropy pool.
+
+### Fetching
+
+`src/net/gazette_fetch.c` is a non-blocking GET: connect, send, read the head,
+read the body, following up to five redirects. It is driven a slice at a time
+from the `WaitNextEvent` idle branch, so the UI never stops. The whole fetch
+lives in one `NewPtrClear` block taken at the start, and the body streams to a
+callback rather than accumulating — a front-page feed is 100–200 KB, and holding
+one in memory to hand over at the end would be the largest allocation in the
+application.
+
+Bodies are framed three ways: chunked, `Content-Length`, or delimited by the
+connection close. The third is why the stream layer distinguishes EOF from
+error at all.
+
 ## Continuous Integration
 
 `.github/workflows/build.yml` defines two jobs.
@@ -187,8 +234,9 @@ started by hand from the Actions tab (`workflow_dispatch`).
 │   │   └── gazette_core.h/.c
 │   ├── ui/                 # Platinum window helpers (Phase 3)
 │   │   └── platinum_window.h/.c
-│   ├── net/                # Gateway gw_net + Certainly (Phase 1)
-│   │   └── gazette_net.h/.c
+│   ├── net/                # Stream over Certainly's OT client; HTTP fetch
+│   │   ├── gazette_net.h/.c
+│   │   └── gazette_fetch.h/.c
 │   ├── feeds/              # RSS 2.0 / Atom parser, Google News (Phase 2)
 │   │   └── gazette_feeds.h/.c
 │   ├── extract/            # HTML stripping, full-text (Phase 3)
@@ -197,12 +245,14 @@ started by hand from the Actions tab (`workflow_dispatch`).
 │   │   └── gazette_store.h/.c
 │   ├── prefs/              # Settings + feed list, portable and host-tested
 │   │   └── gazette_prefs.h/.c
-│   └── portable/           # Pure C, host-tested: strings, prefs grammar, ASCII
-│       └── gazette_portable.h/.c
+│   └── portable/           # Pure C, host-tested
+│       ├── gazette_portable.h/.c   # strings, prefs grammar, ASCII transliteration
+│       ├── gazette_url.h/.c        # URI splitting, redirect resolution
+│       └── gazette_http.h/.c       # GET building, response parsing, chunked
 │
 ├── third_party/
 │   ├── AUI/                # Apple Universal Interfaces 3.4 (Carbon headers, CarbonLib)
-│   └── certainly/          # (placeholder — to be vendored from Gateway)
+│   └── certainly/          # TLS 1.2/1.3 + BearSSL, vendored from Gateway
 │
 └── tests/host/             # Host tests for the portable modules (Linux/macOS)
     ├── Makefile
@@ -214,7 +264,7 @@ started by hand from the Actions tab (`workflow_dispatch`).
 | Phase | Status | Description |
 |-------|--------|-------------|
 | 0 | **Done** | Skeleton: Carbon shell, window, menus, WaitNextEvent loop, quit, SIZE resource, Finder icon, preferences/feed list on disk, host-test target |
-| 1 | TODO | Networking: Gateway `gw_net` + Certainly, HTTPS fetch, HTTP GET with redirects |
+| 1 | **Done** | Networking: Certainly/BearSSL vendored and building under Carbon, non-blocking stream, HTTPS GET with redirects driven from the event loop |
 | 2 | TODO | Feed engine: RSS 2.0 / Atom parser, Google News maps, feed auto-discovery |
 | 3 | TODO | Full Platinum UI: sidebar + article list + reader pane, local caching |
 | 4 | TODO | Polish: custom feed management, full-text fetch, search, read/unread, OPML import/export |

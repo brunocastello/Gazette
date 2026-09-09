@@ -95,7 +95,9 @@ src/
   portable/             # pure C, host-testable parsing and text helpers
 third_party/
   AUI/                  # Apple Universal Interfaces 3.4 (Carbon headers + CarbonLib)
-  certainly/            # vendored from Gateway
+  certainly/            # vendored from Gateway, plus PATCHES.md §21-23 for Carbon
+tools/
+  generate_icon.py      # draws the icon, emits Resources/Gazette_icon.r
 Resources/
   Gazette.r             # SIZE, About alert, vers
   Gazette_icon.r        # generated icon family + BNDL/FREF (tools/generate_icon.py)
@@ -117,10 +119,14 @@ Single cooperative event loop. Network fetches and parsing progress via poll fun
 - Prefs loading — "Gazette Preferences" in the Preferences folder, hand-editable. ✅
 - Application icon resources (newspaper / gazette theme). ✅
 
-**Phase 1 – Networking foundation**
-- Extract/adapt Gateway networking + Certainly.
-- Ability to fetch an HTTPS URL and receive the body (streamed).
-- Basic HTTP GET with redirects and sensible User-Agent.
+**Phase 1 – Networking foundation** ✅
+- Extract/adapt Gateway networking + Certainly. ✅ Vendored unchanged; the plain
+  path reuses Certainly's own Open Transport client rather than a second copy of
+  Gateway's, since Gazette never listens, accepts or upgrades in place.
+- Ability to fetch an HTTPS URL and receive the body (streamed). ✅
+- Basic HTTP GET with redirects and sensible User-Agent. ✅
+- Carbon's two Open Transport differences (`OTCARBONAPPLICATION`, opaque UPPs)
+  are written up in `third_party/certainly/PATCHES.md` §21–23. ✅
 
 **Phase 2 – Feed engine**
 - RSS 2.0 and Atom parser (portable).
