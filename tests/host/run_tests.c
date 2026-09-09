@@ -1242,6 +1242,63 @@ static void TestFeedParsing(void)
         CheckLong("brackets inside CDATA parse", (long)gCollectedCount, 1);
         CheckStr("and are kept", gCollected[0].title, "a]b]]c");
     }
+
+    {
+        /*
+         * A description that carries a whole escaped HTML passage, which is
+         * how Google News and most publishers ship one. The escaping nests:
+         * "&amp;nbsp;" is a space in the article, an "&nbsp;" after one decode
+         * pass, and only a space after two. It used to reach the reader pane
+         * with the reference still in it.
+         */
+        static const char escaped[] =
+            "<rss><channel><item><title>T</title><link>https://e/1</link>"
+            "<description>&lt;p&gt;Ten&amp;nbsp;degrees&lt;/p&gt;"
+            "&amp;mdash;&amp;nbsp;said the mayor</description>"
+            "</item></channel></rss>";
+        GazetteFeedParser q;
+
+        gCollectedCount = 0;
+        GazetteFeedParserInit(&q, Collect, NULL);
+        GazetteFeedParserFeed(&q, escaped, sizeof escaped - 1);
+        GazetteFeedParserFinish(&q);
+        CheckLong("an escaped description parses", (long)gCollectedCount, 1);
+        CheckStr("nested entities are decoded and the markup taken out",
+                 gCollected[0].body, "Ten degrees -- said the mayor");
+    }
+
+    {
+        /* The same document one byte at a time: the second decode pass runs
+           over the buffer the first one rewrote, so it must not depend on
+           where the chunks fell. */
+        static const char escaped[] =
+            "<rss><channel><item><title>T</title><link>https://e/1</link>"
+            "<description>&lt;b&gt;A&amp;nbsp;B&lt;/b&gt;</description>"
+            "</item></channel></rss>";
+        GazetteFeedParser q;
+
+        gCollectedCount = 0;
+        GazetteFeedParserInit(&q, Collect, NULL);
+        ParseFeed(&q, escaped, 1);
+        CheckStr("byte at a time, the same text comes out",
+                 gCollected[0].body, "A B");
+    }
+
+    {
+        /* An ampersand in prose is not a reference and must survive both
+           passes: "AT&amp;T" is "AT&T" and stays there. */
+        static const char amp[] =
+            "<rss><channel><item><title>AT&amp;T and R&amp;D</title>"
+            "<link>https://e/1</link></item></channel></rss>";
+        GazetteFeedParser q;
+
+        gCollectedCount = 0;
+        GazetteFeedParserInit(&q, Collect, NULL);
+        GazetteFeedParserFeed(&q, amp, sizeof amp - 1);
+        GazetteFeedParserFinish(&q);
+        CheckStr("a decoded ampersand is not decoded again",
+                 gCollected[0].title, "AT&T and R&D");
+    }
 }
 
 /* ------------------------------------------------------------------ */

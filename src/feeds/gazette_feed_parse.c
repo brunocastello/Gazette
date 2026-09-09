@@ -532,6 +532,19 @@ static void CaptureByte(GazetteFeedParser *p, char c)
  * whitespace. Order matters -- entities first, because "&lt;b&gt;" is not
  * markup until it is decoded, and transliteration last, because it is what
  * turns a decoded U+2019 into an apostrophe.
+ *
+ * The decode/strip pair runs twice, because publishers escape a whole passage
+ * of HTML to put it inside an XML text node and the escaping nests. Google
+ * News is the everyday example: the raw description carries "&amp;nbsp;", so
+ * one pass leaves "&nbsp;" sitting in the prose where a space belongs, and
+ * one pass over "&amp;lt;b&amp;gt;" leaves "&lt;b&gt;" that is not yet markup
+ * for the stripper to take out. Two passes is the whole of it -- nothing in
+ * the wild escapes three deep.
+ *
+ * Text that means to show an entity reference ("write &amp;amp; for an
+ * ampersand") loses to this, and that is the right way round: an article
+ * about HTML is rare, and prose peppered with &nbsp; is what every other
+ * feed would look like.
  */
 /* Run the pipeline and leave the result in p->scratch, returning its length.
    Split out from CaptureFinish so a caller that has to inspect the text
@@ -544,6 +557,8 @@ static size_t CaptureProcess(GazetteFeedParser *p)
     p->capture[p->captureLen] = '\0';
 
     len = GazetteDecodeEntities(p->capture, p->captureLen);
+    len = GazetteStripMarkup(p->capture, len);
+    len = GazetteDecodeEntities(p->capture, len);
     len = GazetteStripMarkup(p->capture, len);
     len = gz_utf8_to_ascii(p->capture, len, p->scratch, sizeof p->scratch);
     return gz_flatten_ws(p->scratch, len);
