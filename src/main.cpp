@@ -483,7 +483,7 @@ static void HandleRefresh(void)
 
     prefs = GazetteCoreGetPrefs();
 
-    if (!GazetteFeedsRefreshStart(GazetteCoreFeedURL(0),
+    if (!GazetteFeedsRefreshStart(0, GazetteCoreFeedURL(0),
                                   prefs ? prefs->maxArticles : 0)) {
         snprintf(message, sizeof message, "Failed: %s",
                  GazetteFeedsRefreshErrorText());

@@ -32,6 +32,48 @@ int GazetteStoreReadPrefs(char *buf, long cap, long *outLen);
    opens in SimpleText and shows Gazette's icon in the Finder. */
 int GazetteStoreWritePrefs(const char *text, long len);
 
+/* ------------------------------------------------------------------ */
+/* The article cache                                                   */
+/*                                                                     */
+/* One file per feed, in a "Gazette Cache" folder beside the           */
+/* preferences. Named by a hash of the feed's URL rather than by its   */
+/* position in the list, so reordering or renaming feeds does not      */
+/* silently hand a feed someone else's articles.                       */
+/*                                                                     */
+/* Streamed in both directions. A feed's cache is a few hundred        */
+/* kilobytes and building it in memory to write in one go would be the */
+/* largest allocation in the application, which is the same reason the */
+/* fetch streams (constraint 3).                                       */
+/* ------------------------------------------------------------------ */
+
+typedef struct GazetteStoreFile GazetteStoreFile;
+
+/* Create or truncate the cache file for a feed URL and open it for writing.
+   Returns NULL if the folder or the file could not be made. */
+GazetteStoreFile *GazetteStoreCacheCreate(const char *feedURL);
+
+/* Open a feed's cache file for reading, or NULL when there is none. */
+GazetteStoreFile *GazetteStoreCacheOpen(const char *feedURL);
+
+/* Append text. Returns 1 on success. */
+int GazetteStoreWrite(GazetteStoreFile *f, const char *text, long len);
+
+/* Append "<text>". Returns 1 on success. */
+int GazetteStoreWriteLine(GazetteStoreFile *f, const char *text);
+
+/*
+ * Read one line into buf, without its terminator. Returns the length, or -1
+ * at end of file. A line longer than cap is truncated and the rest of it
+ * discarded, so a corrupt file cannot desynchronise the reader.
+ */
+long GazetteStoreReadLine(GazetteStoreFile *f, char *buf, long cap);
+
+/* Close and free. Safe with NULL. */
+void GazetteStoreClose(GazetteStoreFile *f);
+
+/* Delete a feed's cache file. Used when a feed is removed. */
+void GazetteStoreCacheDelete(const char *feedURL);
+
 #ifdef __cplusplus
 }
 #endif

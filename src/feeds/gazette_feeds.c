@@ -9,7 +9,9 @@
 
 #include "net/gazette_fetch.h"
 #include "portable/gazette_portable.h"
+#include "store/gazette_store.h"
 
+#include <DateTimeUtils.h>      /* GetDateTime */
 #include <MacMemory.h>          /* NewPtrClear, DisposePtr */
 
 #include <stdio.h>
@@ -24,6 +26,8 @@
 static GazetteArticle     gArticles[kGazetteMaxArticles];
 static int                gArticleCount;
 static char               gFeedTitle[kGazetteFeedTitleLen];
+static int                gCurrentFeed = -1;
+static int                gPendingFeed = -1;
 
 static GazetteFeedParser *gParser;
 static GazetteFetch      *gFetch;
@@ -31,6 +35,28 @@ static GazetteRefreshState gState = kGazetteRefreshIdle;
 static long               gMaxArticles;
 static int                gCleared;       /* store emptied for this refresh */
 static char               gError[192];
+static long               gFetchedAt;
+
+/* The URL the running refresh is for, kept so the cache can be written under
+   the same name it will later be read under. */
+static char               gCurrentURL[1024];
+
+/*
+ * Seconds between the Macintosh epoch (1904) and the Unix one (1970).
+ * GetDateTime counts from the former; every date in the store counts from the
+ * latter, because that is what feeds date their articles in.
+ */
+enum { kMacToUnixEpoch = 2082844800L };
+
+static void SaveCache(const char *url, long fetchedAt);
+
+static long UnixNow(void)
+{
+    unsigned long macNow = 0;
+
+    GetDateTime(&macNow);
+    return (long)macNow - kMacToUnixEpoch;
+}
 
 /* ------------------------------------------------------------------ */
 /* The store                                                           */
@@ -54,10 +80,22 @@ const char *GazetteFeedsTitle(void)
     return gFeedTitle;
 }
 
+int GazetteFeedsCurrentFeed(void)
+{
+    return gCurrentFeed;
+}
+
 void GazetteFeedsClear(void)
 {
     gArticleCount = 0;
     gFeedTitle[0] = '\0';
+    gCurrentFeed  = -1;
+    gFetchedAt    = 0;
+}
+
+long GazetteFeedsFetchedAt(void)
+{
+    return gFetchedAt;
 }
 
 /* ------------------------------------------------------------------ */
@@ -78,7 +116,8 @@ static int ArticleSink(const GazetteArticle *article, void *context)
        window. */
     if (!gCleared) {
         GazetteFeedsClear();
-        gCleared = 1;
+        gCurrentFeed = gPendingFeed;
+        gCleared     = 1;
     }
 
     if (gArticleCount >= kGazetteMaxArticles ||
@@ -117,7 +156,7 @@ static void ReleaseRefresh(void)
     }
 }
 
-int GazetteFeedsRefreshStart(const char *url, long maxArticles)
+int GazetteFeedsRefreshStart(int feedIndex, const char *url, long maxArticles)
 {
     if (gState == kGazetteRefreshRunning) {
         return 0;
@@ -127,6 +166,9 @@ int GazetteFeedsRefreshStart(const char *url, long maxArticles)
     gError[0]    = '\0';
     gCleared     = 0;
     gMaxArticles = maxArticles;
+    gPendingFeed = feedIndex;
+    gz_copy_n(gCurrentURL, sizeof gCurrentURL, url ? url : "",
+              url ? strlen(url) : 0);
 
     gParser = (GazetteFeedParser *)NewPtrClear((Size)sizeof(GazetteFeedParser));
     if (gParser == NULL) {
@@ -196,6 +238,15 @@ GazetteRefreshState GazetteFeedsRefreshPump(void)
     }
 
     ReleaseRefresh();
+
+    /*
+     * Write the cache only on a refresh that produced articles, and only
+     * after the store has been judged good. A cache written from a failed
+     * parse would be read back on the next launch as though it were real.
+     */
+    gFetchedAt = UnixNow();
+    SaveCache(gCurrentURL, gFetchedAt);
+
     gState = kGazetteRefreshDone;
     return gState;
 }
@@ -213,6 +264,168 @@ int GazetteFeedsRefreshProgress(void)
 const char *GazetteFeedsRefreshErrorText(void)
 {
     return gError;
+}
+
+
+/* ------------------------------------------------------------------ */
+/* The cache                                                           */
+/*                                                                     */
+/* A line-oriented text file, one field per line, tagged by a single    */
+/* letter. That format is only possible because every string in the     */
+/* store has already been through gz_flatten_ws: there are no embedded  */
+/* newlines to escape and nothing to quote, so writing is a print and   */
+/* reading is a switch. It also means the file opens readably in        */
+/* SimpleText, which is worth something when the question is "why does  */
+/* this feed show the wrong articles".                                  */
+/* ------------------------------------------------------------------ */
+
+static void WriteLongLine(GazetteStoreFile *f, char tag, long value)
+{
+    char line[24];
+
+    snprintf(line, sizeof line, "%c %ld", tag, value);
+    GazetteStoreWriteLine(f, line);
+}
+
+static void WriteTextLine(GazetteStoreFile *f, char tag, const char *text)
+{
+    char line[8];
+
+    line[0] = tag;
+    line[1] = ' ';
+    line[2] = '\0';
+    GazetteStoreWrite(f, line, 2);
+    GazetteStoreWrite(f, text, (long)strlen(text));
+    GazetteStoreWrite(f, "\r", 1);
+}
+
+static void SaveCache(const char *url, long fetchedAt)
+{
+    GazetteStoreFile *f = GazetteStoreCacheCreate(url);
+    int               i;
+
+    if (f == NULL) {
+        return;             /* a cache that cannot be written is not an error */
+    }
+
+    GazetteStoreWriteLine(f, "GAZETTE-CACHE 1");
+    WriteTextLine(f, 'U', url);
+    WriteTextLine(f, 'F', gFeedTitle);
+    WriteLongLine(f, 'W', fetchedAt);
+
+    for (i = 0; i < gArticleCount; i++) {
+        const GazetteArticle *a = &gArticles[i];
+
+        GazetteStoreWriteLine(f, "-");
+        WriteTextLine(f, 'T', a->title);
+        WriteTextLine(f, 'L', a->link);
+        WriteTextLine(f, 'S', a->source);
+        WriteLongLine(f, 'D', a->date);
+        WriteTextLine(f, 'B', a->body);
+    }
+
+    GazetteStoreClose(f);
+}
+
+int GazetteFeedsLoadCache(int feedIndex, const char *url, long maxArticles)
+{
+    GazetteStoreFile *f;
+    char              line[kGazetteArticleBodyLen + 8];
+    GazetteArticle    article;
+    char              title[kGazetteFeedTitleLen];
+    long              fetchedAt = 0;
+    int               count     = 0;
+    int               inArticle = 0;
+    long              n;
+
+    if (url == NULL || url[0] == '\0') {
+        return 0;
+    }
+    f = GazetteStoreCacheOpen(url);
+    if (f == NULL) {
+        return 0;
+    }
+
+    n = GazetteStoreReadLine(f, line, (long)sizeof line);
+    if (n < 0 || strcmp(line, "GAZETTE-CACHE 1") != 0) {
+        /* A file from a future version, or not ours at all. Refusing it is
+           better than reading it as though the fields still mean what they
+           did; the next refresh overwrites it. */
+        GazetteStoreClose(f);
+        return 0;
+    }
+
+    memset(&article, 0, sizeof article);
+    title[0] = '\0';
+
+    /*
+     * Articles are built into a local and only committed to the store when
+     * the next separator or the end of the file says the record is complete.
+     * Nothing is written to gArticles until the first complete one, so a
+     * truncated cache leaves what was on screen alone.
+     */
+    while ((n = GazetteStoreReadLine(f, line, (long)sizeof line)) >= 0) {
+        char        tag  = (n > 0) ? line[0] : '\0';
+        const char *rest = (n > 2) ? line + 2 : "";
+
+        if (tag == '-') {
+            if (inArticle) {
+                if (count == 0) {
+                    GazetteFeedsClear();
+                }
+                if (count < kGazetteMaxArticles &&
+                    (maxArticles <= 0 || count < maxArticles)) {
+                    gArticles[count++] = article;
+                }
+            }
+            memset(&article, 0, sizeof article);
+            inArticle = 1;
+            continue;
+        }
+
+        switch (tag) {
+            case 'U': break;                /* the URL, for the reader's eye */
+            case 'F': gz_copy_n(title, sizeof title, rest, strlen(rest)); break;
+            case 'W': fetchedAt = gz_parse_dec(rest, strlen(rest), 0); break;
+            case 'T': gz_copy_n(article.title, sizeof article.title,
+                                rest, strlen(rest)); break;
+            case 'L': gz_copy_n(article.link, sizeof article.link,
+                                rest, strlen(rest)); break;
+            case 'S': gz_copy_n(article.source, sizeof article.source,
+                                rest, strlen(rest)); break;
+            case 'B': gz_copy_n(article.body, sizeof article.body,
+                                rest, strlen(rest)); break;
+            case 'D': article.date = gz_parse_dec(rest, strlen(rest), 0); break;
+            default:  break;                /* an unknown tag is skipped */
+        }
+    }
+
+    if (inArticle) {
+        if (count == 0) {
+            GazetteFeedsClear();
+        }
+        if (count < kGazetteMaxArticles &&
+            (maxArticles <= 0 || count < maxArticles)) {
+            gArticles[count++] = article;
+        }
+    }
+
+    GazetteStoreClose(f);
+
+    if (count == 0) {
+        return 0;
+    }
+
+    gArticleCount = count;
+    gCurrentFeed  = feedIndex;
+    gFetchedAt    = fetchedAt;
+    gz_copy_n(gFeedTitle, sizeof gFeedTitle, title, strlen(title));
+    return 1;
+}
+
+void GazetteFeedsForgetCache(const char *url)
+{
+    GazetteStoreCacheDelete(url);
 }
 
 void GazetteFeedsRefreshCancel(void)

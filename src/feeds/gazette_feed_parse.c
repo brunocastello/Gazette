@@ -32,7 +32,9 @@ enum {
     kFieldTitle,
     kFieldLink,
     kFieldDate,
-    kFieldSource
+    kFieldSource,
+    kFieldBody,         /* description / summary — taken only if none yet */
+    kFieldBodyRich      /* content / content:encoded — always wins        */
 };
 
 /* ------------------------------------------------------------------ */
@@ -531,19 +533,27 @@ static void CaptureByte(GazetteFeedParser *p, char c)
  * markup until it is decoded, and transliteration last, because it is what
  * turns a decoded U+2019 into an apostrophe.
  */
-static void CaptureFinish(GazetteFeedParser *p, char *out, size_t cap)
+/* Run the pipeline and leave the result in p->scratch, returning its length.
+   Split out from CaptureFinish so a caller that has to inspect the text
+   before deciding where it goes does not need a buffer of its own -- which on
+   this stack, several frames inside the fetch pump, is worth avoiding. */
+static size_t CaptureProcess(GazetteFeedParser *p)
 {
     size_t len;
-    char   ascii[kGazetteCaptureMax];
 
     p->capture[p->captureLen] = '\0';
 
     len = GazetteDecodeEntities(p->capture, p->captureLen);
     len = GazetteStripMarkup(p->capture, len);
-    len = gz_utf8_to_ascii(p->capture, len, ascii, sizeof ascii);
-    len = gz_flatten_ws(ascii, len);
+    len = gz_utf8_to_ascii(p->capture, len, p->scratch, sizeof p->scratch);
+    return gz_flatten_ws(p->scratch, len);
+}
 
-    gz_copy_n(out, cap, ascii, len);
+static void CaptureFinish(GazetteFeedParser *p, char *out, size_t cap)
+{
+    size_t len = CaptureProcess(p);
+
+    gz_copy_n(out, cap, p->scratch, len);
 }
 
 /* ------------------------------------------------------------------ */
@@ -779,6 +789,23 @@ static void StartElement(GazetteFeedParser *p, const char *tag, size_t len,
         return;
     }
 
+    /*
+     * The summary. A feed may carry several of these and they are not equal:
+     * <content> and <content:encoded> hold the full text where a feed offers
+     * it, while <description> and <summary> hold an extract. The prefix is
+     * already stripped, so content:encoded arrives here as "content".
+     */
+    if (strcmp(name, "content") == 0) {
+        CaptureBegin(p, kFieldBodyRich);
+        return;
+    }
+    if (strcmp(name, "description") == 0 || strcmp(name, "summary") == 0) {
+        if (p->article.body[0] == '\0') {
+            CaptureBegin(p, kFieldBody);
+        }
+        return;
+    }
+
     if (strcmp(name, "author") == 0 || strcmp(name, "creator") == 0) {
         p->inAuthor = 1;
         if (strcmp(name, "creator") == 0 && p->article.source[0] == '\0') {
@@ -816,6 +843,22 @@ static void EndElement(GazetteFeedParser *p, const char *name)
             case kFieldSource:
                 CaptureFinish(p, p->article.source, sizeof p->article.source);
                 break;
+            case kFieldBody:
+                if (p->article.body[0] == '\0') {
+                    CaptureFinish(p, p->article.body, sizeof p->article.body);
+                }
+                break;
+            case kFieldBodyRich: {
+                /* Only if it actually says something: an empty <content/> is
+                   common and must not wipe a description already captured. */
+                size_t len = CaptureProcess(p);
+
+                if (len > 0) {
+                    gz_copy_n(p->article.body, sizeof p->article.body,
+                              p->scratch, len);
+                }
+                break;
+            }
             case kFieldDate: {
                 char text[64];
 

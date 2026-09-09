@@ -23,14 +23,19 @@ extern "C" {
 
 enum {
     /*
-     * Articles held for the selected feed. Google News returns about 80 items
-     * for a topic and rather more for top stories; 200 covers both with room,
-     * and the store is capped again at run time by the max-articles
-     * preference. At roughly 1.4 KB an article this is 280 KB of the 8 MB
-     * partition — a real cost, and the reason it is a fixed ceiling rather
-     * than "however many the feed sent".
+     * Articles held for the selected feed. An article is about 2.9 KB now
+     * that it carries the feed's summary for the reader pane, so 150 of them
+     * is roughly 440 KB of the 8 MB partition. That is a real cost and the
+     * reason this is a fixed ceiling rather than "however many the feed
+     * sent": one hostile feed should not be able to decide how much of the
+     * heap Gazette uses.
+     *
+     * It is comfortably more than any feed delivers in one fetch — Google
+     * News top stories returned 38 in testing and a topic returns fewer — and
+     * the store is capped again at run time by the max-articles preference,
+     * which defaults to 100.
      */
-    kGazetteMaxArticles = 200
+    kGazetteMaxArticles = 150
 };
 
 typedef enum {
@@ -53,6 +58,14 @@ const GazetteArticle *GazetteFeedsArticleAt(int index);
    user wrote in their preferences. "" until a refresh has succeeded. */
 const char *GazetteFeedsTitle(void);
 
+/*
+ * Which entry in the preferences' feed list the held articles belong to, or
+ * -1 when nothing has been loaded. The sidebar needs this to know which row
+ * to show as selected, and the refresh needs it to know whether switching
+ * feeds means throwing the store away.
+ */
+int GazetteFeedsCurrentFeed(void);
+
 /* Drop everything held. */
 void GazetteFeedsClear(void);
 
@@ -66,7 +79,7 @@ void GazetteFeedsClear(void);
  * already there on screen rather than emptying the window. Returns 1 if the
  * refresh started.
  */
-int GazetteFeedsRefreshStart(const char *url, long maxArticles);
+int GazetteFeedsRefreshStart(int feedIndex, const char *url, long maxArticles);
 
 /* One slice, from the event loop's idle branch. */
 GazetteRefreshState GazetteFeedsRefreshPump(void);
@@ -81,6 +94,28 @@ const char *GazetteFeedsRefreshErrorText(void);
 
 /* Abandon a refresh in flight and release the connection. */
 void GazetteFeedsRefreshCancel(void);
+
+/* ------------------------------------------------------------------ */
+/* The cache                                                           */
+/*                                                                     */
+/* One file per feed, so a restart shows what was there and switching   */
+/* between feeds does not need the network. A successful refresh writes */
+/* its result; selecting a feed reads it.                               */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Load a feed's cached articles into the store. Returns 1 when a cache
+ * existed and held something, 0 otherwise — in which case the store is left
+ * alone, so a feed with no cache does not blank the window.
+ */
+int GazetteFeedsLoadCache(int feedIndex, const char *url, long maxArticles);
+
+/* When the loaded feed was last fetched, in seconds since 1970, or 0. Read
+   from the cache; the auto-refresh timer uses it to decide what is stale. */
+long GazetteFeedsFetchedAt(void);
+
+/* Forget a feed's cache, for when the feed itself is removed. */
+void GazetteFeedsForgetCache(const char *url);
 
 #ifdef __cplusplus
 }

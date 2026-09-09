@@ -42,15 +42,29 @@ enum {
     kGazetteArticleSourceLen = 128,
     kGazetteFeedTitleLen     = 256,
 
-    /* One element's text. Titles and links are the long ones; anything past
-       this is truncated rather than treated as an error. */
-    kGazetteCaptureMax       = 2048
+    /*
+     * The summary the feed itself carries, which is what the reader pane
+     * shows until Phase 4 adds fetching the article page. Most feeds write a
+     * paragraph or two; 1536 bytes of transliterated ASCII is a few hundred
+     * words, and truncating past that costs less than 150 articles times
+     * whatever a generous limit would be.
+     */
+    kGazetteArticleBodyLen   = 1536,
+
+    /*
+     * One element's text, before it is decoded and stripped. Bigger than any
+     * field it feeds because a description arrives as HTML and shrinks: a
+     * Google News item's is 2-3 KB of anchor tags that becomes a couple of
+     * hundred bytes of prose.
+     */
+    kGazetteCaptureMax       = 4096
 };
 
 typedef struct {
     char title[kGazetteArticleTitleLen];
     char link[kGazetteArticleLinkLen];
     char source[kGazetteArticleSourceLen];  /* publisher, when the feed says */
+    char body[kGazetteArticleBodyLen];      /* the feed's own summary        */
     long date;                              /* seconds since 1970, 0 unknown */
 } GazetteArticle;
 
@@ -71,6 +85,12 @@ typedef struct {
     size_t tagLen;
 
     char capture[kGazetteCaptureMax];
+    /*
+     * Scratch for the transliteration pass. In the struct rather than on the
+     * stack: CaptureFinish runs several frames down inside the fetch pump,
+     * and a 4 KB local there is a real risk on a Mac OS 9 stack.
+     */
+    char scratch[kGazetteCaptureMax];
     size_t captureLen;
     int  capturing;             /* which field, or 0 */
     int  captureTruncated;
