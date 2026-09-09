@@ -66,6 +66,14 @@ typedef struct {
     char source[kGazetteArticleSourceLen];  /* publisher, when the feed says */
     char body[kGazetteArticleBodyLen];      /* the feed's own summary        */
     long date;                              /* seconds since 1970, 0 unknown */
+
+    /*
+     * Whether the article has been opened. Not something the parser knows or
+     * ever sets — it is the store's, and it lives here because the store
+     * holds whole articles and the cache round-trips them. A freshly parsed
+     * article is unread, which memset already makes true.
+     */
+    int  read;
 } GazetteArticle;
 
 /*

@@ -76,6 +76,8 @@ static void    HandleRemove(void);
 static void    HandleToggleEnabled(void);
 static void    HandleMoveToGroup(short item);
 static void    HandleToggleFullText(void);
+static void    HandleMarkRead(void);
+static void    HandleMarkAllRead(void);
 
 /* ------------------------------------------------------------------ */
 /* Application globals                                                 */
@@ -126,7 +128,10 @@ enum {
     kFeedsItemEnabled  = 8,
     kFeedsItemMoveTo   = 9,
     /* 10 is a divider */
-    kFeedsItemFullText = 11
+    kFeedsItemFullText = 11,
+    /* 12 is a divider */
+    kFeedsItemMarkRead = 13,
+    kFeedsItemMarkAll  = 14
 };
 
 /* Move to Group: the top level, a divider, then one item per group. */
@@ -250,7 +255,8 @@ static Boolean BuildMenuBar(void)
                "\pNew Feed\311/N;New Group\311;(-;"
                "Edit Feed\311;Rename\311;Remove;(-;"
                "Turn Off;Move to Group;(-;"
-               "Full Article Text/T");
+               "Full Article Text/T;(-;"
+               "Mark as Unread/U;Mark All as Read");
     InsertMenu(feedsMenu, 0);
 
     /* "Move to Group" is a hierarchical item: the submenu goes in with
@@ -460,6 +466,8 @@ static void HandleMenuChoice(long menuResult)
                 case kFeedsItemRemove:   HandleRemove();        break;
                 case kFeedsItemEnabled:  HandleToggleEnabled(); break;
                 case kFeedsItemFullText: HandleToggleFullText(); break;
+                case kFeedsItemMarkRead: HandleMarkRead();       break;
+                case kFeedsItemMarkAll:  HandleMarkAllRead();    break;
                 default: break;
             }
             break;
@@ -564,6 +572,29 @@ static void AdjustMenus(void)
 
         MacCheckMenuItem(feeds, kFeedsItemFullText,
                          (prefs != nil && prefs->fullText) ? true : false);
+    }
+
+    /* The read/unread pair follows the article, not the feed. The first item
+       says what it would do, so it reads as one command rather than two. */
+    {
+        const GazetteArticle *article =
+            GazetteFeedsArticleAt(GazetteUISelectedArticle());
+
+        if (article != nil) {
+            MacEnableMenuItem(feeds, kFeedsItemMarkRead);
+            SetMenuItemText(feeds, kFeedsItemMarkRead,
+                            article->read ? "\pMark as Unread"
+                                          : "\pMark as Read");
+        } else {
+            DisableMenuItem(feeds, kFeedsItemMarkRead);
+            SetMenuItemText(feeds, kFeedsItemMarkRead, "\pMark as Unread");
+        }
+
+        if (GazetteFeedsUnreadCount() > 0) {
+            MacEnableMenuItem(feeds, kFeedsItemMarkAll);
+        } else {
+            DisableMenuItem(feeds, kFeedsItemMarkAll);
+        }
     }
 
     if (moveTo == nil) {
@@ -829,6 +860,24 @@ static void HandleToggleFullText(void)
     ShowArticle(GazetteUISelectedArticle());
 }
 
+static void HandleMarkRead(void)
+{
+    int                   index   = GazetteUISelectedArticle();
+    const GazetteArticle *article = GazetteFeedsArticleAt(index);
+
+    if (article == nil) {
+        return;
+    }
+    GazetteFeedsMarkRead(index, article->read ? 0 : 1);
+    GazetteUIUpdate();
+}
+
+static void HandleMarkAllRead(void)
+{
+    GazetteFeedsMarkAllRead();
+    GazetteUIUpdate();
+}
+
 static void HandleMoveToGroup(short item)
 {
     int kind  = 0;
@@ -884,6 +933,10 @@ static void ShowFeed(int feedIndex)
         GazetteUISetStatus("No feeds configured.");
         return;
     }
+
+    /* Whatever was read in the feed being left has to reach its cache file
+       before the store is replaced. */
+    GazetteFeedsFlush();
 
     GazetteUISelectFeed(feedIndex);
 
@@ -1097,6 +1150,9 @@ static void DoExitGazette(void)
        connection and frees the parser or the extractor behind it. */
     GazetteFeedsRefreshCancel();
     GazetteFeedsFullTextCancel();
+
+    /* And what was read in the feed still on screen. */
+    GazetteFeedsFlush();
 
     GazetteUIClose();
 

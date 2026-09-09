@@ -730,6 +730,7 @@ static void DrawList(void)
 
     TextFont(kFontIDGeneva);
     TextSize(9);
+    TextFace(normal);           /* the rows set their own; start from plain */
 
     count = GazetteFeedsArticleCount();
     rows  = VisibleRowsIn(&gListRect, kRowHeight);
@@ -758,10 +759,15 @@ static void DrawList(void)
             DrawTruncated(when, kDateColumn - kTextInset);
         }
 
+        /* Unread in bold, the way every mail and news reader of the era
+           marked one. The date column stays plain either way, so the weight
+           reads as being about the headline rather than the row. */
+        TextFace(a->read ? normal : bold);
         MoveTo((short)(gListRect.left + kTextInset + kDateColumn), line);
         DrawTruncated(a->title,
                       (short)(gListRect.right - gListRect.left -
                               kDateColumn - 2 * kTextInset));
+        TextFace(normal);
 
         if (i == gSelectedArticle) {
             Rect row;
@@ -863,13 +869,21 @@ void GazetteUIUpdate(void)
     DrawHeader(&gSidebarHeader, "Feeds");
 
     if (GazetteFeedsArticleCount() > 0) {
-        const char *title = GazetteFeedsTitle();
+        const char *title  = GazetteFeedsTitle();
+        int         unread = GazetteFeedsUnreadCount();
 
         if (title[0] == '\0') {
             title = GazetteCoreFeedTitle(gSelectedFeed);
         }
-        snprintf(header, sizeof header, "%s (%d)", title,
-                 GazetteFeedsArticleCount());
+        /* How many are left to read is the number worth reading; the total
+           is only interesting when there is nothing left. */
+        if (unread > 0) {
+            snprintf(header, sizeof header, "%s (%d unread of %d)", title,
+                     unread, GazetteFeedsArticleCount());
+        } else {
+            snprintf(header, sizeof header, "%s (%d)", title,
+                     GazetteFeedsArticleCount());
+        }
     } else {
         snprintf(header, sizeof header, "%s",
                  GazetteCoreFeedTitle(gSelectedFeed));
@@ -929,6 +943,12 @@ static void SelectArticle(int index)
         if (index < 0)      index = 0;
         if (index >= count) index = count - 1;
         gSelectedArticle = index;
+    }
+
+    /* Opening it is what makes it read — before the draw, so the headline
+       loses its bold in the same repaint that highlights it. */
+    if (gSelectedArticle >= 0) {
+        GazetteFeedsMarkRead(gSelectedArticle, 1);
     }
 
     RewrapReader();
@@ -1228,6 +1248,9 @@ void GazetteUIArticlesChanged(void)
         SetControlValue(gReaderScroll, 0);
         SyncScroll(gReaderScroll, gReaderLineCount,
                    VisibleRowsIn(&gReaderRect, kReaderLead));
+    }
+    if (gSelectedArticle >= 0) {
+        GazetteFeedsMarkRead(gSelectedArticle, 1);
     }
     GazetteUIUpdate();
 

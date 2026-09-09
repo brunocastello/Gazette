@@ -70,6 +70,26 @@ int GazetteFeedsCurrentFeed(void);
 void GazetteFeedsClear(void);
 
 /* ------------------------------------------------------------------ */
+/* Read and unread                                                     */
+/*                                                                     */
+/* Opening an article marks it read. The state belongs to the feed and  */
+/* rides in its cache file, so it survives a quit — an unread count     */
+/* that resets every launch would be worse than none at all.            */
+/* ------------------------------------------------------------------ */
+
+int  GazetteFeedsUnreadCount(void);
+void GazetteFeedsMarkRead(int index, int read);
+void GazetteFeedsMarkAllRead(void);
+
+/*
+ * Write the cache back if the read state has moved since it was loaded.
+ * Called before the store is replaced and before quitting, rather than on
+ * every article: the file is the whole feed, and rewriting a hundred articles
+ * because one was opened is a disk write nobody asked for.
+ */
+void GazetteFeedsFlush(void);
+
+/* ------------------------------------------------------------------ */
 /* Refreshing                                                          */
 /* ------------------------------------------------------------------ */
 
