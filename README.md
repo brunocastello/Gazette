@@ -250,6 +250,64 @@ and finding its feed from the `<link rel="alternate">` tag — is implemented in
 the parser and waits on the Phase 4 feed-management UI to be reachable without
 editing the file.
 
+## The window
+
+```
++---------------+-----------------------------------+
+| Feeds         | Google News - Top Stories (38)  |^|
+|---------------|---------------------------------| |
+| Google News   | Sep 08 21:30  A headline        | |
+| Example Blog  | Sep 08 20:12  Another headline  |v|
+|               |=================================+=+   <- draggable
+|               | A headline                      |^|
+|               | CNN - Sep 08 21:30              | |
+|               |                                 | |
+|               | The summary the feed carried... |v|
++---------------+-----------------------------------+
+| 38 articles from Google News - Top Stories        |
++---------------------------------------------------+
+```
+
+Clicking a feed reads its **cache** first and only fetches when there is
+nothing cached, so after the first fetch moving through the sidebar is instant
+and works with the machine unplugged. Command-R forces a refresh of the feed
+you are looking at. Arrow, page, home and end keys move the headline selection.
+Both dividers drag.
+
+Auto-refresh follows the `refresh-minutes` preference and is deliberately
+modest: it refreshes the feed being looked at, and only when nothing else is
+running. Walking the whole list in the background means a queue, several
+connections and a policy for partial failure, which is Phase 4's problem.
+
+### Two Carbon details
+
+`CreateScrollBarControl` is *"in CarbonLib 1.1 and later"* and Gazette targets
+1.0, so the scroll bars are built with `NewControl` and `kControlScrollBarProc`.
+The scroll action procedure is a real UPP — `OPAQUE_UPP_TYPES` again — made once
+with `NewControlActionUPP` and told apart by each control's reference, so one
+routine serves all three bars. It redraws its pane directly rather than
+invalidating, because it runs inside `TrackControl`'s own loop where an update
+event would not be seen until that returned.
+
+## The cache
+
+One file per feed in a **Gazette Cache** folder beside the preferences, named
+by an FNV-1a hash of the feed's URL. The URL is the only stable thing about a
+feed — its position changes when the file is reordered, its title when it is
+renamed — and either would otherwise hand a feed another one's articles.
+
+The format is line-oriented, one field per line behind a one-letter tag, which
+is only possible because every string in the store has already been through
+whitespace flattening: no embedded newlines to escape, nothing to quote. It
+opens readably in SimpleText, which is worth something when the question is
+*why is this feed showing the wrong articles*. Both directions stream through a
+2 KB buffer.
+
+A cache is written only after a refresh has been judged good, so a failed parse
+can never be read back next launch as though it were real; and reading commits
+nothing until the first complete record, so a truncated file leaves what is on
+screen alone.
+
 ## Continuous Integration
 
 `.github/workflows/build.yml` defines two jobs.
@@ -294,7 +352,7 @@ started by hand from the Actions tab (`workflow_dispatch`).
 │   ├── main.cpp            # Carbon shell: CreateNewWindow, WaitNextEvent, menus
 │   ├── core/               # Thin C seam (MacTypes.h only) — owns the live prefs
 │   │   └── gazette_core.h/.c
-│   ├── ui/                 # Platinum window helpers (Phase 3)
+│   ├── ui/                 # The Platinum window — every Toolbox UI call
 │   │   └── platinum_window.h/.c
 │   ├── net/                # Stream over Certainly's OT client; HTTP fetch
 │   │   ├── gazette_net.h/.c
@@ -307,7 +365,7 @@ started by hand from the Actions tab (`workflow_dispatch`).
 │   ├── extract/            # HTML stripping, full-text (Phase 3)
 │   │   └── gazette_extract.h/.c
 │   ├── store/              # The only File Manager calls in the application
-│   │   └── gazette_store.h/.c
+│   │   └── gazette_store.h/.c        # preferences + the per-feed cache
 │   ├── prefs/              # Settings + feed list, portable and host-tested
 │   │   └── gazette_prefs.h/.c
 │   └── portable/           # Pure C, host-tested
@@ -331,7 +389,7 @@ started by hand from the Actions tab (`workflow_dispatch`).
 | 0 | **Done** | Skeleton: Carbon shell, window, menus, WaitNextEvent loop, quit, SIZE resource, Finder icon, preferences/feed list on disk, host-test target |
 | 1 | **Done** | Networking: Certainly/BearSSL vendored and building under Carbon, non-blocking stream, HTTPS GET with redirects driven from the event loop |
 | 2 | **Done** | Feed engine: incremental RSS 2.0 / Atom parser, Google News country and topic maps, feed auto-discovery, headline list |
-| 3 | TODO | Full Platinum UI: sidebar + article list + reader pane, local caching |
+| 3 | **Done** | Platinum UI: sidebar + headline list + reader pane, scroll bars, draggable dividers, on-disk cache, auto-refresh |
 | 4 | TODO | Polish: custom feed management, full-text fetch, search, read/unread, OPML import/export |
 
 ## Carbon on Mac OS 9 — what changes

@@ -139,11 +139,15 @@ Single cooperative event loop. Network fetches and parsing progress via poll fun
 - Display titles in a basic list window. ✅ Geneva 9, fixed date column,
   arrow/page keys to scroll.
 
-**Phase 3 – Full Platinum UI + caching**
-- Sidebar + article list + reader pane (Newsstand-inspired layout).
-- Local cache so restart shows previously fetched content.
-- Manual refresh + simple auto-refresh.
-- Article body display with transliteration.
+**Phase 3 – Full Platinum UI + caching** ✅
+- Sidebar + article list + reader pane (Newsstand-inspired layout). ✅ Three
+  scroll bars, two draggable dividers, Appearance Manager placards and frames.
+- Local cache so restart shows previously fetched content. ✅ One file per feed
+  in a "Gazette Cache" folder, keyed by a hash of the feed URL.
+- Manual refresh + simple auto-refresh. ✅ Auto-refresh covers the feed being
+  looked at; a background queue over the whole list is Phase 4.
+- Article body display with transliteration. ✅ The feed's own summary; the
+  full article page is Phase 4's full-text option.
 
 **Phase 4 – Polish and extras**
 - Custom feed management UI.
