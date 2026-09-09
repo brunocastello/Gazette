@@ -30,7 +30,7 @@ set(GAZETTE_SOURCES
     # UI — Carbon window helpers (Phase 3)
     src/ui/platinum_window.c
 
-    # Networking — Gateway + Certainly (Phase 1)
+    # Networking — stream over Certainly's Open Transport client + TLS
     src/net/gazette_net.c
 
     # Feed engine — RSS/Atom, Google News (Phase 2)
@@ -58,6 +58,75 @@ set(GAZETTE_RESOURCES
 )
 
 # ------------------------------------------------------------------ #
+# TLS: BearSSL + Certainly, vendored from Gateway                     #
+#                                                                     #
+# Constraint 4 -- do not reimplement TLS. third_party/certainly is a  #
+# byte-for-byte copy of Gateway's, so security fixes on either side    #
+# transfer with a plain diff; the Carbon adaptation is entirely in the #
+# two definitions below and needs no source change. See PATCHES.md.    #
+# ------------------------------------------------------------------ #
+
+set(CERTAINLY_DIR ${CMAKE_SOURCE_DIR}/third_party/certainly)
+
+# BearSSL is plain C99 against the standard library, so it needs nothing
+# from the Toolbox and nothing Carbon-specific.
+file(GLOB_RECURSE BEARSSL_SOURCES
+    ${CERTAINLY_DIR}/bearssl/src/aead/*.c
+    ${CERTAINLY_DIR}/bearssl/src/codec/*.c
+    ${CERTAINLY_DIR}/bearssl/src/ec/*.c
+    ${CERTAINLY_DIR}/bearssl/src/hash/*.c
+    ${CERTAINLY_DIR}/bearssl/src/int/*.c
+    ${CERTAINLY_DIR}/bearssl/src/kdf/*.c
+    ${CERTAINLY_DIR}/bearssl/src/mac/*.c
+    ${CERTAINLY_DIR}/bearssl/src/rand/*.c
+    ${CERTAINLY_DIR}/bearssl/src/rsa/*.c
+    ${CERTAINLY_DIR}/bearssl/src/ssl/*.c
+    ${CERTAINLY_DIR}/bearssl/src/symcipher/*.c
+    ${CERTAINLY_DIR}/bearssl/src/x509/*.c
+    ${CERTAINLY_DIR}/bearssl/src/settings.c
+)
+
+add_library(bearssl STATIC ${BEARSSL_SOURCES})
+target_include_directories(bearssl
+    PUBLIC  ${CERTAINLY_DIR}/bearssl/inc
+    PRIVATE ${CERTAINLY_DIR}/bearssl/src
+)
+
+# Certainly speaks Open Transport, which is where Carbon actually bites.
+#
+# OTCARBONAPPLICATION=1 is the whole adaptation. Under Carbon the plain
+# OTOpenEndpoint, OTOpenInternetServices and InitOpenTransport entry points do
+# not exist -- their Availability: blocks read "CarbonLib: not available", and
+# a Carbon application must call the OTClientContext-taking *InContext forms
+# instead. With this macro set, Apple's own headers define the old spellings
+# as macros forwarding to the new ones with a NULL context, which is exactly
+# what an application wants. So Certainly's transport_ot.c compiles for Carbon
+# untouched; without the macro it does not compile at all, which is the right
+# way round for a mistake this quiet to fail.
+add_library(certainly STATIC
+    ${CERTAINLY_DIR}/src/certainly.c
+    ${CERTAINLY_DIR}/src/transport_ot.c
+    ${CERTAINLY_DIR}/src/entropy.c
+    ${CERTAINLY_DIR}/src/ca_roots.c
+    ${CERTAINLY_DIR}/src/tls13_keysched.c
+    ${CERTAINLY_DIR}/src/tls13_record.c
+    ${CERTAINLY_DIR}/src/tls13_handshake.c
+)
+
+target_compile_definitions(certainly PUBLIC
+    CERTAINLY_OPEN_TRANSPORT             # select transport_ot.c, EndpointRef CTSocket
+    OTCARBONAPPLICATION=1                # see above
+)
+
+target_include_directories(certainly
+    PUBLIC  ${CERTAINLY_DIR}/include
+    PUBLIC  ${CERTAINLY_DIR}/src         # certainly_transport.h, for CTSocket
+    PRIVATE ${CERTAINLY_DIR}/bearssl/inc
+)
+target_link_libraries(certainly PRIVATE bearssl)
+target_compile_options(certainly PRIVATE -Wall -Wno-unused-parameter)
+
+# ------------------------------------------------------------------ #
 # Build target                                                        #
 # ------------------------------------------------------------------ #
 
@@ -80,3 +149,9 @@ add_application(Gazette
 target_include_directories(Gazette PRIVATE
     ${CMAKE_SOURCE_DIR}/src
 )
+
+# src/net/ drives Open Transport directly for plaintext HTTP, so it needs the
+# same Carbon redirection Certainly does. PUBLIC on the certainly target
+# already carries both definitions here; naming them again would be a second
+# place to get them wrong.
+target_link_libraries(Gazette certainly bearssl)

@@ -35,6 +35,7 @@
 #include <string.h>
 
 #include "core/gazette_core.h"
+#include "net/gazette_net.h"
 
 /* ------------------------------------------------------------------ */
 /* Forward declarations                                                */
@@ -66,6 +67,11 @@ static WindowRef gMainWindow = nil;
    cares, but on a first run it is the difference between "these are your
    feeds" and "these are the ones Gazette started you with". */
 static Boolean   gHadPrefsFile = false;
+
+/* Whether Open Transport and Certainly came up. On Mac OS 9 a failure here
+   almost always means TCP/IP is not configured rather than anything Gazette
+   did, so it is worth saying so on screen rather than only at fetch time. */
+static Boolean   gNetUp = false;
 
 /* Menu IDs */
 enum {
@@ -138,6 +144,12 @@ static Boolean InitGazette(void)
        the feed list. GazetteCoreInit() falls back to defaults when there is no
        file, so there is nothing here to fail on. */
     gHadPrefsFile = GazetteCoreInit();
+
+    /* Open Transport before the window: InitOpenTransport can put up its own
+       dialog if TCP/IP needs loading, and it should not do that over a
+       half-drawn window. Failure is not fatal — Gazette still reads its cache
+       and its preferences without a network. */
+    gNetUp = GazetteNetInit() ? true : false;
 
     if (!BuildMenuBar()) {
         return false;
@@ -465,7 +477,11 @@ static void DrawGazetteWindow(WindowRef window)
     TextSize(12);
 
     MoveTo((short)(bounds.left + 16), (short)(bounds.bottom - 16));
-    DrawString("\pSidebar, article list and reader pane arrive in Phase 3.");
+    if (gNetUp) {
+        DrawString("\pNetwork ready - Open Transport and TLS are up.");
+    } else {
+        DrawString("\pNo network - check the TCP/IP control panel.");
+    }
 
     SetPort(savePort);
 }
@@ -479,6 +495,7 @@ static void DoExitGazette(void)
     /* Writes the preferences back out if anything changed them — including a
        first run, which saves the defaults so there is a file to hand-edit. */
     GazetteCoreShutdown();
+    GazetteNetShutdown();
 
     if (gMainWindow != nil) {
         DisposeWindow(gMainWindow);
