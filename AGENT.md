@@ -128,12 +128,16 @@ Single cooperative event loop. Network fetches and parsing progress via poll fun
 - Carbon's two Open Transport differences (`OTCARBONAPPLICATION`, opaque UPPs)
   are written up in `third_party/certainly/PATCHES.md` §21–23. ✅
 
-**Phase 2 – Feed engine**
-- RSS 2.0 and Atom parser (portable).
-- Google News topic/section fetching using the maps from NewsProxy.
-- Feed auto-discovery.
-- Simple in-memory feed + article list.
-- Display titles in a basic list window.
+**Phase 2 – Feed engine** ✅
+- RSS 2.0 and Atom parser (portable). ✅ Incremental, chunk-boundary safe,
+  host-tested whole / in 7-byte chunks / one byte at a time.
+- Google News topic/section fetching using the maps from NewsProxy. ✅ 29
+  countries and 184 curated topics; `tools/generate_gnews_topics.py`.
+- Feed auto-discovery. ✅ In the parser; reachable from the UI in Phase 4.
+- Simple in-memory feed + article list. ✅ One feed at a time; Phase 3's cache
+  is what lets several be held and survive a restart.
+- Display titles in a basic list window. ✅ Geneva 9, fixed date column,
+  arrow/page keys to scroll.
 
 **Phase 3 – Full Platinum UI + caching**
 - Sidebar + article list + reader pane (Newsstand-inspired layout).

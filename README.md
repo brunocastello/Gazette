@@ -189,6 +189,67 @@ Bodies are framed three ways: chunked, `Content-Length`, or delimited by the
 connection close. The third is why the stream layer distinguishes EOF from
 error at all.
 
+## Feeds
+
+### Parsing
+
+`src/feeds/gazette_feed_parse.c` is a scanner, not an XML parser. It does not
+validate, ignores namespace prefixes (`<atom:link>` and `<link>` are the same
+element), and knows nothing of document structure beyond *am I inside an item*.
+Feeds in the wild are not well-formed often enough for strictness to be a
+virtue, and the failure mode of a strict parser — no headlines at all — is worse
+than that of a lax one.
+
+It is incremental because the fetch delivers 4 KB at a time and a front-page
+feed is 100–200 KB. One article is held in progress and emitted when its closing
+tag arrives, so the largest thing in memory is one article and one element's
+text. Every token may be split across a chunk boundary — a tag name, an entity,
+the CDATA terminator itself — and the host tests parse each document whole, in
+7-byte chunks, and one byte at a time to prove it.
+
+RSS 2.0 and Atom share the code because the difference is only which elements
+carry what: Atom puts the article URL in a `href` attribute and RSS in the
+element's text, and `rel="self"` has to be told from `rel="alternate"` or the
+article link becomes the feed's own.
+
+Text is put through the Mac OS 9 pipeline in an order that matters:
+
+1. **Entities decoded** to UTF-8 — `&lt;b&gt;` is not markup until it is decoded.
+   One pass only: feeds double-escape constantly, and `&amp;lt;` means the *text*
+   `&lt;`, not a tag.
+2. **Markup stripped** — what step 1 revealed.
+3. **Transliterated** to ASCII — NewsProxy's table (constraint 8).
+4. **Whitespace flattened.**
+
+Dates are RFC 822 for RSS and ISO 8601 for Atom, in the shapes feeds actually
+send: no day name, one-digit days, two-digit years, named zones, fractional
+seconds. Unreadable is `0` rather than a guess — an article dated by accident
+sorts wrong forever, and a blank date column is honest.
+
+### Google News
+
+The country map and the 184 curated topics come from
+[NewsProxy](https://github.com/brunocastello/NewsProxy), which reverse-engineered
+them against the original Newsstand 1.1 client. NewsProxy keys them by the
+base64 `CAAq…` topic IDs that client sent, because NewsProxy *answers* that
+client; Gazette never speaks the Newsstand protocol, so only what those IDs
+resolved to is kept — a section name or a search query. That is the part that was
+actually discovered, and the part that goes stale if Google changes it.
+
+`src/feeds/gazette_gnews_topics.c` is generated:
+
+```bash
+python3 tools/generate_gnews_topics.py     --newsproxy ../NewsProxy/newsProxy.py     --out src/feeds/gazette_gnews_topics.c
+```
+
+### Custom feeds
+
+Any RSS 2.0 or Atom URL can be added to `Gazette Preferences` as a `feed` line
+(see [Preferences](#preferences)). Auto-discovery — pasting a site's home page
+and finding its feed from the `<link rel="alternate">` tag — is implemented in
+the parser and waits on the Phase 4 feed-management UI to be reachable without
+editing the file.
+
 ## Continuous Integration
 
 `.github/workflows/build.yml` defines two jobs.
@@ -226,7 +287,8 @@ started by hand from the Actions tab (`workflow_dispatch`).
 │   └── Strings.r           # Placeholder for localization (not yet in the build)
 │
 ├── tools/
-│   └── generate_icon.py    # Draws the icon and emits Gazette_icon.r
+│   ├── generate_icon.py         # Draws the icon and emits Gazette_icon.r
+│   └── generate_gnews_topics.py # Emits the Google News topic table
 │
 ├── src/
 │   ├── main.cpp            # Carbon shell: CreateNewWindow, WaitNextEvent, menus
@@ -237,8 +299,11 @@ started by hand from the Actions tab (`workflow_dispatch`).
 │   ├── net/                # Stream over Certainly's OT client; HTTP fetch
 │   │   ├── gazette_net.h/.c
 │   │   └── gazette_fetch.h/.c
-│   ├── feeds/              # RSS 2.0 / Atom parser, Google News (Phase 2)
-│   │   └── gazette_feeds.h/.c
+│   ├── feeds/              # Feed engine (parsing is portable, host-tested)
+│   │   ├── gazette_feeds.h/.c        # article store, refresh state machine
+│   │   ├── gazette_feed_parse.h/.c   # incremental RSS/Atom, auto-discovery
+│   │   ├── gazette_googlenews.h/.c   # country map, URL building
+│   │   └── gazette_gnews_topics.c    # generated — see tools/
 │   ├── extract/            # HTML stripping, full-text (Phase 3)
 │   │   └── gazette_extract.h/.c
 │   ├── store/              # The only File Manager calls in the application
@@ -265,7 +330,7 @@ started by hand from the Actions tab (`workflow_dispatch`).
 |-------|--------|-------------|
 | 0 | **Done** | Skeleton: Carbon shell, window, menus, WaitNextEvent loop, quit, SIZE resource, Finder icon, preferences/feed list on disk, host-test target |
 | 1 | **Done** | Networking: Certainly/BearSSL vendored and building under Carbon, non-blocking stream, HTTPS GET with redirects driven from the event loop |
-| 2 | TODO | Feed engine: RSS 2.0 / Atom parser, Google News maps, feed auto-discovery |
+| 2 | **Done** | Feed engine: incremental RSS 2.0 / Atom parser, Google News country and topic maps, feed auto-discovery, headline list |
 | 3 | TODO | Full Platinum UI: sidebar + article list + reader pane, local caching |
 | 4 | TODO | Polish: custom feed management, full-text fetch, search, read/unread, OPML import/export |
 
