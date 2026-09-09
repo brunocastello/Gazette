@@ -2,7 +2,8 @@
  * Gazette — Carbon RSS / Atom Reader for Mac OS 9 (PowerPC)
  * Copyright (c) 2026 brunocastello
  *
- * Phase 0: Skeleton — Carbon shell, Platinum window, menus, quit.
+ * Phase 0: Skeleton — Carbon shell, Platinum window, menus, quit, and the
+ * preference/feed list loaded from disk at launch and written back at exit.
  *
  * Built against Apple's Universal Interfaces 3.4 with TARGET_API_MAC_CARBON=1
  * (defined by Retro68's retrocarbon toolchain file, which is what makes these
@@ -31,6 +32,8 @@
 #include <Appearance.h>
 #include <Sound.h>
 
+#include <string.h>
+
 #include "core/gazette_core.h"
 
 /* ------------------------------------------------------------------ */
@@ -50,6 +53,7 @@ static void    InvalWholeWindow(WindowRef window);
 static void    HandleAbout(void);
 static void    HandleQuit(void);
 static void    DrawGazetteWindow(WindowRef window);
+static void    DrawCString(const char *text);
 
 /* ------------------------------------------------------------------ */
 /* Application globals                                                 */
@@ -57,6 +61,11 @@ static void    DrawGazetteWindow(WindowRef window);
 
 static Boolean   gDone       = false;
 static WindowRef gMainWindow = nil;
+
+/* Whether GazetteCoreInit() found a preferences file. Only the status line
+   cares, but on a first run it is the difference between "these are your
+   feeds" and "these are the ones Gazette started you with". */
+static Boolean   gHadPrefsFile = false;
 
 /* Menu IDs */
 enum {
@@ -124,6 +133,11 @@ static Boolean InitGazette(void)
     WindowAttributes attrs;
 
     InitCursor();
+
+    /* Before anything is drawn: the window's first update event already wants
+       the feed list. GazetteCoreInit() falls back to defaults when there is no
+       file, so there is nothing here to fail on. */
+    gHadPrefsFile = GazetteCoreInit();
 
     if (!BuildMenuBar()) {
         return false;
@@ -387,10 +401,32 @@ static void InvalWholeWindow(WindowRef window)
     InvalWindowRect(window, &bounds);
 }
 
+/* DrawString() wants a Pascal string; the feed list is plain C, so the
+   lengths come from strlen() and go to DrawText() instead. QuickDraw clips
+   to the port, so an over-long title stops at the window edge by itself. */
+static void DrawCString(const char *text)
+{
+    size_t len;
+
+    if (text == nil) {
+        return;
+    }
+    len = strlen(text);
+    if (len > 32767) {
+        len = 32767;
+    }
+    if (len > 0) {
+        DrawText(text, 0, (short)len);
+    }
+}
+
 static void DrawGazetteWindow(WindowRef window)
 {
     GrafPtr savePort;
     Rect    bounds;
+    short   line;
+    int     count;
+    int     i;
 
     GetPort(&savePort);
     SetPortWindowPort(window);
@@ -401,10 +437,34 @@ static void DrawGazetteWindow(WindowRef window)
     TextFont(systemFont);
     TextSize(12);
 
-    MoveTo(bounds.left + 16, bounds.top + 28);
-    DrawString("\pGazette - Phase 0 skeleton");
+    line = (short)(bounds.top + 28);
+    MoveTo((short)(bounds.left + 16), line);
+    if (gHadPrefsFile) {
+        DrawString("\pFeeds from Gazette Preferences");
+    } else {
+        DrawString("\pFeeds (no preferences file yet - defaults)");
+    }
 
-    MoveTo(bounds.left + 16, bounds.top + 48);
+    /* Geneva 9 is what Newsstand listed headlines in, and it is what the
+       Phase 3 sidebar will use. The feed list is the first thing to wear it. */
+    TextFont(kFontIDGeneva);
+    TextSize(9);
+
+    count = GazetteCoreFeedCount();
+    line  = (short)(bounds.top + 52);
+
+    /* Stop at the status line rather than drawing 64 feeds down through it.
+       Phase 3 replaces this with a scrolling sidebar. */
+    for (i = 0; i < count && line < bounds.bottom - 28; i++) {
+        MoveTo((short)(bounds.left + 16), line);
+        DrawCString(GazetteCoreFeedTitle(i));
+        line = (short)(line + 14);
+    }
+
+    TextFont(systemFont);
+    TextSize(12);
+
+    MoveTo((short)(bounds.left + 16), (short)(bounds.bottom - 16));
     DrawString("\pSidebar, article list and reader pane arrive in Phase 3.");
 
     SetPort(savePort);
@@ -416,6 +476,10 @@ static void DrawGazetteWindow(WindowRef window)
 
 static void DoExitGazette(void)
 {
+    /* Writes the preferences back out if anything changed them — including a
+       first run, which saves the defaults so there is a file to hand-edit. */
+    GazetteCoreShutdown();
+
     if (gMainWindow != nil) {
         DisposeWindow(gMainWindow);
         gMainWindow = nil;

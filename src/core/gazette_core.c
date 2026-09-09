@@ -1,152 +1,122 @@
 /*
- * Gazette — Core C seam implementation (stub for Phase 0)
+ * Gazette — Core C seam
  * Copyright (c) 2026 brunocastello
+ *
+ * No Toolbox calls here. Parsing and serialising are the portable prefs
+ * module's job; reading and writing the file is the store's. This file just
+ * owns the one live GazettePrefs and hands it out.
  */
 
 #include "gazette_core.h"
-#include <stdlib.h>
+
+#include "store/gazette_store.h"
+
 #include <string.h>
 
-/* ------------------------------------------------------------------ */
-/* Feed list — simple linked-list stub (Phase 0)                       */
-/* ------------------------------------------------------------------ */
+/*
+ * File-scope, not heap. A GazettePrefs is a fixed ~40 KB and the application
+ * has exactly one, so making it static costs nothing at run time, keeps it
+ * out of the 8 MB heap that streaming feed data will want, and means prefs
+ * loading has no allocation that could fail. Constraint 6 forbids non-trivial
+ * static constructors, not static PODs; this is zero-initialised by the
+ * loader like any other C global.
+ */
+static GazettePrefs gPrefs;
+static Boolean      gInited      = false;
+static Boolean      gPrefsDirty  = false;
 
-struct GazetteFeedList {
-    int            count;
-    int            capacity;
-    GazetteFeedEntry *entries;
-};
-
-GazetteFeedListRef GazetteFeedListCreate(void)
+Boolean GazetteCoreInit(void)
 {
-    GazetteFeedListRef list = (GazetteFeedListRef)calloc(1, sizeof(struct GazetteFeedList));
-    if (list) {
-        list->capacity = 16;
-        list->entries  = (GazetteFeedEntry *)calloc(list->capacity, sizeof(GazetteFeedEntry));
-        list->count    = 0;
-    }
-    return list;
+    static char text[kGazettePrefsTextMax];
+    long        len   = 0;
+    Boolean     found;
+
+    memset(&gPrefs, 0, sizeof gPrefs);
+
+    found = GazetteStoreReadPrefs(text, (long)sizeof text, &len) ? true : false;
+
+    /* GazettePrefsParse applies the defaults first either way, so a missing
+       or unreadable file leaves a perfectly usable configuration behind. */
+    GazettePrefsParse(found ? text : NULL, found ? (size_t)len : 0, &gPrefs);
+
+    gInited     = true;
+    /* A first run has nothing on disk yet; writing the defaults out at once
+       gives the user a file to edit instead of one they have to invent. */
+    gPrefsDirty = !found;
+
+    return found;
 }
 
-void GazetteFeedListDispose(GazetteFeedListRef list)
+Boolean GazetteCoreSavePrefs(void)
 {
-    if (list) {
-        free(list->entries);
-        free(list);
-    }
-}
+    static char text[kGazettePrefsTextMax];
+    size_t      len;
 
-Boolean GazetteFeedListAddEntry(GazetteFeedListRef list, const char *url)
-{
-    if (!list || !url) return false;
-
-    /* Grow array if needed */
-    if (list->count >= list->capacity) {
-        int newCap = list->capacity * 2;
-        GazetteFeedEntry *newEntries = (GazetteFeedEntry *)realloc(
-            list->entries, newCap * sizeof(GazetteFeedEntry));
-        if (!newEntries) return false;
-        list->entries  = newEntries;
-        list->capacity = newCap;
+    if (!gInited) {
+        return false;
     }
 
-    memset(&list->entries[list->count], 0, sizeof(GazetteFeedEntry));
-    strncpy(list->entries[list->count].url, url, 511);
-    list->entries[list->count].enabled = true;
-    list->count++;
+    len = GazettePrefsSerialize(&gPrefs, text, sizeof text);
+    if (len == 0) {
+        return false;
+    }
 
+    if (!GazetteStoreWritePrefs(text, (long)len)) {
+        return false;
+    }
+
+    gPrefsDirty = false;
     return true;
 }
 
-Boolean GazetteFeedListRemoveEntry(GazetteFeedListRef list, const char *url)
+void GazetteCoreShutdown(void)
 {
-    if (!list || !url) return false;
-
-    for (int i = 0; i < list->count; i++) {
-        if (strcmp(list->entries[i].url, url) == 0) {
-            /* Shift remaining entries down */
-            for (int j = i; j < list->count - 1; j++) {
-                list->entries[j] = list->entries[j + 1];
-            }
-            memset(&list->entries[list->count - 1], 0, sizeof(GazetteFeedEntry));
-            list->count--;
-            return true;
-        }
+    if (gInited && gPrefsDirty) {
+        (void)GazetteCoreSavePrefs();
     }
-    return false;
+    gInited = false;
 }
 
-int GazetteFeedListCount(const GazetteFeedListRef list)
+const GazettePrefs *GazetteCoreGetPrefs(void)
 {
-    return list ? list->count : 0;
+    return gInited ? &gPrefs : NULL;
 }
 
-/* ------------------------------------------------------------------ */
-/* Article — simple stub                                               */
-/* ------------------------------------------------------------------ */
-
-struct GazetteArticle {
-    char  title[512];
-    char  link[512];
-    char  source[256];
-    long  date;
-    Boolean read;
-    Boolean starred;
-};
-
-GazetteArticleRef GazetteArticleCreate(void)
+int GazetteCoreFeedCount(void)
 {
-    GazetteArticleRef a = (GazetteArticleRef)calloc(1, sizeof(struct GazetteArticle));
-    return a;
+    return gInited ? gPrefs.feedCount : 0;
 }
 
-void GazetteArticleDispose(GazetteArticleRef article)
+const char *GazetteCoreFeedTitle(int index)
 {
-    free(article);
-}
-
-void GazetteArticleSetTitle(GazetteArticleRef a, const char *title)
-{
-    if (a && title) {
-        strncpy(a->title, title, 511);
+    if (!gInited || index < 0 || index >= gPrefs.feedCount) {
+        return "";
     }
+    return gPrefs.feeds[index].title;
 }
 
-void GazetteArticleSetLink(GazetteArticleRef a, const char *link)
+const char *GazetteCoreFeedURL(int index)
 {
-    if (a && link) {
-        strncpy(a->link, link, 511);
+    if (!gInited || index < 0 || index >= gPrefs.feedCount) {
+        return "";
     }
+    return gPrefs.feeds[index].url;
 }
 
-/* ------------------------------------------------------------------ */
-/* Fetch — stub (Phase 1: Gateway net + Certainly)                     */
-/* ------------------------------------------------------------------ */
-
-void GazetteFeedListFetchAll(GazetteFeedListRef list, GazetteFetchCallback cb, void *context)
+Boolean GazetteCoreAddFeed(const char *url, const char *title)
 {
-    /* Phase 1: integrate Gateway gw_net + Certainly here */
-    (void)list;
-    (void)cb;
-    (void)context;
-}
-
-/* ------------------------------------------------------------------ */
-/* Preferences — stub (Phase 0: read/write feed list from file)        */
-/* ------------------------------------------------------------------ */
-
-Boolean GazettePrefsLoad(const char *path, GazetteFeedListRef list)
-{
-    /* Phase 0 stub: always returns true; real implementation later */
-    (void)path;
-    (void)list;
+    if (!gInited || !GazettePrefsAddFeed(&gPrefs, url, title)) {
+        return false;
+    }
+    gPrefsDirty = true;
     return true;
 }
 
-Boolean GazettePrefsSave(const char *path, const GazetteFeedListRef list)
+Boolean GazetteCoreRemoveFeed(const char *url)
 {
-    /* Phase 0 stub: always returns true; real implementation later */
-    (void)path;
-    (void)list;
+    if (!gInited || !GazettePrefsRemoveFeed(&gPrefs, url)) {
+        return false;
+    }
+    gPrefsDirty = true;
     return true;
 }

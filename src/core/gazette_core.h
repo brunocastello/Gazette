@@ -1,65 +1,50 @@
 /*
- * Gazette — Core C seam (thin, no system headers)
+ * Gazette — Core C seam
  * Copyright (c) 2026 brunocastello
  *
- * Pure C interface between UI (Multiversal) and engine (Universal / portable).
+ * The one interface main.cpp and the UI use to reach the engine. It stays
+ * thin and plain-typed on purpose (constraint 5): MacTypes.h is the only
+ * system header it may include, and nothing behind it leaks Carbon back out.
  */
 
 #ifndef GAZETTE_CORE_H
 #define GAZETTE_CORE_H
 
-/* The seam trades in plain types only. MacTypes.h is the one exception:
-   it is present in both Multiversal and Apple's Universal Interfaces, so
-   including it here keeps Boolean/true/false meaningful on either side of
-   the seam (and lets gazette_core.c compile without pulling in Carbon). */
+/* MacTypes.h is the seam's one permitted system header — it is what makes
+   Boolean/true/false mean the same thing on both sides. */
 #include <MacTypes.h>
+
+#include "prefs/gazette_prefs.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Opaque handle — UI code allocates, engine consumes */
-typedef struct GazetteFeedList  *GazetteFeedListRef;
-typedef struct GazetteArticle   *GazetteArticleRef;
+/* Load preferences, falling back to defaults when there is no prefs file
+   (a first run). Always succeeds in the sense that the engine is usable
+   afterwards; the return value says whether a file was actually read, which
+   is only worth knowing for status text. Call once, before the event loop. */
+Boolean GazetteCoreInit(void);
 
-/* Feed entry */
-typedef struct {
-    char  url[512];       /* feed URL (max 511 chars + NUL) */
-    char  title[256];     /* display name */
-    short feedType;       /* 0 = RSS 2.0, 1 = Atom */
-    Boolean enabled;
-} GazetteFeedEntry;
+/* Write preferences back out. Called from GazetteCoreShutdown, and exposed
+   for Phase 4's feed-management UI, which should not have to quit to save. */
+Boolean GazetteCoreSavePrefs(void);
 
-/* Article entry */
-typedef struct {
-    char  title[512];
-    char  link[512];
-    char  source[256];
-    long  date;           /* seconds since epoch (approx) */
-    Boolean read;
-    Boolean starred;
-} GazetteArticleEntry;
+/* Save preferences and release anything the engine holds. */
+void GazetteCoreShutdown(void);
 
-/* Feed list operations */
-GazetteFeedListRef GazetteFeedListCreate(void);
-void             GazetteFeedListDispose(GazetteFeedListRef list);
-Boolean          GazetteFeedListAddEntry(GazetteFeedListRef list, const char *url);
-Boolean          GazetteFeedListRemoveEntry(GazetteFeedListRef list, const char *url);
-int              GazetteFeedListCount(const GazetteFeedListRef list);
+/* The live preference block. Read-only to callers; changes go through the
+   mutators below so the engine always knows when it has become dirty. */
+const GazettePrefs *GazetteCoreGetPrefs(void);
 
-/* Article operations */
-GazetteArticleRef  GazetteArticleCreate(void);
-void               GazetteArticleDispose(GazetteArticleRef article);
-void               GazetteArticleSetTitle(GazetteArticleRef a, const char *title);
-void               GazetteArticleSetLink(GazetteArticleRef a, const char *link);
+/* Feed list, as the sidebar will want it in Phase 3. */
+int         GazetteCoreFeedCount(void);
+const char *GazetteCoreFeedTitle(int index);    /* "" when index is out of range */
+const char *GazetteCoreFeedURL(int index);
 
-/* Feed fetching (stub — Phase 1) */
-typedef void (*GazetteFetchCallback)(const char *data, int len, void *context);
-void GazetteFeedListFetchAll(GazetteFeedListRef list, GazetteFetchCallback cb, void *context);
-
-/* Preferences (stub — Phase 0) */
-Boolean GazettePrefsLoad(const char *path, GazetteFeedListRef list);
-Boolean GazettePrefsSave(const char *path, const GazetteFeedListRef list);
+/* Feed list mutators. Both mark the prefs dirty so the next save writes. */
+Boolean GazetteCoreAddFeed(const char *url, const char *title);
+Boolean GazetteCoreRemoveFeed(const char *url);
 
 #ifdef __cplusplus
 }

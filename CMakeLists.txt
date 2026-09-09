@@ -18,11 +18,13 @@ set(CMAKE_C_EXTENSIONS ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_EXTENSIONS ON)
 
-# Source files — Phase 0: main.cpp (Carbon) + core stub
+# Source files. Phase 0 is complete through main.cpp, the core seam, the
+# portable helpers, the preferences and the file store; the rest are still
+# the placeholders their comments say they are.
 set(GAZETTE_SOURCES
     src/main.cpp
 
-    # Core (Phase 0) — thin C seam
+    # Core — thin C seam between the Toolbox shell and the engine
     src/core/gazette_core.c
 
     # UI — Carbon window helpers (Phase 3)
@@ -34,22 +36,25 @@ set(GAZETTE_SOURCES
     # Feed engine — RSS/Atom, Google News (Phase 2)
     src/feeds/gazette_feeds.c
 
-    # HTML extraction — stripping, transliteration (Phase 3)
+    # HTML extraction — stripping, full-text (Phase 3)
     src/extract/gazette_extract.c
 
-    # Local store — file-based caching (Phase 3)
+    # Local store — the only File Manager calls in the application
     src/store/gazette_store.c
 
-    # Preferences — load/save (Phase 0)
+    # Preferences and feed list — portable, host-tested
     src/prefs/gazette_prefs.c
 
-    # Portable helpers — pure C, host-testable (Phase 2)
+    # Portable helpers — pure C, host-tested (tests/host)
     src/portable/gazette_portable.c
 )
 
-# Resource fork: SIZE (8 MB preferred / 4 MB minimum), About alert, version.
+# Resource fork: SIZE (8 MB preferred / 4 MB minimum), About alert, version,
+# and the Finder icon family with the BNDL/FREF that binds it to 'Gzt9'.
+# Gazette_icon.r is generated -- see tools/generate_icon.py.
 set(GAZETTE_RESOURCES
     Resources/Gazette.r
+    Resources/Gazette_icon.r
 )
 
 # ------------------------------------------------------------------ #
@@ -68,7 +73,10 @@ add_application(Gazette
     CREATOR "Gzt9"
 )
 
+# Everything below src/ includes its siblings by directory-qualified path
+# ("prefs/gazette_prefs.h", "store/gazette_store.h"), so src/ is the only
+# include root needed — and it is the same one tests/host compiles against,
+# which keeps the portable modules honest about where their headers live.
 target_include_directories(Gazette PRIVATE
     ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/src/core
 )

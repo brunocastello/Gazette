@@ -89,28 +89,77 @@ Deleting newlib's copy first resolves it, and Apple's is the one we want anyway:
 
 ### Icon
 
-Not drawn yet. When it is, it belongs in the **resource fork** — `ICN#`, `icl8`,
-`ics#` plus `BNDL` and `FREF`, rezzed in through `Resources/Gazette.r`. A `.icns`
-file is meaningless for a CFM application on Mac OS 9.
+A folded newspaper — masthead band, lead picture, columns of text, with a second
+sheet showing behind it. It lives in the **resource fork** as `ICN#`, `icl8`,
+`ics#` and `ics8`, plus the `BNDL`/`FREF` pair that binds the family to the
+`Gzt9` creator. A `.icns` file is meaningless for a CFM application on Mac OS 9.
 
-The icon theme should evoke a classic newspaper / gazette / newsstand:
-- Isometric or clean 3/4 view of a folded newspaper, small newsstand kiosk
-- Platinum-era friendly colours (avoid flat modern design language)
+Classic Mac icons are hand-placed pixels rather than scaled art, so the drawing
+is code. `Resources/Gazette_icon.r` is generated and should not be hand-edited:
+
+```bash
+python3 tools/generate_icon.py --out Resources/Gazette_icon.r --ascii
+```
+
+If a freshly built copy shows a generic application icon, the desktop database
+has not caught up — rebuild it by holding Command-Option through startup, or
+move the application to another folder and back.
+
+## Preferences
+
+Gazette keeps its settings and feed list in a plain text file called
+**Gazette Preferences**, in the System Folder's Preferences folder. It is
+created on first launch with Google News Top Stories in it, and is meant to be
+hand-edited — SimpleText opens it directly.
+
+```
+refresh-minutes = 30      # 0 = manual refresh only
+max-articles    = 100     # per feed
+full-text       = 0       # 1 = also fetch and strip the article page
+
+feed     = https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en | Google News - Top Stories
+feed-off = https://example.com/feed.xml | A feed that is switched off
+```
+
+`#` or `;` starts a comment, the separator is `=` or `:`, keys are
+case-insensitive, and a feed line is `<url> | <title>` with the title optional.
+Gazette writes CR line endings the way OS 9 text files do, but reads CR, LF and
+CRLF alike so an edit from another machine still loads.
+
+A file that names any feed at all replaces the built-in list outright, so
+deleting Google News from it sticks.
+
+## Testing
+
+The portable modules — the preference grammar, the ASCII transliteration, and
+the feed parsing as it lands — include no system headers, so they build and run
+with a plain host compiler:
+
+```bash
+make -C tests/host
+```
+
+Everything that touches the Toolbox (`store/`, `ui/`, `main.cpp`) is deliberately
+absent from that build. CI runs it as a gate before the Retro68 job.
 
 ## Continuous Integration
 
-`.github/workflows/build.yml` defines a single job.
+`.github/workflows/build.yml` defines two jobs.
 
 | Job | Runner | Toolchain | Artifact |
 |-----|--------|-----------|----------|
+| `host-tests` | `ubuntu-latest` | plain `cc` | — |
 | `build` | `ubuntu-latest` | `ghcr.io/autc04/retro68` (Docker) | `Gazette-carbon-ppc-macos9` |
 
-It stages the Universal Interfaces, builds with the `retrocarbon` toolchain, packages
-the `.sit`, and uploads `Gazette.dsk`, `Gazette.APPL`, `Gazette.bin` and `Gazette.sit`.
+`host-tests` runs `make -C tests/host` in seconds and gates the build, because a
+failure there is a real failure whereas a Retro68 break is usually a toolchain
+question. `build` then stages the Universal Interfaces, builds with the
+`retrocarbon` toolchain, packages the `.sit`, and uploads `Gazette.dsk`,
+`Gazette.APPL`, `Gazette.bin` and `Gazette.sit`.
 
-It runs on push and pull request when `src/`, `Resources/`, `CMakeLists.txt`,
-`third_party/AUI/` or the workflow itself changes, and can be started by hand from
-the Actions tab (`workflow_dispatch`).
+They run on push and pull request when `src/`, `Resources/`, `tests/`,
+`CMakeLists.txt`, `third_party/AUI/` or the workflow itself changes, and can be
+started by hand from the Actions tab (`workflow_dispatch`).
 
 ## Project Structure
 
@@ -126,11 +175,15 @@ the Actions tab (`workflow_dispatch`).
 │
 ├── Resources/
 │   ├── Gazette.r           # SIZE (8 MB / 4 MB), About alert, vers
+│   ├── Gazette_icon.r      # Generated icon family + BNDL/FREF — do not hand-edit
 │   └── Strings.r           # Placeholder for localization (not yet in the build)
+│
+├── tools/
+│   └── generate_icon.py    # Draws the icon and emits Gazette_icon.r
 │
 ├── src/
 │   ├── main.cpp            # Carbon shell: CreateNewWindow, WaitNextEvent, menus
-│   ├── core/               # Thin C seam (MacTypes.h only)
+│   ├── core/               # Thin C seam (MacTypes.h only) — owns the live prefs
 │   │   └── gazette_core.h/.c
 │   ├── ui/                 # Platinum window helpers (Phase 3)
 │   │   └── platinum_window.h/.c
@@ -138,28 +191,29 @@ the Actions tab (`workflow_dispatch`).
 │   │   └── gazette_net.h/.c
 │   ├── feeds/              # RSS 2.0 / Atom parser, Google News (Phase 2)
 │   │   └── gazette_feeds.h/.c
-│   ├── extract/            # HTML stripping, transliteration (Phase 3)
+│   ├── extract/            # HTML stripping, full-text (Phase 3)
 │   │   └── gazette_extract.h/.c
-│   ├── store/              # File-based caching (Phase 3)
+│   ├── store/              # The only File Manager calls in the application
 │   │   └── gazette_store.h/.c
-│   ├── prefs/              # Feed list persistence (Phase 0)
+│   ├── prefs/              # Settings + feed list, portable and host-tested
 │   │   └── gazette_prefs.h/.c
-│   └── portable/           # Pure C, host-testable (Phase 2)
+│   └── portable/           # Pure C, host-tested: strings, prefs grammar, ASCII
 │       └── gazette_portable.h/.c
 │
 ├── third_party/
 │   ├── AUI/                # Apple Universal Interfaces 3.4 (Carbon headers, CarbonLib)
 │   └── certainly/          # (placeholder — to be vendored from Gateway)
 │
-└── tests/host/             # Host-testable parsers (Linux/Intel)
-    └── test_portable.c     # Stub; not wired into the build yet
+└── tests/host/             # Host tests for the portable modules (Linux/macOS)
+    ├── Makefile
+    └── run_tests.c
 ```
 
 ## Implementation Phases (per AGENT.md)
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| 0 | **Mostly done** | Skeleton: Carbon shell, window, menus, WaitNextEvent loop, quit, SIZE resource. Icon, prefs loading and the host-test target are still open. |
+| 0 | **Done** | Skeleton: Carbon shell, window, menus, WaitNextEvent loop, quit, SIZE resource, Finder icon, preferences/feed list on disk, host-test target |
 | 1 | TODO | Networking: Gateway `gw_net` + Certainly, HTTPS fetch, HTTP GET with redirects |
 | 2 | TODO | Feed engine: RSS 2.0 / Atom parser, Google News maps, feed auto-discovery |
 | 3 | TODO | Full Platinum UI: sidebar + article list + reader pane, local caching |

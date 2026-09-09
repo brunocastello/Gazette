@@ -9,6 +9,7 @@ on:
       - 'Resources/**'
       - 'CMakeLists.txt'
       - 'third_party/AUI/**'
+      - 'tests/**'
       - '.github/workflows/build.yml'
   pull_request:
     paths:
@@ -16,11 +17,26 @@ on:
       - 'Resources/**'
       - 'CMakeLists.txt'
       - 'third_party/AUI/**'
+      - 'tests/**'
       - '.github/workflows/build.yml'
   workflow_dispatch:
 
 jobs:
+  # The portable modules — the prefs grammar, the feed parsing and the ASCII
+  # transliteration — carry no system headers, so they are tested with a plain
+  # Linux cc in seconds. This job runs first because a failure here is a real
+  # failure, whereas a Retro68 break is usually a toolchain question.
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run host tests
+        run: make -C tests/host
+
   build:
+    needs: host-tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
