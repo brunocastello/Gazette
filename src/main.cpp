@@ -2,8 +2,12 @@
  * Gazette — Carbon RSS / Atom Reader for Mac OS 9 (PowerPC)
  * Copyright (c) 2026 brunocastello
  *
- * Phase 0: Skeleton — Carbon shell, Platinum window, menus, quit, and the
- * preference/feed list loaded from disk at launch and written back at exit.
+ * The shell: initialise, build the menus, run one cooperative event loop,
+ * drive the refresh from its idle branch, and shut down. Everything the
+ * Toolbox knows about the interface itself lives in ui/platinum_window.c;
+ * everything about feeds lives behind core/gazette_core.h. This file is the
+ * seam between the two and holds no state of its own beyond what the loop
+ * needs.
  *
  * Built against Apple's Universal Interfaces 3.4 with TARGET_API_MAC_CARBON=1
  * (defined by Retro68's retrocarbon toolchain file, which is what makes these
@@ -17,19 +21,17 @@
  *
  * The event loop is the classic WaitNextEvent loop rather than the Carbon
  * Event Manager. CarbonLib supports it fully on Mac OS 9, it is the single
- * cooperative loop AGENT.md mandates, and its idle branch is where Phase 1
- * will poll non-blocking network I/O without ever blocking the UI.
+ * cooperative loop AGENT.md mandates, and its idle branch is where network
+ * I/O is polled without ever blocking the UI.
  */
 
 #include <MacTypes.h>
 #include <Quickdraw.h>
-#include <QuickdrawText.h>
 #include <Fonts.h>
 #include <MacWindows.h>
 #include <Menus.h>
 #include <Dialogs.h>
 #include <Events.h>
-#include <DateTimeUtils.h>
 #include <Appearance.h>
 #include <Sound.h>
 
@@ -39,6 +41,7 @@
 #include "core/gazette_core.h"
 #include "feeds/gazette_feeds.h"
 #include "net/gazette_net.h"
+#include "ui/platinum_window.h"
 
 /* ------------------------------------------------------------------ */
 /* Forward declarations                                                */
@@ -53,44 +56,23 @@ static void    HandleEvent(const EventRecord *event);
 static void    HandleMouseDown(const EventRecord *event);
 static void    HandleMenuChoice(long menuResult);
 
-static void    InvalWholeWindow(WindowRef window);
 static void    HandleAbout(void);
 static void    HandleQuit(void);
 static void    HandleRefresh(void);
+static void    ShowFeed(int feedIndex);
 static void    PumpRefresh(void);
-static void    SetStatus(const char *text);
-static void    HandleScrollKey(short key);
-static short   VisibleRows(WindowRef window);
-static void    DrawGazetteWindow(WindowRef window);
-static void    DrawCString(const char *text);
-static short   StringWidthC(const char *text);
+static void    CheckAutoRefresh(void);
 
 /* ------------------------------------------------------------------ */
 /* Application globals                                                 */
 /* ------------------------------------------------------------------ */
 
-static Boolean   gDone       = false;
-static WindowRef gMainWindow = nil;
+static Boolean gDone  = false;
+static Boolean gNetUp = false;
 
-/* Whether GazetteCoreInit() found a preferences file. Only the status line
-   cares, but on a first run it is the difference between "these are your
-   feeds" and "these are the ones Gazette started you with". */
-static Boolean   gHadPrefsFile = false;
-
-/* Whether Open Transport and Certainly came up. On Mac OS 9 a failure here
-   almost always means TCP/IP is not configured rather than anything Gazette
-   did, so it is worth saying so on screen rather than only at fetch time. */
-static Boolean   gNetUp = false;
-
-/* First article drawn. Phase 3 replaces this with a real scrolling list
-   control; until then the arrow and page keys move it, which is enough to
-   read a hundred headlines on real hardware. */
-static int       gScrollTop = 0;
-
-/* The bottom line of the window. Redrawn only when it actually changes —
-   invalidating on every pump would repaint the window many times a second
-   for no visible difference. */
-static char      gStatus[160] = "";
+/* When the running refresh started, so it can be timed, and when the last one
+   finished, so auto-refresh knows how long it has been. Both in ticks. */
+static unsigned long gLastRefreshTicks;
 
 /* Menu IDs */
 enum {
@@ -100,11 +82,11 @@ enum {
     kMenuWindow = 131
 };
 
-/* Menu item indices, in the order AppendMenu() adds them below. */
 enum {
     kAppleItemAbout = 1
 };
 
+/* Menu item indices, in the order AppendMenu() adds them below. */
 enum {
     kFileItemRefresh = 1,
     /* 2 is a divider */
@@ -122,29 +104,10 @@ enum {
     kAboutAlertID = 128
 };
 
-/* WaitNextEvent sleep, in ticks. Short enough that Phase 1's network poll
-   stays responsive, long enough to be a good cooperative citizen. */
+/* WaitNextEvent sleep, in ticks. Short enough that the network poll stays
+   responsive, long enough to be a good cooperative citizen. */
 enum {
-    kSleepTicks = 10
-};
-
-/*
- * Seconds between the Macintosh epoch (1 January 1904) and the Unix one
- * (1 January 1970). GetDateTime counts from the former; every date the feed
- * parser produces counts from the latter, and the list draws both.
- */
-enum {
-    kMacToUnixEpoch = 2082844800L
-};
-
-/* Article list metrics, in pixels. Geneva 9 is what Newsstand listed
-   headlines in, and 12 points of leading is what it gave them. */
-enum {
-    kListTop     = 46,
-    kListLeft    = 16,
-    kRowHeight   = 12,
-    kListBottom  = 26,      /* space kept clear for the status line */
-    kDateColumn  = 84       /* headline starts here, after the date */
+    kSleepTicks = 6
 };
 
 /* ------------------------------------------------------------------ */
@@ -174,47 +137,29 @@ int main(void)
 
 static Boolean InitGazette(void)
 {
-    OSStatus         err;
-    Rect             bounds;
-    WindowAttributes attrs;
-
     InitCursor();
 
-    /* Before anything is drawn: the window's first update event already wants
-       the feed list. GazetteCoreInit() falls back to defaults when there is no
-       file, so there is nothing here to fail on. */
-    gHadPrefsFile = GazetteCoreInit();
+    /* Preferences before anything is drawn: the window's first update event
+       already wants the feed list. */
+    (void)GazetteCoreInit();
 
-    /* Open Transport before the window: InitOpenTransport can put up its own
-       dialog if TCP/IP needs loading, and it should not do that over a
-       half-drawn window. Failure is not fatal — Gazette still reads its cache
-       and its preferences without a network. */
+    /* Open Transport before the window, because InitOpenTransport can put up
+       a dialog of its own if TCP/IP needs loading and should not do that over
+       a half-drawn window. Failure is not fatal — the cache still reads. */
     gNetUp = GazetteNetInit() ? true : false;
 
     if (!BuildMenuBar()) {
         return false;
     }
 
-    SetRect(&bounds, 60, 60, 60 + 640, 60 + 440);
-
-    /* No kWindowStandardHandlerAttribute: that installs the Carbon Event
-       Manager's standard handler, which would compete with the
-       WaitNextEvent loop below. */
-    attrs = kWindowStandardDocumentAttributes;
-
-    err = CreateNewWindow(kDocumentWindowClass, attrs, &bounds, &gMainWindow);
-    if (err != noErr || gMainWindow == nil) {
+    if (!GazetteUIOpen(ShowFeed)) {
         return false;
     }
 
-    SetWTitle(gMainWindow, "\pGazette");
-
-    /* Ask the Appearance Manager for the Platinum dialog background rather
-       than hard-coding a grey, so the window tracks the user's theme. */
-    SetThemeWindowBackground(gMainWindow, kThemeBrushDialogBackgroundActive, false);
-
-    ShowWindow(gMainWindow);
-    SelectWindow(gMainWindow);
+    /* Show whatever the last run left cached, so the window has content
+       before any network work happens — which on a machine with no
+       connection is the whole of what Gazette can do. */
+    ShowFeed(0);
 
     return true;
 }
@@ -282,6 +227,7 @@ static void RunGazette(void)
                pass and returns. Blocking here would stop the whole machine
                cooperating, not just Gazette. */
             PumpRefresh();
+            CheckAutoRefresh();
         }
     }
 }
@@ -298,13 +244,13 @@ static void HandleEvent(const EventRecord *event)
             /* MenuEvent() does the cmdKey test and the command-key lookup
                itself, and is the Carbon-blessed replacement for MenuKey(). It
                returns 0 for anything that is not a menu command, which is
-               where the list's own keys are handled. */
+               where the window's own keys are handled. */
             long choice = (long)MenuEvent(event);
 
             if (choice != 0) {
                 HandleMenuChoice(choice);
             } else if ((event->modifiers & cmdKey) == 0) {
-                HandleScrollKey((short)(event->message & charCodeMask));
+                (void)GazetteUIKey((short)(event->message & charCodeMask));
             }
             break;
         }
@@ -313,13 +259,18 @@ static void HandleEvent(const EventRecord *event)
             WindowRef window = (WindowRef)event->message;
 
             BeginUpdate(window);
-            DrawGazetteWindow(window);
+            if (window == GazetteUIWindow()) {
+                GazetteUIUpdate();
+            }
             EndUpdate(window);
             break;
         }
 
         case activateEvt:
-            InvalWholeWindow((WindowRef)event->message);
+            if ((WindowRef)event->message == GazetteUIWindow()) {
+                GazetteUIActivate((event->modifiers & activeFlag) != 0);
+                GazetteUIResized();     /* redraws, and re-hilites the frames */
+            }
             break;
 
         default:
@@ -342,6 +293,12 @@ static void HandleMouseDown(const EventRecord *event)
         case inContent:
             if (window != FrontWindow()) {
                 SelectWindow(window);
+            } else if (window == GazetteUIWindow()) {
+                Point local = event->where;
+
+                SetPortWindowPort(window);
+                GlobalToLocal(&local);
+                GazetteUIClick(local, event->modifiers);
             }
             break;
 
@@ -357,12 +314,12 @@ static void HandleMouseDown(const EventRecord *event)
             Rect limits;
             long newSize;
 
-            SetRect(&limits, 320, 240, 32767, 32767);
+            SetRect(&limits, 420, 260, 32767, 32767);
             newSize = GrowWindow(window, event->where, &limits);
             if (newSize != 0) {
                 SizeWindow(window, (short)(newSize & 0xFFFF),
                            (short)(newSize >> 16), true);
-                InvalWholeWindow(window);
+                GazetteUIResized();
             }
             break;
         }
@@ -371,13 +328,13 @@ static void HandleMouseDown(const EventRecord *event)
         case inZoomOut:
             if (TrackBox(window, event->where, part)) {
                 ZoomWindow(window, part, true);
-                InvalWholeWindow(window);
+                GazetteUIResized();
             }
             break;
 
         case inGoAway:
             if (TrackGoAway(window, event->where)) {
-                /* Phase 0 has a single window, so closing it quits. */
+                /* One window, so closing it quits. */
                 HandleQuit();
             }
             break;
@@ -410,7 +367,8 @@ static void HandleMenuChoice(long menuResult)
         case kMenuFile:
             if (menuItem == kFileItemRefresh) {
                 HandleRefresh();
-            } else if (menuItem == kFileItemClose || menuItem == kFileItemQuit) {
+            } else if (menuItem == kFileItemClose ||
+                       menuItem == kFileItemQuit) {
                 HandleQuit();
             }
             break;
@@ -420,8 +378,9 @@ static void HandleMenuChoice(long menuResult)
             break;
 
         case kMenuWindow:
-            if (menuItem == kWindowItemGazette && gMainWindow != nil) {
-                SelectWindow(gMainWindow);
+            if (menuItem == kWindowItemGazette &&
+                GazetteUIWindow() != nil) {
+                SelectWindow(GazetteUIWindow());
             }
             break;
 
@@ -447,59 +406,85 @@ static void HandleQuit(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Fetching                                                            */
-/*                                                                     */
-/* Phase 1 proves one HTTPS GET runs to completion from the idle branch */
-/* without the UI ever stopping. Phase 2 hands the bytes to the feed    */
-/* parser instead of counting them.                                     */
+/* Feeds                                                               */
 /* ------------------------------------------------------------------ */
 
-static void SetStatus(const char *text)
+static long PrefsMaxArticles(void)
 {
-    if (strcmp(gStatus, text) == 0) {
-        return;                     /* nothing to repaint */
+    const GazettePrefs *prefs = GazetteCoreGetPrefs();
+
+    return (prefs != nil) ? prefs->maxArticles : 0;
+}
+
+/*
+ * Show a feed. Reads the cache first and only reaches for the network when
+ * there is nothing cached — so clicking through the sidebar is instant after
+ * the first fetch, and works with the machine unplugged.
+ */
+static void ShowFeed(int feedIndex)
+{
+    char message[224];
+
+    if (feedIndex < 0 || feedIndex >= GazetteCoreFeedCount()) {
+        GazetteUISetStatus("No feeds configured.");
+        return;
     }
-    strncpy(gStatus, text, sizeof gStatus - 1);
-    gStatus[sizeof gStatus - 1] = '\0';
-    InvalWholeWindow(gMainWindow);
+
+    GazetteUISelectFeed(feedIndex);
+
+    if (GazetteFeedsLoadCache(feedIndex, GazetteCoreFeedURL(feedIndex),
+                              PrefsMaxArticles())) {
+        GazetteUIArticlesChanged();
+        snprintf(message, sizeof message, "%d articles from the last fetch.",
+                 GazetteFeedsArticleCount());
+        GazetteUISetStatus(message);
+        return;
+    }
+
+    if (!gNetUp) {
+        GazetteUIArticlesChanged();
+        GazetteUISetStatus("Nothing cached, and no network - "
+                           "check the TCP/IP control panel.");
+        return;
+    }
+
+    HandleRefresh();
 }
 
 static void HandleRefresh(void)
 {
-    const GazettePrefs *prefs;
-    char                message[160];
+    char message[224];
+    int  feedIndex = GazetteUISelectedFeed();
 
     if (GazetteFeedsRefreshGetState() == kGazetteRefreshRunning) {
-        return;                     /* one at a time until Phase 3 */
+        return;                     /* one at a time until Phase 4 */
     }
     if (!gNetUp) {
-        SetStatus("No network - check the TCP/IP control panel.");
+        GazetteUISetStatus("No network - check the TCP/IP control panel.");
         return;
     }
     if (GazetteCoreFeedCount() == 0) {
-        SetStatus("No feeds configured.");
+        GazetteUISetStatus("No feeds configured.");
         return;
     }
 
-    prefs = GazetteCoreGetPrefs();
-
-    if (!GazetteFeedsRefreshStart(0, GazetteCoreFeedURL(0),
-                                  prefs ? prefs->maxArticles : 0)) {
+    if (!GazetteFeedsRefreshStart(feedIndex, GazetteCoreFeedURL(feedIndex),
+                                  PrefsMaxArticles())) {
         snprintf(message, sizeof message, "Failed: %s",
                  GazetteFeedsRefreshErrorText());
-        SetStatus(message);
+        GazetteUISetStatus(message);
         return;
     }
 
-    gScrollTop = 0;
-    snprintf(message, sizeof message, "Fetching %s...", GazetteCoreFeedTitle(0));
-    SetStatus(message);
+    snprintf(message, sizeof message, "Fetching %s\311",
+             GazetteCoreFeedTitle(feedIndex));
+    GazetteUISetStatus(message);
 }
 
 static void PumpRefresh(void)
 {
     static int lastProgress = -1;
-    char       message[160];
+    char       message[224];
 
     if (GazetteFeedsRefreshGetState() != kGazetteRefreshRunning) {
         return;
@@ -507,35 +492,37 @@ static void PumpRefresh(void)
 
     switch (GazetteFeedsRefreshPump()) {
         case kGazetteRefreshDone:
+            gLastRefreshTicks = TickCount();
+            lastProgress      = -1;
+            GazetteUIArticlesChanged();
             snprintf(message, sizeof message, "%d articles from %s",
                      GazetteFeedsArticleCount(),
-                     GazetteFeedsTitle()[0] ? GazetteFeedsTitle()
-                                            : GazetteCoreFeedTitle(0));
-            SetStatus(message);
-            lastProgress = -1;
-            InvalWholeWindow(gMainWindow);
+                     GazetteFeedsTitle()[0]
+                         ? GazetteFeedsTitle()
+                         : GazetteCoreFeedTitle(GazetteUISelectedFeed()));
+            GazetteUISetStatus(message);
             break;
 
         case kGazetteRefreshFailed:
+            gLastRefreshTicks = TickCount();
+            lastProgress      = -1;
             snprintf(message, sizeof message, "Failed: %s",
                      GazetteFeedsRefreshErrorText());
-            SetStatus(message);
-            lastProgress = -1;
-            InvalWholeWindow(gMainWindow);
+            GazetteUISetStatus(message);
             break;
 
         case kGazetteRefreshRunning: {
             /* Only while headlines are actually arriving: a status line
-               rewritten on every pass would repaint the window many times a
-               second to say the same thing. */
+               rewritten on every pass would repaint many times a second to
+               say the same thing. */
             int progress = GazetteFeedsRefreshProgress();
 
             if (progress != lastProgress) {
                 lastProgress = progress;
                 if (progress > 0) {
                     snprintf(message, sizeof message,
-                             "Reading... %d articles", progress);
-                    SetStatus(message);
+                             "Reading\311 %d articles", progress);
+                    GazetteUISetStatus(message);
                 }
             }
             break;
@@ -546,220 +533,35 @@ static void PumpRefresh(void)
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* Scrolling                                                           */
-/* ------------------------------------------------------------------ */
-
-static short VisibleRows(WindowRef window)
+/*
+ * Automatic refresh. Deliberately modest: it refreshes the feed being looked
+ * at, and only that one, on the interval in the preferences. Walking the
+ * whole list in the background would be a queue, several connections and a
+ * policy about what to do when one fails — Phase 4's problem, not this one.
+ */
+static void CheckAutoRefresh(void)
 {
-    Rect  bounds;
-    short usable;
+    const GazettePrefs *prefs = GazetteCoreGetPrefs();
+    unsigned long       interval;
 
-    if (window == nil) {
-        return 1;
+    if (prefs == nil || prefs->refreshMinutes <= 0) {
+        return;                     /* 0 means manual only */
     }
-    GetWindowPortBounds(window, &bounds);
-    usable = (short)(bounds.bottom - bounds.top - kListTop - kListBottom);
-    if (usable < kRowHeight) {
-        return 1;
+    if (!gNetUp || GazetteFeedsRefreshGetState() == kGazetteRefreshRunning) {
+        return;
     }
-    return (short)(usable / kRowHeight);
-}
-
-static void HandleScrollKey(short key)
-{
-    int count = GazetteFeedsArticleCount();
-    int page  = VisibleRows(gMainWindow);
-    int top   = gScrollTop;
-    int limit = count - page;
-
-    if (limit < 0) {
-        limit = 0;
-    }
-
-    switch (key) {
-        case 0x1E: top -= 1;    break;      /* up arrow    */
-        case 0x1F: top += 1;    break;      /* down arrow  */
-        case 0x0B: top -= page; break;      /* page up     */
-        case 0x0C: top += page; break;      /* page down   */
-        case 0x01: top  = 0;    break;      /* home        */
-        case 0x04: top  = limit; break;     /* end         */
-        default:   return;
-    }
-
-    if (top > limit) top = limit;
-    if (top < 0)     top = 0;
-
-    if (top != gScrollTop) {
-        gScrollTop = top;
-        InvalWholeWindow(gMainWindow);
-    }
-}
-
-/* ------------------------------------------------------------------ */
-/* Drawing                                                             */
-/*                                                                     */
-/* SetThemeWindowBackground() already gave the port the Platinum dialog */
-/* pattern, so EraseRect() paints the correct background for us.        */
-/* ------------------------------------------------------------------ */
-
-/* InvalWindowRect() takes a real Rect — unlike DragWindow's bounding box,
-   NULL is not documented as meaning "everything". */
-static void InvalWholeWindow(WindowRef window)
-{
-    Rect bounds;
-
-    if (window == nil) {
+    if (gLastRefreshTicks == 0) {
+        gLastRefreshTicks = TickCount();
         return;
     }
 
-    GetWindowPortBounds(window, &bounds);
-    InvalWindowRect(window, &bounds);
-}
-
-/* DrawString() wants a Pascal string; the feed list is plain C, so the
-   lengths come from strlen() and go to DrawText() instead. QuickDraw clips
-   to the port, so an over-long title stops at the window edge by itself. */
-/* TextWidth() over a C string, for right-aligning. Same length clamp as
-   DrawCString, and the same reason. */
-static short StringWidthC(const char *text)
-{
-    size_t len;
-
-    if (text == nil) {
-        return 0;
-    }
-    len = strlen(text);
-    if (len > 32767) {
-        len = 32767;
-    }
-    return (len == 0) ? 0 : TextWidth(text, 0, (short)len);
-}
-
-static void DrawCString(const char *text)
-{
-    size_t len;
-
-    if (text == nil) {
+    interval = (unsigned long)prefs->refreshMinutes * 60UL * 60UL;
+    if (TickCount() - gLastRefreshTicks < interval) {
         return;
     }
-    len = strlen(text);
-    if (len > 32767) {
-        len = 32767;
-    }
-    if (len > 0) {
-        DrawText(text, 0, (short)len);
-    }
-}
 
-static void DrawGazetteWindow(WindowRef window)
-{
-    GrafPtr savePort;
-    Rect    bounds;
-    short   line;
-    short   rows;
-    int     count;
-    int     i;
-    unsigned long macNow = 0;
-    long          unixNow;
-
-    GetPort(&savePort);
-    SetPortWindowPort(window);
-
-    GetWindowPortBounds(window, &bounds);
-    EraseRect(&bounds);
-
-    count = GazetteFeedsArticleCount();
-
-    /* GetDateTime counts from the Macintosh epoch and fills a pointer; the
-       parser's dates count from the Unix one. Read it once for the whole
-       list rather than once a row. */
-    GetDateTime(&macNow);
-    unixNow = (long)macNow - kMacToUnixEpoch;
-
-    /* Header: the feed's own title if it gave one, else the name from the
-       preferences file. */
-    TextFont(systemFont);
-    TextSize(12);
-    MoveTo((short)(bounds.left + kListLeft), (short)(bounds.top + 24));
-    if (count > 0) {
-        DrawCString(GazetteFeedsTitle()[0] ? GazetteFeedsTitle()
-                                           : GazetteCoreFeedTitle(0));
-    } else if (GazetteCoreFeedCount() > 0) {
-        DrawCString(GazetteCoreFeedTitle(0));
-    } else {
-        DrawString("\pNo feeds configured");
-    }
-
-    /* A hairline under the header, the way a Platinum list is ruled off. */
-    MoveTo((short)(bounds.left + kListLeft), (short)(bounds.top + 32));
-    LineTo((short)(bounds.right - kListLeft), (short)(bounds.top + 32));
-
-    /* Headlines. Geneva 9 is what Newsstand listed them in. */
-    TextFont(kFontIDGeneva);
-    TextSize(9);
-
-    rows = VisibleRows(window);
-    line = (short)(bounds.top + kListTop);
-
-    if (count == 0) {
-        MoveTo((short)(bounds.left + kListLeft), line);
-        if (gNetUp) {
-            DrawString("\pPress Command-R to fetch headlines.");
-        } else {
-            DrawString("\pNo network - check the TCP/IP control panel.");
-        }
-    }
-
-    for (i = gScrollTop; i < count && i < gScrollTop + rows; i++) {
-        const GazetteArticle *a = GazetteFeedsArticleAt(i);
-        char                  when[16];
-
-        if (a == NULL) {
-            break;
-        }
-
-        /* The date column is fixed so the headlines line up; a missing date
-           simply leaves it blank rather than shifting the row. GetDateTime
-           gives "now" so a stale article can be shown with its year. */
-        GazetteFormatDate(a->date, unixNow, when, sizeof when);
-        if (when[0] != '\0') {
-            MoveTo((short)(bounds.left + kListLeft), line);
-            DrawCString(when);
-        }
-
-        MoveTo((short)(bounds.left + kListLeft + kDateColumn), line);
-        DrawCString(a->title);
-
-        line = (short)(line + kRowHeight);
-    }
-
-    /* Status line, and the position in the list when it does not all fit. */
-    TextFont(systemFont);
-    TextSize(12);
-
-    MoveTo((short)(bounds.left + kListLeft), (short)(bounds.bottom - 10));
-    if (gStatus[0] != '\0') {
-        DrawCString(gStatus);
-    } else if (gNetUp) {
-        DrawString("\pNetwork ready - press Command-R to fetch headlines.");
-    } else {
-        DrawString("\pNo network - check the TCP/IP control panel.");
-    }
-
-    if (count > rows) {
-        char position[48];
-
-        snprintf(position, sizeof position, "%d-%d of %d",
-                 gScrollTop + 1,
-                 (gScrollTop + rows < count) ? gScrollTop + rows : count,
-                 count);
-        MoveTo((short)(bounds.right - kListLeft - StringWidthC(position)),
-               (short)(bounds.bottom - 10));
-        DrawCString(position);
-    }
-
-    SetPort(savePort);
+    gLastRefreshTicks = TickCount();
+    HandleRefresh();
 }
 
 /* ------------------------------------------------------------------ */
@@ -768,17 +570,14 @@ static void DrawGazetteWindow(WindowRef window)
 
 static void DoExitGazette(void)
 {
-    /* Writes the preferences back out if anything changed them — including a
-       first run, which saves the defaults so there is a file to hand-edit. */
     /* A refresh in flight must not outlive the application: cancelling it
        closes the connection and frees the parser. */
     GazetteFeedsRefreshCancel();
 
+    GazetteUIClose();
+
+    /* Writes the preferences back out if anything changed them — including a
+       first run, which saves the defaults so there is a file to hand-edit. */
     GazetteCoreShutdown();
     GazetteNetShutdown();
-
-    if (gMainWindow != nil) {
-        DisposeWindow(gMainWindow);
-        gMainWindow = nil;
-    }
 }

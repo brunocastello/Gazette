@@ -27,7 +27,7 @@ set(GAZETTE_SOURCES
     # Core — thin C seam between the Toolbox shell and the engine
     src/core/gazette_core.c
 
-    # UI — Carbon window helpers (Phase 3)
+    # UI — the Platinum three-pane window, and every Toolbox call it makes
     src/ui/platinum_window.c
 
     # Networking — stream over Certainly's Open Transport client + TLS,
