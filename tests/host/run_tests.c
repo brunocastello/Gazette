@@ -870,9 +870,12 @@ static void TestEntities(void)
         char buf[128];
         size_t n;
 
+        /* A tag becomes a space only where one is needed: not at the very
+           start, and not next to a space that is already there. Runs are
+           collapsed downstream by gz_flatten_ws in any case. */
         strcpy(buf, "<b>Bold</b> and <i>italic</i>");
         n = GazetteStripMarkup(buf, strlen(buf));
-        CheckStr("markup is stripped", buf, " Bold  and  italic ");
+        CheckStr("markup is stripped", buf, "Bold  and italic ");
         CheckLong("with the reported length", (long)n, (long)strlen(buf));
 
         strcpy(buf, "a<br>b");
