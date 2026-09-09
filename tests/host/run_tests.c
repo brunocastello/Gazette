@@ -9,7 +9,9 @@
  * directory.
  */
 
+#include "portable/gazette_http.h"
 #include "portable/gazette_portable.h"
+#include "portable/gazette_url.h"
 #include "prefs/gazette_prefs.h"
 
 #include <stdio.h>
@@ -374,6 +376,448 @@ static void TestPrefsRoundTrip(void)
     }
 }
 
+
+/* ------------------------------------------------------------------ */
+/* Header blocks                                                       */
+/* ------------------------------------------------------------------ */
+
+static void TestHeaderBlocks(void)
+{
+    static const char head[] =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: text/xml; charset=utf-8\r\n"
+        "Content-Length:   1234   \r\n"
+        "X-Empty:\r\n"
+        "\r\n"
+        "body starts here";
+    size_t len = sizeof head - 1;
+    size_t headLen = 0;
+    size_t vLen = 0;
+    const char *v;
+
+    CheckTrue("head end is found", gz_find_head_end(head, len, &headLen));
+    CheckLong("head length includes the blank line",
+              (long)headLen, (long)(strstr(head, "body") - head));
+
+    v = gz_header_find(head, headLen, "Content-Length", &vLen);
+    CheckTrue("a header is found", v != NULL);
+    CheckLong("its value is trimmed", (long)vLen, 4);
+    CheckLong("and correct", gz_parse_dec(v, vLen, -1), 1234);
+
+    v = gz_header_find(head, headLen, "content-type", &vLen);
+    CheckTrue("header names are case-insensitive", v != NULL);
+    CheckLong("value keeps its parameters", (long)vLen, 23);
+
+    v = gz_header_find(head, headLen, "X-Empty", &vLen);
+    CheckTrue("an empty header is still present", v != NULL);
+    CheckLong("with a zero-length value", (long)vLen, 0);
+
+    CheckTrue("an absent header is NULL",
+              gz_header_find(head, headLen, "Location", &vLen) == NULL);
+
+    /* The start line must never be mistaken for a field. A response whose
+       status text contained a colon would otherwise match. */
+    CheckTrue("the start line is skipped",
+              gz_header_find(head, headLen, "HTTP/1.1 200 OK", &vLen) == NULL);
+
+    /* An incomplete block is not a parse failure, it is "read more". */
+    CheckLong("a partial head is not yet an end",
+              gz_find_head_end(head, 20, &headLen), 0);
+
+    {
+        /* Bare LF is not legal HTTP and turns up anyway. */
+        static const char lf[] = "HTTP/1.0 200 OK\nA: b\n\nbody";
+        CheckTrue("bare LF terminates a block too",
+                  gz_find_head_end(lf, sizeof lf - 1, &headLen));
+        CheckLong("at the right place", (long)headLen, 22);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* URLs                                                                */
+/* ------------------------------------------------------------------ */
+
+static void CheckSplit(const char *url, int wantOk, const char *wantHost,
+                       int wantPort, int wantTLS, const char *wantPath)
+{
+    GazetteURL u;
+    int ok = GazetteURLSplit(url, strlen(url), &u);
+
+    gChecks++;
+    if (ok != wantOk) {
+        gFailures++;
+        printf("FAIL  split \"%s\"\n        got  ok=%d\n        want ok=%d\n",
+               url, ok, wantOk);
+        return;
+    }
+    if (!wantOk) {
+        return;
+    }
+    if (strcmp(u.host, wantHost) != 0 || u.port != wantPort ||
+        u.tls != wantTLS || strcmp(u.path, wantPath) != 0) {
+        gFailures++;
+        printf("FAIL  split \"%s\"\n        got  %s:%d tls=%d %s\n"
+               "        want %s:%d tls=%d %s\n",
+               url, u.host, u.port, u.tls, u.path,
+               wantHost, wantPort, wantTLS, wantPath);
+    }
+}
+
+static void TestURLSplit(void)
+{
+    CheckSplit("http://example.com/feed.xml", 1, "example.com", 80, 0, "/feed.xml");
+    CheckSplit("https://example.com/feed.xml", 1, "example.com", 443, 1, "/feed.xml");
+    CheckSplit("http://example.com", 1, "example.com", 80, 0, "/");
+    CheckSplit("https://example.com:8443/x", 1, "example.com", 8443, 1, "/x");
+    CheckSplit("HTTPS://Example.COM/x", 1, "Example.COM", 443, 1, "/x");
+
+    /* The query is part of the origin-form target and must survive intact —
+       a Google News feed URL is nothing but query string. */
+    CheckSplit("https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en", 1,
+               "news.google.com", 443, 1, "/rss?hl=en-US&gl=US&ceid=US:en");
+
+    CheckSplit("ftp://example.com/x", 0, NULL, 0, 0, NULL);
+    CheckSplit("example.com/x", 0, NULL, 0, 0, NULL);
+    CheckSplit("http:///nohost", 0, NULL, 0, 0, NULL);
+    CheckSplit("http://example.com:0/x", 0, NULL, 0, 0, NULL);
+    CheckSplit("http://example.com:99999/x", 0, NULL, 0, 0, NULL);
+}
+
+static void CheckResolve(const char *base, const char *loc, const char *want)
+{
+    GazetteURL b, out;
+    char       formatted[1024];
+
+    gChecks++;
+    if (!GazetteURLSplit(base, strlen(base), &b)) {
+        gFailures++;
+        printf("FAIL  resolve: base \"%s\" does not parse\n", base);
+        return;
+    }
+    if (!GazetteURLResolve(&b, loc, strlen(loc), &out)) {
+        gFailures++;
+        printf("FAIL  resolve \"%s\" against \"%s\": rejected\n", loc, base);
+        return;
+    }
+    GazetteURLFormat(&out, formatted, sizeof formatted);
+    if (strcmp(formatted, want) != 0) {
+        gFailures++;
+        printf("FAIL  resolve \"%s\" against \"%s\"\n"
+               "        got  %s\n        want %s\n", loc, base, formatted, want);
+    }
+}
+
+static void TestURLResolve(void)
+{
+    /* Absolute: the base is irrelevant. This is the http -> https upgrade
+       every feed host does, and the one redirect that must work. */
+    CheckResolve("http://example.com/feed.xml", "https://example.com/feed.xml",
+                 "https://example.com/feed.xml");
+
+    CheckResolve("https://example.com/a/b/c.xml", "/other.xml",
+                 "https://example.com/other.xml");
+    CheckResolve("https://example.com/a/b/c.xml", "d.xml",
+                 "https://example.com/a/b/d.xml");
+    CheckResolve("https://example.com/a", "b",
+                 "https://example.com/b");
+
+    /* A Location taken straight out of the header block still has its line
+       ending attached. */
+    CheckResolve("https://example.com/x", "/y\r\n", "https://example.com/y");
+    CheckResolve("https://example.com/x", "  /y  ", "https://example.com/y");
+
+    /* A non-default port is carried across a same-origin redirect, and shows
+       up again when the URL is printed. */
+    CheckResolve("http://example.com:8080/a/b", "c",
+                 "http://example.com:8080/a/c");
+
+    {
+        GazetteURL b, out;
+        GazetteURLSplit("https://example.com/x", 21, &b);
+        CheckLong("an empty Location is rejected",
+                  GazetteURLResolve(&b, "", 0, &out), 0);
+        CheckLong("a whitespace-only Location is rejected",
+                  GazetteURLResolve(&b, " \r\n", 3, &out), 0);
+    }
+}
+
+static void TestURLFormat(void)
+{
+    GazetteURL u;
+    char       out[1024];
+
+    GazetteURLSplit("https://example.com/x", 21, &u);
+    GazetteURLFormat(&u, out, sizeof out);
+    CheckStr("the default port is not printed", out, "https://example.com/x");
+
+    GazetteURLSplit("http://example.com:8080/x", 25, &u);
+    GazetteURLFormat(&u, out, sizeof out);
+    CheckStr("a non-default port is printed", out, "http://example.com:8080/x");
+
+    GazetteURLSplit("http://example.com:443/x", 24, &u);
+    GazetteURLFormat(&u, out, sizeof out);
+    CheckStr("443 on http is not the default", out, "http://example.com:443/x");
+
+    {
+        char small[8];
+        CheckLong("format refuses to truncate",
+                  (long)GazetteURLFormat(&u, small, sizeof small), 0);
+        CheckStr("and leaves the buffer empty", small, "");
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* HTTP requests and responses                                         */
+/* ------------------------------------------------------------------ */
+
+static void TestHTTPRequest(void)
+{
+    GazetteURL u;
+    char       req[8192];
+
+    GazetteURLSplit("https://news.google.com/rss?hl=en-US", 36, &u);
+    CheckTrue("a request is built",
+              GazetteHTTPBuildGet(&u, req, sizeof req) > 0);
+    CheckTrue("it is a GET with the origin-form target",
+              strncmp(req, "GET /rss?hl=en-US HTTP/1.1\r\n", 28) == 0);
+    CheckTrue("Host names the server",
+              strstr(req, "\r\nHost: news.google.com\r\n") != NULL);
+    CheckTrue("the default port is left out of Host",
+              strstr(req, "news.google.com:443") == NULL);
+    /* Gazette cannot inflate anything; a server allowed to choose sends gzip. */
+    CheckTrue("identity encoding is demanded",
+              strstr(req, "\r\nAccept-Encoding: identity\r\n") != NULL);
+    CheckTrue("the connection is not held open",
+              strstr(req, "\r\nConnection: close\r\n") != NULL);
+    CheckTrue("it names itself",
+              strstr(req, "\r\nUser-Agent: Gazette/") != NULL);
+    CheckTrue("and ends with a blank line",
+              strcmp(req + strlen(req) - 4, "\r\n\r\n") == 0);
+
+    GazetteURLSplit("http://example.com:8080/x", 25, &u);
+    GazetteHTTPBuildGet(&u, req, sizeof req);
+    CheckTrue("a non-default port goes into Host",
+              strstr(req, "\r\nHost: example.com:8080\r\n") != NULL);
+
+    {
+        char small[16];
+        CheckLong("a request that will not fit is refused",
+                  (long)GazetteHTTPBuildGet(&u, small, sizeof small), 0);
+        CheckStr("and leaves the buffer empty", small, "");
+    }
+}
+
+static void TestHTTPResponse(void)
+{
+    GazetteHTTPResponse r;
+
+    {
+        static const char ok[] =
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/rss+xml\r\n"
+            "Content-Length: 4096\r\n"
+            "\r\n";
+        CheckLong("a complete head parses",
+                  GazetteHTTPParseResponse(ok, sizeof ok - 1, &r), 1);
+        CheckLong("status", r.status, 200);
+        CheckLong("minor version", r.httpMinor, 1);
+        CheckLong("content length", r.contentLength, 4096);
+        CheckLong("has content length", r.hasContentLength, 1);
+        CheckLong("not chunked", r.chunked, 0);
+        CheckLong("1.1 holds the connection open by default",
+                  r.connectionClose, 0);
+        CheckLong("head length", (long)r.headLen, (long)(sizeof ok - 1));
+    }
+
+    {
+        static const char partial[] = "HTTP/1.1 200 OK\r\nContent-Len";
+        CheckLong("an incomplete head asks for more",
+                  GazetteHTTPParseResponse(partial, sizeof partial - 1, &r), 0);
+    }
+
+    {
+        static const char junk[] = "NOT HTTP AT ALL\r\n\r\n";
+        CheckLong("a non-HTTP response is rejected",
+                  GazetteHTTPParseResponse(junk, sizeof junk - 1, &r), -1);
+    }
+
+    {
+        static const char badstatus[] = "HTTP/1.1 999 Nope\r\n\r\n";
+        CheckLong("an out-of-range status is rejected",
+                  GazetteHTTPParseResponse(badstatus, sizeof badstatus - 1, &r), -1);
+    }
+
+    {
+        static const char h10[] = "HTTP/1.0 200 OK\r\n\r\n";
+        GazetteHTTPParseResponse(h10, sizeof h10 - 1, &r);
+        CheckLong("HTTP/1.0 closes unless told otherwise", r.connectionClose, 1);
+        CheckLong("and has no length, so the body runs to the close",
+                  r.hasContentLength, 0);
+    }
+
+    {
+        static const char redir[] =
+            "HTTP/1.1 301 Moved Permanently\r\n"
+            "Location: https://example.com/new\r\n"
+            "\r\n";
+        GazetteHTTPParseResponse(redir, sizeof redir - 1, &r);
+        CheckLong("a redirect is recognised",
+                  GazetteHTTPIsRedirect(r.status), 1);
+        CheckLong("with a Location", r.hasLocation, 1);
+        CheckStr("that is trimmed", r.location, "https://example.com/new");
+    }
+
+    CheckLong("200 is not a redirect", GazetteHTTPIsRedirect(200), 0);
+    CheckLong("304 is not one Gazette follows", GazetteHTTPIsRedirect(304), 0);
+    CheckLong("303 is", GazetteHTTPIsRedirect(303), 1);
+    CheckLong("308 is", GazetteHTTPIsRedirect(308), 1);
+
+    CheckLong("204 can carry no body", GazetteHTTPStatusHasNoBody(204), 1);
+    CheckLong("304 can carry no body", GazetteHTTPStatusHasNoBody(304), 1);
+    CheckLong("100 can carry no body", GazetteHTTPStatusHasNoBody(100), 1);
+    CheckLong("200 can", GazetteHTTPStatusHasNoBody(200), 0);
+
+    {
+        /* Both framings at once is a broken server or a smuggling attempt.
+           Either way the chunked framing is the one that governs. */
+        static const char both[] =
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Length: 10\r\n"
+            "Transfer-Encoding: chunked\r\n"
+            "\r\n";
+        GazetteHTTPParseResponse(both, sizeof both - 1, &r);
+        CheckLong("chunked wins over Content-Length", r.chunked, 1);
+        CheckLong("and the length is discarded", r.hasContentLength, 0);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Chunked decoding                                                    */
+/* ------------------------------------------------------------------ */
+
+/* Feed the whole input in one go and collect everything produced. */
+static size_t ChunkAll(const char *in, size_t inLen, char *out, size_t outCap,
+                       int *done, long *consumedTotal)
+{
+    GazetteChunked c;
+    size_t total = 0;
+    size_t off   = 0;
+
+    GazetteChunkedInit(&c);
+    for (;;) {
+        size_t produced = 0;
+        long   n = GazetteChunkedFeed(&c, in + off, inLen - off,
+                                      out + total, outCap - total - 1,
+                                      &produced);
+        if (n < 0) {
+            *done = -1;
+            *consumedTotal = -1;
+            return total;
+        }
+        total += produced;
+        off   += (size_t)n;
+        if (n == 0 && produced == 0) break;
+        if (off >= inLen) break;
+        if (GazetteChunkedDone(&c)) break;
+    }
+    out[total] = '\0';
+    *done = GazetteChunkedDone(&c);
+    *consumedTotal = (long)off;
+    return total;
+}
+
+static void TestChunked(void)
+{
+    char out[256];
+    int  done;
+    long consumed;
+
+    {
+        static const char body[] = "5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n";
+        size_t n = ChunkAll(body, sizeof body - 1, out, sizeof out,
+                            &done, &consumed);
+        CheckLong("chunked decodes", (long)n, 11);
+        CheckStr("to the right bytes", out, "hello world");
+        CheckTrue("and reaches the end", done == 1);
+    }
+
+    {
+        /* Chunk extensions are legal and carry hex characters of their own,
+           which must not be read as part of the size. */
+        static const char body[] = "5;name=value\r\nhello\r\n0\r\n\r\n";
+        size_t n = ChunkAll(body, sizeof body - 1, out, sizeof out,
+                            &done, &consumed);
+        CheckLong("a chunk extension is skipped", (long)n, 5);
+        CheckStr("and the data is intact", out, "hello");
+    }
+
+    {
+        static const char body[] = "4\r\nabcd\r\n0\r\nX-Trailer: y\r\n\r\n";
+        size_t n = ChunkAll(body, sizeof body - 1, out, sizeof out,
+                            &done, &consumed);
+        CheckLong("trailers are consumed", (long)n, 4);
+        CheckStr("body unaffected", out, "abcd");
+        CheckTrue("and the stream ends", done == 1);
+    }
+
+    {
+        /* Uppercase hex, which some servers send. */
+        static const char body[] = "A\r\n0123456789\r\n0\r\n\r\n";
+        size_t n = ChunkAll(body, sizeof body - 1, out, sizeof out,
+                            &done, &consumed);
+        CheckLong("uppercase hex sizes work", (long)n, 10);
+        CheckStr("data", out, "0123456789");
+    }
+
+    {
+        static const char body[] = "zz\r\nnope\r\n";
+        size_t n = ChunkAll(body, sizeof body - 1, out, sizeof out,
+                            &done, &consumed);
+        (void)n;
+        CheckLong("a malformed size is an error", (long)done, -1);
+    }
+
+    {
+        /* Arriving a byte at a time is the normal case on a slow link: the
+           decoder must hold its state across every split. */
+        static const char body[] = "5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n";
+        GazetteChunked c;
+        size_t total = 0;
+        size_t i;
+        char   acc[64];
+
+        GazetteChunkedInit(&c);
+        for (i = 0; i < sizeof body - 1; i++) {
+            size_t produced = 0;
+            long   n = GazetteChunkedFeed(&c, body + i, 1,
+                                          acc + total, sizeof acc - total,
+                                          &produced);
+            CheckTrue("a one-byte feed never errors", n >= 0);
+            total += produced;
+        }
+        acc[total] = '\0';
+        CheckStr("byte-at-a-time decodes identically", acc, "hello world");
+        CheckTrue("and still finishes", GazetteChunkedDone(&c));
+    }
+
+    {
+        /* A full output buffer must stop cleanly and report how much input it
+           actually took, so the caller can hand the rest back. */
+        static const char body[] = "10\r\n0123456789abcdef\r\n0\r\n\r\n";
+        GazetteChunked c;
+        char   small[8];
+        size_t produced = 0;
+        long   n;
+
+        GazetteChunkedInit(&c);
+        n = GazetteChunkedFeed(&c, body, sizeof body - 1,
+                               small, sizeof small, &produced);
+        CheckTrue("a short feed consumes what it can", n > 0);
+        CheckLong("and fills the buffer exactly", (long)produced, 8);
+        CheckLong("without finishing", GazetteChunkedDone(&c), 0);
+    }
+}
+
 /* ------------------------------------------------------------------ */
 
 int main(void)
@@ -384,6 +828,13 @@ int main(void)
     TestPrefsModel();
     TestPrefsParse();
     TestPrefsRoundTrip();
+    TestHeaderBlocks();
+    TestURLSplit();
+    TestURLResolve();
+    TestURLFormat();
+    TestHTTPRequest();
+    TestHTTPResponse();
+    TestChunked();
 
     printf("Gazette host tests: %d checks, %d failure%s\n",
            gChecks, gFailures, gFailures == 1 ? "" : "s");

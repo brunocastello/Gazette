@@ -32,9 +32,11 @@
 #include <Appearance.h>
 #include <Sound.h>
 
+#include <stdio.h>
 #include <string.h>
 
 #include "core/gazette_core.h"
+#include "net/gazette_fetch.h"
 #include "net/gazette_net.h"
 
 /* ------------------------------------------------------------------ */
@@ -53,6 +55,9 @@ static void    HandleMenuChoice(long menuResult);
 static void    InvalWholeWindow(WindowRef window);
 static void    HandleAbout(void);
 static void    HandleQuit(void);
+static void    HandleRefresh(void);
+static void    PumpFetch(void);
+static void    SetStatus(const char *text);
 static void    DrawGazetteWindow(WindowRef window);
 static void    DrawCString(const char *text);
 
@@ -73,6 +78,16 @@ static Boolean   gHadPrefsFile = false;
    did, so it is worth saying so on screen rather than only at fetch time. */
 static Boolean   gNetUp = false;
 
+/* The one fetch in flight, or nil. Phase 2 turns this into a queue over the
+   whole feed list; Phase 1 proves a single one runs to completion without
+   the event loop ever stopping. */
+static GazetteFetch *gFetch = nil;
+
+/* The bottom line of the window. Redrawn only when it actually changes —
+   invalidating on every pump would repaint the window many times a second
+   for no visible difference. */
+static char      gStatus[160] = "";
+
 /* Menu IDs */
 enum {
     kMenuApple  = 128,
@@ -87,9 +102,11 @@ enum {
 };
 
 enum {
-    kFileItemClose = 1,
+    kFileItemRefresh = 1,
     /* 2 is a divider */
-    kFileItemQuit  = 3
+    kFileItemClose   = 3,
+    /* 4 is a divider */
+    kFileItemQuit    = 5
 };
 
 enum {
@@ -203,7 +220,7 @@ static Boolean BuildMenuBar(void)
     if (fileMenu == nil) {
         return false;
     }
-    AppendMenu(fileMenu, "\pClose/W;(-;Quit/Q");
+    AppendMenu(fileMenu, "\pRefresh/R;(-;Close/W;(-;Quit/Q");
     InsertMenu(fileMenu, 0);
 
     editMenu = NewMenu(kMenuEdit, "\pEdit");
@@ -237,8 +254,11 @@ static void RunGazette(void)
         if (WaitNextEvent(everyEvent, &event, kSleepTicks, nil)) {
             HandleEvent(&event);
         } else {
-            /* Idle. Phase 1 polls non-blocking network I/O from here — it
-               must never block, or the whole machine stops cooperating. */
+            /* Idle. This is the one place network I/O advances, and nothing
+               it calls blocks: a pump does whatever work is available this
+               pass and returns. Blocking here would stop the whole machine
+               cooperating, not just Gazette. */
+            PumpFetch();
         }
     }
 }
@@ -356,7 +376,9 @@ static void HandleMenuChoice(long menuResult)
             break;
 
         case kMenuFile:
-            if (menuItem == kFileItemClose || menuItem == kFileItemQuit) {
+            if (menuItem == kFileItemRefresh) {
+                HandleRefresh();
+            } else if (menuItem == kFileItemClose || menuItem == kFileItemQuit) {
                 HandleQuit();
             }
             break;
@@ -390,6 +412,104 @@ static void HandleAbout(void)
 static void HandleQuit(void)
 {
     gDone = true;
+}
+
+/* ------------------------------------------------------------------ */
+/* Fetching                                                            */
+/*                                                                     */
+/* Phase 1 proves one HTTPS GET runs to completion from the idle branch */
+/* without the UI ever stopping. Phase 2 hands the bytes to the feed    */
+/* parser instead of counting them.                                     */
+/* ------------------------------------------------------------------ */
+
+static void SetStatus(const char *text)
+{
+    if (strcmp(gStatus, text) == 0) {
+        return;                     /* nothing to repaint */
+    }
+    strncpy(gStatus, text, sizeof gStatus - 1);
+    gStatus[sizeof gStatus - 1] = '\0';
+    InvalWholeWindow(gMainWindow);
+}
+
+/*
+ * Where the body goes. Phase 2 replaces this with the RSS/Atom parser fed
+ * incrementally; until then the bytes are counted and dropped, which is the
+ * honest way to prove the transfer works without pretending to parse it.
+ */
+static int CountingSink(const char *data, size_t len, void *context)
+{
+    (void)data;
+    (void)len;
+    (void)context;
+    return 1;
+}
+
+static void HandleRefresh(void)
+{
+    const char *url;
+    char        message[160];
+
+    if (gFetch != nil) {
+        return;                     /* one at a time in Phase 1 */
+    }
+    if (!gNetUp) {
+        SetStatus("No network - check the TCP/IP control panel.");
+        return;
+    }
+    if (GazetteCoreFeedCount() == 0) {
+        SetStatus("No feeds configured.");
+        return;
+    }
+
+    url = GazetteCoreFeedURL(0);
+    gFetch = GazetteFetchStart(url, CountingSink, nil);
+    if (gFetch == nil) {
+        SetStatus("Could not start the fetch.");
+        return;
+    }
+
+    snprintf(message, sizeof message, "Fetching %s...", GazetteCoreFeedTitle(0));
+    SetStatus(message);
+}
+
+static void PumpFetch(void)
+{
+    char message[160];
+
+    if (gFetch == nil) {
+        return;
+    }
+
+    switch (GazetteFetchPump(gFetch)) {
+        case kGazetteFetchDone:
+            snprintf(message, sizeof message,
+                     "HTTP %d - %ld bytes from %s",
+                     GazetteFetchStatus(gFetch),
+                     GazetteFetchBytesRead(gFetch),
+                     GazetteFetchFinalURL(gFetch));
+            SetStatus(message);
+            GazetteFetchDestroy(gFetch);
+            gFetch = nil;
+            break;
+
+        case kGazetteFetchFailed:
+            snprintf(message, sizeof message, "Failed: %s",
+                     GazetteFetchErrorText(gFetch));
+            SetStatus(message);
+            GazetteFetchDestroy(gFetch);
+            gFetch = nil;
+            break;
+
+        case kGazetteFetchBody:
+            snprintf(message, sizeof message, "Reading... %ld bytes",
+                     GazetteFetchBytesRead(gFetch));
+            SetStatus(message);
+            break;
+
+        default:
+            break;                  /* connecting, sending, reading headers */
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -477,8 +597,10 @@ static void DrawGazetteWindow(WindowRef window)
     TextSize(12);
 
     MoveTo((short)(bounds.left + 16), (short)(bounds.bottom - 16));
-    if (gNetUp) {
-        DrawString("\pNetwork ready - Open Transport and TLS are up.");
+    if (gStatus[0] != '\0') {
+        DrawCString(gStatus);
+    } else if (gNetUp) {
+        DrawString("\pNetwork ready - press Command-R to fetch the first feed.");
     } else {
         DrawString("\pNo network - check the TCP/IP control panel.");
     }
@@ -494,6 +616,11 @@ static void DoExitGazette(void)
 {
     /* Writes the preferences back out if anything changed them — including a
        first run, which saves the defaults so there is a file to hand-edit. */
+    if (gFetch != nil) {
+        GazetteFetchDestroy(gFetch);    /* closes the connection too */
+        gFetch = nil;
+    }
+
     GazetteCoreShutdown();
     GazetteNetShutdown();
 

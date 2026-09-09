@@ -11,6 +11,8 @@ CFLAGS += -std=c99 -Wall -Wextra -Wno-unused-parameter -I$(SRC) -g
 
 SOURCES = \
 	$(SRC)/portable/gazette_portable.c \
+	$(SRC)/portable/gazette_url.c \
+	$(SRC)/portable/gazette_http.c \
 	$(SRC)/prefs/gazette_prefs.c
 
 all: test

@@ -30,8 +30,10 @@ set(GAZETTE_SOURCES
     # UI — Carbon window helpers (Phase 3)
     src/ui/platinum_window.c
 
-    # Networking — stream over Certainly's Open Transport client + TLS
+    # Networking — stream over Certainly's Open Transport client + TLS,
+    # and the non-blocking HTTP GET driven from the event loop
     src/net/gazette_net.c
+    src/net/gazette_fetch.c
 
     # Feed engine — RSS/Atom, Google News (Phase 2)
     src/feeds/gazette_feeds.c
@@ -47,6 +49,8 @@ set(GAZETTE_SOURCES
 
     # Portable helpers — pure C, host-tested (tests/host)
     src/portable/gazette_portable.c
+    src/portable/gazette_url.c
+    src/portable/gazette_http.c
 )
 
 # Resource fork: SIZE (8 MB preferred / 4 MB minimum), About alert, version,
