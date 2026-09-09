@@ -34,6 +34,7 @@
 #include <Events.h>
 #include <Appearance.h>
 #include <Sound.h>
+#include <TextUtils.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -41,6 +42,7 @@
 #include "core/gazette_core.h"
 #include "feeds/gazette_feeds.h"
 #include "net/gazette_net.h"
+#include "ui/gazette_dialogs.h"
 #include "ui/platinum_window.h"
 
 /* ------------------------------------------------------------------ */
@@ -63,6 +65,15 @@ static void    ShowFeed(int feedIndex);
 static void    PumpRefresh(void);
 static void    CheckAutoRefresh(void);
 
+static void    AdjustMenus(void);
+static void    HandleNewFeed(void);
+static void    HandleNewGroup(void);
+static void    HandleEditFeed(void);
+static void    HandleRename(void);
+static void    HandleRemove(void);
+static void    HandleToggleEnabled(void);
+static void    HandleMoveToGroup(short item);
+
 /* ------------------------------------------------------------------ */
 /* Application globals                                                 */
 /* ------------------------------------------------------------------ */
@@ -79,7 +90,12 @@ enum {
     kMenuApple  = 128,
     kMenuFile   = 129,
     kMenuEdit   = 130,
-    kMenuWindow = 131
+    kMenuFeeds  = 131,
+    kMenuWindow = 132,
+
+    /* The hierarchical menu hanging off "Move to Group". Its ID has to be in
+       the hierarchical range and unique among menus, nothing more. */
+    kMenuMoveTo = 133
 };
 
 enum {
@@ -93,6 +109,25 @@ enum {
     kFileItemClose   = 3,
     /* 4 is a divider */
     kFileItemQuit    = 5
+};
+
+/* Feeds menu items, in the order AppendMenu() adds them below. */
+enum {
+    kFeedsItemNewFeed  = 1,
+    kFeedsItemNewGroup = 2,
+    /* 3 is a divider */
+    kFeedsItemEdit     = 4,
+    kFeedsItemRename   = 5,
+    kFeedsItemRemove   = 6,
+    /* 7 is a divider */
+    kFeedsItemEnabled  = 8,
+    kFeedsItemMoveTo   = 9
+};
+
+/* Move to Group: the top level, a divider, then one item per group. */
+enum {
+    kMoveToItemTop   = 1,
+    kMoveToFirstGroup = 3
 };
 
 enum {
@@ -156,6 +191,10 @@ static Boolean InitGazette(void)
         return false;
     }
 
+    /* A modal dialog runs a loop of its own, and this is what keeps a fetch
+       moving inside it. See gazette_dialogs.h. */
+    GazetteDialogsSetIdle(PumpRefresh);
+
     /* Show whatever the last run left cached, so the window has content
        before any network work happens — which on a machine with no
        connection is the whole of what Gazette can do. */
@@ -173,7 +212,7 @@ static Boolean InitGazette(void)
 
 static Boolean BuildMenuBar(void)
 {
-    MenuRef appleMenu, fileMenu, editMenu, windowMenu;
+    MenuRef appleMenu, fileMenu, editMenu, feedsMenu, moveToMenu, windowMenu;
 
     /* "\024" is the Apple logo in MacRoman. */
     appleMenu = NewMenu(kMenuApple, "\p\024");
@@ -197,6 +236,27 @@ static Boolean BuildMenuBar(void)
     }
     AppendMenu(editMenu, "\pUndo/Z;(-;Cut/X;Copy/C;Paste/V;Clear");
     InsertMenu(editMenu, 0);
+
+    feedsMenu = NewMenu(kMenuFeeds, "\pFeeds");
+    if (feedsMenu == nil) {
+        return false;
+    }
+    AppendMenu(feedsMenu,
+               "\pNew Feed\311/N;New Group\311;(-;"
+               "Edit Feed\311;Rename\311;Remove;(-;"
+               "Turn Off;Move to Group");
+    InsertMenu(feedsMenu, 0);
+
+    /* "Move to Group" is a hierarchical item: the submenu goes in with
+       hierMenu (-1) as its "before" menu, which is what tells the Menu
+       Manager it hangs off another item rather than sitting in the bar.
+       Its contents are rebuilt in AdjustMenus, because the groups change. */
+    moveToMenu = NewMenu(kMenuMoveTo, "\pMove to Group");
+    if (moveToMenu == nil) {
+        return false;
+    }
+    InsertMenu(moveToMenu, hierMenu);
+    SetMenuItemHierarchicalID(feedsMenu, kFeedsItemMoveTo, kMenuMoveTo);
 
     windowMenu = NewMenu(kMenuWindow, "\pWindow");
     if (windowMenu == nil) {
@@ -245,7 +305,12 @@ static void HandleEvent(const EventRecord *event)
                itself, and is the Carbon-blessed replacement for MenuKey(). It
                returns 0 for anything that is not a menu command, which is
                where the window's own keys are handled. */
-            long choice = (long)MenuEvent(event);
+            long choice;
+
+            /* Before the lookup, not after: a command key for a disabled item
+               must not fire, and what is disabled depends on the selection. */
+            AdjustMenus();
+            choice = (long)MenuEvent(event);
 
             if (choice != 0) {
                 HandleMenuChoice(choice);
@@ -287,6 +352,7 @@ static void HandleMouseDown(const EventRecord *event)
 
     switch (part) {
         case inMenuBar:
+            AdjustMenus();
             HandleMenuChoice(MenuSelect(event->where));
             break;
 
@@ -374,7 +440,24 @@ static void HandleMenuChoice(long menuResult)
             break;
 
         case kMenuEdit:
-            /* Phase 4 wires these up to the reader pane. */
+            /* The text fields in the dialogs get the Edit menu's behaviour
+               from the Dialog Manager; the reader pane is still to come. */
+            break;
+
+        case kMenuFeeds:
+            switch (menuItem) {
+                case kFeedsItemNewFeed:  HandleNewFeed();       break;
+                case kFeedsItemNewGroup: HandleNewGroup();      break;
+                case kFeedsItemEdit:     HandleEditFeed();      break;
+                case kFeedsItemRename:   HandleRename();        break;
+                case kFeedsItemRemove:   HandleRemove();        break;
+                case kFeedsItemEnabled:  HandleToggleEnabled(); break;
+                default: break;
+            }
+            break;
+
+        case kMenuMoveTo:
+            HandleMoveToGroup(menuItem);
             break;
 
         case kMenuWindow:
@@ -403,6 +486,322 @@ static void HandleAbout(void)
 static void HandleQuit(void)
 {
     gDone = true;
+}
+
+/* ------------------------------------------------------------------ */
+/* Feed management                                                     */
+/*                                                                     */
+/* The dialogs are the Dialog Manager's (ui/gazette_dialogs.h), the     */
+/* model is the preferences', and this is the wiring between them: read */
+/* the sidebar's selection, ask, mutate, save, redraw.                  */
+/*                                                                     */
+/* Every one of these saves immediately rather than leaving it to the   */
+/* quit. On a cooperative machine the application that is edited and    */
+/* then crashed by something else is normal, and a subscription that    */
+/* did not survive that is a subscription the user has to remember.     */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Bring the Feeds menu into line with what the sidebar has selected, and
+ * rebuild the groups under "Move to Group". Called just before the menus can
+ * be seen — a click in the bar, and a command key — because an item that can
+ * do nothing should be grey before it is read, not after it is chosen.
+ */
+static void AdjustMenus(void)
+{
+    MenuRef feeds  = GetMenuHandle(kMenuFeeds);
+    MenuRef moveTo = GetMenuHandle(kMenuMoveTo);
+    int     kind   = 0;
+    int     index  = 0;
+    Boolean any;
+    Boolean feedSelected;
+    Str255  itemText;
+    int     i;
+
+    if (feeds == nil) {
+        return;
+    }
+
+    any          = GazetteUISelection(&kind, &index);
+    feedSelected = (any && kind == kGazetteRowFeed);
+
+    if (any) {
+        MacEnableMenuItem(feeds, kFeedsItemRename);
+        MacEnableMenuItem(feeds, kFeedsItemRemove);
+    } else {
+        DisableMenuItem(feeds, kFeedsItemRename);
+        DisableMenuItem(feeds, kFeedsItemRemove);
+    }
+
+    /* The address, the on/off switch and the group are all a feed's: a group
+       has no address and does not nest inside another. */
+    if (feedSelected) {
+        MacEnableMenuItem(feeds, kFeedsItemEdit);
+        MacEnableMenuItem(feeds, kFeedsItemEnabled);
+        MacEnableMenuItem(feeds, kFeedsItemMoveTo);
+        SetMenuItemText(feeds, kFeedsItemEnabled,
+                        GazetteCoreFeedEnabled(index) ? "\pTurn Off"
+                                                      : "\pTurn On");
+    } else {
+        DisableMenuItem(feeds, kFeedsItemEdit);
+        DisableMenuItem(feeds, kFeedsItemEnabled);
+        DisableMenuItem(feeds, kFeedsItemMoveTo);
+        SetMenuItemText(feeds, kFeedsItemEnabled, "\pTurn Off");
+    }
+
+    if (moveTo == nil) {
+        return;
+    }
+
+    /* The groups change under this menu, so it is rebuilt rather than
+       patched; at most kGazetteMaxGroups items, once per menu click. */
+    while (CountMenuItems(moveTo) > 0) {
+        DeleteMenuItem(moveTo, 1);
+    }
+    AppendMenu(moveTo, "\pTop Level");
+    if (GazetteCoreGroupCount() > 0) {
+        AppendMenu(moveTo, "\p(-");
+    }
+    for (i = 0; i < GazetteCoreGroupCount(); i++) {
+        /* AppendMenu reads its own metacharacters, so a group called "-" or
+           one starting with "(" would arrive as a divider or a disabled item.
+           Appending a placeholder and setting the text after it is in is the
+           way past that — SetMenuItemText interprets nothing. */
+        AppendMenu(moveTo, "\pGroup");
+        CopyCStringToPascal(GazetteCoreGroupName(i), itemText);
+        SetMenuItemText(moveTo, (short)CountMenuItems(moveTo), itemText);
+    }
+
+    /* Where the feed already is, is not somewhere to move it to. */
+    if (feedSelected) {
+        int group = GazetteCoreFeedGroup(index);
+
+        if (group < 0) {
+            DisableMenuItem(moveTo, kMoveToItemTop);
+        } else {
+            DisableMenuItem(moveTo, (MenuItemIndex)(kMoveToFirstGroup + group));
+        }
+    }
+}
+
+static void HandleNewFeed(void)
+{
+    char url[kGazetteURLLen];
+    char title[kGazetteTitleLen];
+    int  kind  = 0;
+    int  index = 0;
+    int  group = -1;
+    int  added;
+
+    url[0]   = '\0';
+    title[0] = '\0';
+
+    /* A new feed lands where the user is looking: in the selected group, or
+       beside the selected feed in whatever group that is in. */
+    if (GazetteUISelection(&kind, &index)) {
+        group = (kind == kGazetteRowGroup) ? index
+                                           : GazetteCoreFeedGroup(index);
+    }
+
+    if (!GazetteAskFeed(url, sizeof url, title, sizeof title)) {
+        return;
+    }
+
+    added = GazetteCoreAddFeed(url, title, group);
+    if (added < 0) {
+        GazetteUISetStatus("That feed is already in the list, or the list "
+                           "is full.");
+        return;
+    }
+
+    GazetteCoreSavePrefs();
+    GazetteUIFeedsChanged();
+    ShowFeed(added);
+}
+
+static void HandleNewGroup(void)
+{
+    char name[kGazetteGroupLen];
+    int  group;
+
+    name[0] = '\0';
+    if (!GazetteAskName("Name for the new group:", name, sizeof name)) {
+        return;
+    }
+
+    group = GazetteCoreAddGroup(name);
+    if (group < 0) {
+        GazetteUISetStatus("No room for another group.");
+        return;
+    }
+
+    GazetteCoreSavePrefs();
+    GazetteUIFeedsChanged();
+    GazetteUISelectGroup(group);
+}
+
+/* The address as well as the name, in the same dialog adding one uses,
+   started with what the feed already has. */
+static void HandleEditFeed(void)
+{
+    char url[kGazetteURLLen];
+    char title[kGazetteTitleLen];
+    char wasURL[kGazetteURLLen];
+    int  kind  = 0;
+    int  index = 0;
+
+    if (!GazetteUISelection(&kind, &index) || kind != kGazetteRowFeed) {
+        return;
+    }
+
+    snprintf(url, sizeof url, "%s", GazetteCoreFeedURL(index));
+    snprintf(title, sizeof title, "%s", GazetteCoreFeedTitle(index));
+    snprintf(wasURL, sizeof wasURL, "%s", url);
+
+    if (!GazetteAskFeed(url, sizeof url, title, sizeof title)) {
+        return;
+    }
+
+    if (strcmp(url, wasURL) != 0 && !GazetteCoreSetFeedURL(index, url)) {
+        GazetteUISetStatus("Another feed already has that address.");
+        return;
+    }
+    GazetteCoreRenameFeed(index, title);
+
+    GazetteCoreSavePrefs();
+    GazetteUIFeedsChanged();
+
+    /* A new address is a different feed with a different cache file, so this
+       reads that one — or fetches it when there is nothing cached yet. */
+    ShowFeed(index);
+}
+
+static void HandleRename(void)
+{
+    int kind  = 0;
+    int index = 0;
+
+    if (!GazetteUISelection(&kind, &index)) {
+        return;
+    }
+
+    if (kind == kGazetteRowGroup) {
+        char name[kGazetteGroupLen];
+
+        snprintf(name, sizeof name, "%s", GazetteCoreGroupName(index));
+        if (!GazetteAskName("Name for this group:", name, sizeof name)) {
+            return;
+        }
+        GazetteCoreRenameGroup(index, name);
+    } else {
+        char title[kGazetteTitleLen];
+
+        snprintf(title, sizeof title, "%s", GazetteCoreFeedTitle(index));
+        if (!GazetteAskName("Name for this feed:", title, sizeof title)) {
+            return;
+        }
+        GazetteCoreRenameFeed(index, title);
+    }
+
+    GazetteCoreSavePrefs();
+    GazetteUIFeedsChanged();
+}
+
+static void HandleRemove(void)
+{
+    char message[320];
+    int  kind  = 0;
+    int  index = 0;
+
+    if (!GazetteUISelection(&kind, &index)) {
+        return;
+    }
+
+    /* "\322" and "\323" are the MacRoman curly quotes, which is what a
+       Platinum alert uses around a name. */
+    if (kind == kGazetteRowGroup) {
+        snprintf(message, sizeof message,
+                 "Remove the group \322%s\323? The feeds in it are kept - "
+                 "they move to the top of the list.",
+                 GazetteCoreGroupName(index));
+        if (!GazetteConfirmRemove(message)) {
+            return;
+        }
+        GazetteCoreRemoveGroup(index);
+    } else {
+        char url[kGazetteURLLen];
+
+        snprintf(message, sizeof message,
+                 "Remove the feed \322%s\323? You can subscribe to it again "
+                 "at any time.", GazetteCoreFeedTitle(index));
+        if (!GazetteConfirmRemove(message)) {
+            return;
+        }
+
+        /* Copy the address out first: removing shifts the array that pointer
+           points into. */
+        snprintf(url, sizeof url, "%s", GazetteCoreFeedURL(index));
+        GazetteCoreRemoveFeed(url);
+
+        /* The feed that shuffled up into the gap is the one to show — the
+           same place in the list the user was already looking at. */
+        GazetteCoreSavePrefs();
+        GazetteUIFeedsChanged();
+        if (index >= GazetteCoreFeedCount()) {
+            index = GazetteCoreFeedCount() - 1;
+        }
+        ShowFeed(index);
+        return;
+    }
+
+    GazetteCoreSavePrefs();
+    GazetteUIFeedsChanged();
+    ShowFeed(GazetteUISelectedFeed());
+}
+
+static void HandleToggleEnabled(void)
+{
+    int kind  = 0;
+    int index = 0;
+
+    if (!GazetteUISelection(&kind, &index) || kind != kGazetteRowFeed) {
+        return;
+    }
+
+    GazetteCoreSetFeedEnabled(index, !GazetteCoreFeedEnabled(index));
+    GazetteCoreSavePrefs();
+    GazetteUIFeedsChanged();
+}
+
+static void HandleMoveToGroup(short item)
+{
+    int kind  = 0;
+    int index = 0;
+    int group;
+    int moved;
+
+    if (!GazetteUISelection(&kind, &index) || kind != kGazetteRowFeed) {
+        return;
+    }
+
+    if (item == kMoveToItemTop) {
+        group = -1;
+    } else if (item >= kMoveToFirstGroup) {
+        group = item - kMoveToFirstGroup;
+    } else {
+        return;                     /* the divider */
+    }
+
+    /* The last position in the list; the preferences then put the feed at the
+       end of the group it now belongs to, which is where a new one goes. */
+    moved = GazetteCoreMoveFeed(index, GazetteCoreFeedCount() - 1, group);
+    if (moved < 0) {
+        return;
+    }
+
+    GazetteCoreSavePrefs();
+    GazetteUIFeedsChanged();
+    GazetteUISelectFeed(moved);
 }
 
 /* ------------------------------------------------------------------ */
@@ -548,6 +947,11 @@ static void CheckAutoRefresh(void)
         return;                     /* 0 means manual only */
     }
     if (!gNetUp || GazetteFeedsRefreshGetState() == kGazetteRefreshRunning) {
+        return;
+    }
+    /* A feed switched off is skipped by the clock, not by the user: asking
+       for it explicitly with Refresh still fetches it. */
+    if (!GazetteCoreFeedEnabled(GazetteUISelectedFeed())) {
         return;
     }
     if (gLastRefreshTicks == 0) {

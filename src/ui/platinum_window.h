@@ -19,6 +19,10 @@
 #include <MacWindows.h>
 #include <Events.h>
 
+/* For kGazetteRowFeed / kGazetteRowGroup — the sidebar's selection is one or
+   the other, and the row model that says so is portable code. */
+#include "prefs/gazette_prefs.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -58,6 +62,18 @@ void GazetteUIFeedsChanged(void);
 
 int  GazetteUISelectedFeed(void);
 void GazetteUISelectFeed(int index);
+
+/*
+ * What the sidebar has selected: kGazetteRowFeed with an index into the feeds,
+ * or kGazetteRowGroup with one into the groups. Returns false when there is
+ * nothing to select, which is a sidebar with no feeds and no groups in it.
+ *
+ * A selected group does not change the headline list. It has no articles of
+ * its own to show, and throwing away the article the user was reading because
+ * they clicked a folder would be worse than leaving it up.
+ */
+Boolean GazetteUISelection(int *kind, int *index);
+void    GazetteUISelectGroup(int index);
 
 #ifdef __cplusplus
 }

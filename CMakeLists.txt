@@ -29,6 +29,7 @@ set(GAZETTE_SOURCES
 
     # UI — the Platinum three-pane window, and every Toolbox call it makes
     src/ui/platinum_window.c
+    src/ui/gazette_dialogs.c
 
     # Networking — stream over Certainly's Open Transport client + TLS,
     # and the non-blocking HTTP GET driven from the event loop

@@ -16,6 +16,11 @@
 /* Must match kAboutAlertID in src/main.cpp. */
 #define kAboutAlertID 128
 
+/* Must match the enum in src/ui/gazette_dialogs.c. */
+#define kFeedDialogID    129
+#define kNameDialogID    130
+#define kConfirmAlertID  131
+
 /* ------------------------------------------------------------------ */
 /* SIZE — memory partition                                             */
 /*                                                                     */
@@ -86,6 +91,138 @@ resource 'DITL' (kAboutAlertID, "About Gazette") {
 
         { 96, 20, 116, 340 },
         StaticText { disabled, "Copyright 2026 brunocastello" };
+    }
+};
+
+/* ------------------------------------------------------------------ */
+/* Feed management dialogs (Phase 4)                                   */
+/*                                                                     */
+/* Real Dialog Manager dialogs from DLOG/DITL rather than anything      */
+/* drawn by hand: the buttons are Platinum's, the default ring and the  */
+/* keyboard behaviour come from SetDialogDefaultItem and StdFilterProc, */
+/* and the text fields are the Toolbox's own with the Edit menu's       */
+/* behaviour already in them.                                          */
+/*                                                                     */
+/* Each dialog carries a 'dlgx' so the Appearance Manager draws it with */
+/* the theme background and theme controls. The control *hierarchy* bit */
+/* is deliberately off: it would turn the items into embedded controls  */
+/* and GetDialogItemText would no longer be the way to read them.       */
+/* ------------------------------------------------------------------ */
+
+resource 'DLOG' (kFeedDialogID, "Feed") {
+    { 0, 0, 152, 340 },
+    dBoxProc,
+    invisible,
+    noGoAway,
+    0x0,
+    kFeedDialogID,
+    "",
+    centerMainScreen
+};
+
+resource 'dlgx' (kFeedDialogID) {
+    versionZero {
+        kDialogFlagsUseThemeBackground | kDialogFlagsUseThemeControls
+    }
+};
+
+resource 'DITL' (kFeedDialogID, "Feed") {
+    {
+        /* Item 1 is the default button and item 2 the cancel one; the code
+           tells the Dialog Manager so, and nothing else depends on it. */
+        { 118, 264, 138, 324 },
+        Button { enabled, "OK" };
+
+        { 118, 192, 138, 252 },
+        Button { enabled, "Cancel" };
+
+        { 15, 16, 31, 84 },
+        StaticText { disabled, "Address:" };
+
+        { 13, 88, 29, 324 },
+        EditText { enabled, "" };
+
+        { 43, 16, 59, 84 },
+        StaticText { disabled, "Name:" };
+
+        { 41, 88, 57, 324 },
+        EditText { enabled, "" };
+
+        { 68, 88, 110, 324 },
+        StaticText { disabled,
+                     "The address of an RSS or Atom feed. Leave the name "
+                     "empty to use the feed's own." };
+    }
+};
+
+resource 'DLOG' (kNameDialogID, "Name") {
+    { 0, 0, 116, 320 },
+    dBoxProc,
+    invisible,
+    noGoAway,
+    0x0,
+    kNameDialogID,
+    "",
+    centerMainScreen
+};
+
+resource 'dlgx' (kNameDialogID) {
+    versionZero {
+        kDialogFlagsUseThemeBackground | kDialogFlagsUseThemeControls
+    }
+};
+
+resource 'DITL' (kNameDialogID, "Name") {
+    {
+        { 82, 244, 102, 304 },
+        Button { enabled, "OK" };
+
+        { 82, 172, 102, 232 },
+        Button { enabled, "Cancel" };
+
+        /* The prompt is set at runtime — one dialog serves "New Group",
+           "Rename Group" and "Rename Feed". */
+        { 14, 16, 46, 304 },
+        StaticText { disabled, "" };
+
+        { 52, 16, 68, 304 },
+        EditText { enabled, "" };
+    }
+};
+
+/* Removing a feed or a group is not undoable, so it asks first. CautionAlert
+   draws the caution icon itself; the text starts clear of it. */
+resource 'ALRT' (kConfirmAlertID, "Confirm") {
+    { 0, 0, 124, 360 },
+    kConfirmAlertID,
+    {
+        OK, visible, silent;
+        OK, visible, silent;
+        OK, visible, silent;
+        OK, visible, silent
+    },
+    alertPositionMainScreen
+};
+
+resource 'alrx' (kConfirmAlertID) {
+    versionOne {
+        kDialogFlagsUseThemeBackground | kDialogFlagsUseThemeControls,
+        0,
+        kUseThemeWindow,
+        ""
+    }
+};
+
+resource 'DITL' (kConfirmAlertID, "Confirm") {
+    {
+        { 90, 280, 110, 340 },
+        Button { enabled, "Remove" };
+
+        { 90, 208, 110, 268 },
+        Button { enabled, "Cancel" };
+
+        { 12, 70, 80, 340 },
+        StaticText { disabled, "^0" };
     }
 };
 

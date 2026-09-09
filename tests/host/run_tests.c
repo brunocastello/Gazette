@@ -250,6 +250,34 @@ static void TestPrefsModel(void)
     CheckLong("removing an absent feed fails",
               GazettePrefsRemoveFeed(&p, "https://nowhere.example/"), 0);
 
+    /* Switching a feed off is a flag, not a removal: it keeps its place. */
+    CheckTrue("a feed can be switched off",
+              GazettePrefsSetFeedEnabled(&p, 1, 0));
+    CheckLong("and is still in the list", p.feedCount, 2);
+    CheckLong("in the same place",
+              GazettePrefsFindFeed(&p, "https://plain.example/feed"), 1);
+    CheckLong("with its flag clear", p.feeds[1].enabled, 0);
+    CheckTrue("and can be switched back on",
+              GazettePrefsSetFeedEnabled(&p, 1, 1));
+    CheckLong("switching a feed that is not there fails",
+              GazettePrefsSetFeedEnabled(&p, 9, 0), 0);
+
+    /* Editing the address keeps everything else about the feed. */
+    CheckTrue("a feed's address can be changed",
+              GazettePrefsSetFeedURL(&p, 1, "https://plain.example/atom"));
+    CheckStr("and it keeps its name", p.feeds[1].title,
+             "https://plain.example/feed");
+    CheckLong("the old address is gone",
+              GazettePrefsFindFeed(&p, "https://plain.example/feed"), -1);
+    CheckLong("the new one is there",
+              GazettePrefsFindFeed(&p, "https://plain.example/atom"), 1);
+    CheckLong("an empty address is refused",
+              GazettePrefsSetFeedURL(&p, 1, ""), 0);
+    CheckLong("another feed's address is refused",
+              GazettePrefsSetFeedURL(&p, 1, p.feeds[0].url), 0);
+    CheckTrue("but re-typing its own is fine",
+              GazettePrefsSetFeedURL(&p, 1, "https://PLAIN.example/atom"));
+
     /* The list is bounded on purpose; filling it must not corrupt anything. */
     {
         GazettePrefs full;

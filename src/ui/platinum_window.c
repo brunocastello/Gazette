@@ -94,6 +94,12 @@ static short gListShare    = 45;    /* percent of the right side given to the
 static int gSelectedFeed    = 0;
 static int gSelectedArticle = -1;
 
+/* The group the sidebar has selected, or -1 when the selection is a feed.
+   gSelectedFeed keeps its meaning either way: it is the feed the headline
+   list and the reader are showing, which a click on a group does not
+   change. */
+static int gSelectedGroup   = -1;
+
 static char gStatus[192];
 
 /* The reader's text, copied out of the store rather than pointing into it:
@@ -614,6 +620,8 @@ static void DrawSidebar(void)
             DrawTruncated(GazetteCoreGroupName(row.index),
                           (short)(gSidebarRect.right - textLeft - kTextInset));
             TextFace(normal);
+
+            selected = (row.index == gSelectedGroup);
         } else {
             textLeft = (short)(gSidebarRect.left + kTextInset +
                                kTriangleColumn);
@@ -632,7 +640,7 @@ static void DrawSidebar(void)
             DrawTruncated(GazetteCoreFeedTitle(row.index),
                           (short)(gSidebarRect.right - textLeft - kTextInset));
 
-            selected = (row.index == gSelectedFeed);
+            selected = (gSelectedGroup < 0 && row.index == gSelectedFeed);
         }
 
         if (selected) {
@@ -991,26 +999,34 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
         }
 
         if (row.kind == kGazetteRowGroup) {
-            /*
-             * Anywhere on the line toggles it, not only the triangle. A group
-             * has no view of its own to select yet, so a click that landed on
-             * the name and did nothing would just read as a dead row.
-             */
-            GazetteCoreSetGroupCollapsed(row.index,
-                                         !GazetteCoreGroupCollapsed(row.index));
+            /* The triangle's own column opens and shuts the group; the rest
+               of the line selects it, the way a folder behaves in a list
+               view. Rename and Remove need something to act on, and that
+               something is the selection. */
+            if (where.h < gSidebarRect.left + kTextInset + kTriangleColumn) {
+                GazetteCoreSetGroupCollapsed(
+                    row.index, !GazetteCoreGroupCollapsed(row.index));
 
-            /* The rows below it have moved, so the bar's range and the whole
-               pane both have to be brought back into agreement. */
-            SyncScroll(gSidebarScroll, GazetteCoreSidebarRowCount(),
-                       VisibleRowsIn(&gSidebarRect, kRowHeight));
+                /* The rows below it have moved, so the bar's range and the
+                   whole pane both have to come back into agreement. */
+                SyncScroll(gSidebarScroll, GazetteCoreSidebarRowCount(),
+                           VisibleRowsIn(&gSidebarRect, kRowHeight));
+            } else if (row.index == gSelectedGroup) {
+                return;
+            } else {
+                gSelectedGroup = row.index;
+            }
             DrawSidebar();
             return;
         }
 
-        if (row.index != gSelectedFeed) {
-            gSelectedFeed = row.index;
+        if (row.index != gSelectedFeed || gSelectedGroup >= 0) {
+            Boolean changed = (row.index != gSelectedFeed);
+
+            gSelectedFeed  = row.index;
+            gSelectedGroup = -1;
             DrawSidebar();
-            if (gOnFeedChosen != NULL) {
+            if (changed && gOnFeedChosen != NULL) {
                 gOnFeedChosen(row.index);
             }
         }
@@ -1164,6 +1180,9 @@ void GazetteUIFeedsChanged(void)
     if (gSelectedFeed >= GazetteCoreFeedCount()) {
         gSelectedFeed = 0;
     }
+    if (gSelectedGroup >= GazetteCoreGroupCount()) {
+        gSelectedGroup = -1;
+    }
     Layout();
     GazetteUIUpdate();
 }
@@ -1173,12 +1192,44 @@ int GazetteUISelectedFeed(void)
     return gSelectedFeed;
 }
 
+Boolean GazetteUISelection(int *kind, int *index)
+{
+    if (kind == NULL || index == NULL) {
+        return false;
+    }
+    if (gSelectedGroup >= 0 && gSelectedGroup < GazetteCoreGroupCount()) {
+        *kind  = kGazetteRowGroup;
+        *index = gSelectedGroup;
+        return true;
+    }
+    if (gSelectedFeed >= 0 && gSelectedFeed < GazetteCoreFeedCount()) {
+        *kind  = kGazetteRowFeed;
+        *index = gSelectedFeed;
+        return true;
+    }
+    return false;
+}
+
+void GazetteUISelectGroup(int index)
+{
+    if (index < 0 || index >= GazetteCoreGroupCount()) {
+        return;
+    }
+    gSelectedGroup = index;
+    RevealRow(gSidebarScroll, GazetteCoreSidebarRowForGroup(index),
+              VisibleRowsIn(&gSidebarRect, kRowHeight));
+    if (gWindow != NULL) {
+        DrawSidebar();
+    }
+}
+
 void GazetteUISelectFeed(int index)
 {
     if (index < 0 || index >= GazetteCoreFeedCount()) {
         return;
     }
-    gSelectedFeed = index;
+    gSelectedFeed  = index;
+    gSelectedGroup = -1;
     /* -1 when the feed's group is shut: it is still the selection, there is
        just no row to scroll to. */
     RevealRow(gSidebarScroll, GazetteCoreSidebarRowForFeed(index),
@@ -1239,6 +1290,7 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen)
 
     gSelectedFeed    = 0;
     gSelectedArticle = -1;
+    gSelectedGroup   = -1;
 
     Layout();
 

@@ -471,6 +471,37 @@ int GazettePrefsRenameFeed(GazettePrefs *p, int index, const char *title)
     return 1;
 }
 
+int GazettePrefsSetFeedEnabled(GazettePrefs *p, int index, int enabled)
+{
+    if (p == NULL || index < 0 || index >= p->feedCount) {
+        return 0;
+    }
+    p->feeds[index].enabled = enabled ? 1 : 0;
+    return 1;
+}
+
+int GazettePrefsSetFeedURL(GazettePrefs *p, int index, const char *url)
+{
+    int existing;
+
+    if (p == NULL || index < 0 || index >= p->feedCount ||
+        url == NULL || url[0] == '\0') {
+        return 0;
+    }
+
+    /* Two entries for one address would refresh into one cache file and read
+       back as each other. Re-typing the address a feed already has is not a
+       clash, though -- it is a no-op the user is entitled to. */
+    existing = GazettePrefsFindFeed(p, url);
+    if (existing >= 0 && existing != index) {
+        return 0;
+    }
+
+    gz_copy_n(p->feeds[index].url, sizeof p->feeds[index].url,
+              url, strlen(url));
+    return 1;
+}
+
 int GazettePrefsMoveFeed(GazettePrefs *p, int from, int to, int group)
 {
     GazetteFeedPref moved;

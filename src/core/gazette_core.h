@@ -65,6 +65,7 @@ int         GazetteCoreGroupFeedCount(int index);
 int     GazetteCoreSidebarRowCount(void);
 Boolean GazetteCoreSidebarRowAt(int row, GazetteSidebarRow *out);
 int     GazetteCoreSidebarRowForFeed(int feed);
+int     GazetteCoreSidebarRowForGroup(int group);
 
 /* Every mutator marks the preferences dirty, so the next save writes them and
    quitting is enough to make a change permanent. */
@@ -73,6 +74,14 @@ int     GazetteCoreSidebarRowForFeed(int feed);
 int     GazetteCoreAddFeed(const char *url, const char *title, int group);
 Boolean GazetteCoreRemoveFeed(const char *url);
 Boolean GazetteCoreRenameFeed(int index, const char *title);
+
+/* Switch a feed off or on. An off feed keeps its place in the sidebar and its
+   line in the preferences file; a refresh simply skips it. */
+Boolean GazetteCoreSetFeedEnabled(int index, Boolean enabled);
+
+/* Change a feed's address, keeping its place, its name and its group. False
+   when another feed already has that address. */
+Boolean GazetteCoreSetFeedURL(int index, const char *url);
 
 /* Move a feed to a position and into a group. Returns its new index, or -1.
    This is what a drag in the sidebar lands on. */

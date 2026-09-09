@@ -181,6 +181,25 @@ Boolean GazetteCoreRenameFeed(int index, const char *title)
     return true;
 }
 
+Boolean GazetteCoreSetFeedEnabled(int index, Boolean enabled)
+{
+    if (!gInited ||
+        !GazettePrefsSetFeedEnabled(&gPrefs, index, enabled ? 1 : 0)) {
+        return false;
+    }
+    gPrefsDirty = true;
+    return true;
+}
+
+Boolean GazetteCoreSetFeedURL(int index, const char *url)
+{
+    if (!gInited || !GazettePrefsSetFeedURL(&gPrefs, index, url)) {
+        return false;
+    }
+    gPrefsDirty = true;
+    return true;
+}
+
 int GazetteCoreMoveFeed(int from, int to, int group)
 {
     int index;
@@ -273,4 +292,9 @@ Boolean GazetteCoreSidebarRowAt(int row, GazetteSidebarRow *out)
 int GazetteCoreSidebarRowForFeed(int feed)
 {
     return gInited ? GazettePrefsRowForFeed(&gPrefs, feed) : -1;
+}
+
+int GazetteCoreSidebarRowForGroup(int group)
+{
+    return gInited ? GazettePrefsRowForGroup(&gPrefs, group) : -1;
 }

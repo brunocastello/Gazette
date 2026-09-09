@@ -145,6 +145,16 @@ int GazettePrefsMoveFeed(GazettePrefs *p, int from, int to, int group);
 /* Rename a feed. Returns 1 on success. */
 int GazettePrefsRenameFeed(GazettePrefs *p, int index, const char *title);
 
+/* Switch a feed off or on. A feed that is off keeps its place in the list and
+   its line in the file -- it is skipped by a refresh, not forgotten. Returns
+   1 on success. */
+int GazettePrefsSetFeedEnabled(GazettePrefs *p, int index, int enabled);
+
+/* Change a feed's address, keeping its place, its name and its group. Refused
+   when the address is empty or already belongs to a different feed. Returns 1
+   on success. */
+int GazettePrefsSetFeedURL(GazettePrefs *p, int index, const char *url);
+
 /* ------------------------------------------------------------------ */
 /* Groups                                                             */
 /* ------------------------------------------------------------------ */
