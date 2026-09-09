@@ -32,10 +32,20 @@
 extern "C" {
 #endif
 
-/* Fixed capacities: on Mac OS 9 a bounded, statically sized model is worth
-   far more than an unbounded one. A GazettePrefs is about 40 KB, which the
-   8 MB partition carries without trouble, and nothing in the prefs path can
-   then fail for want of memory. */
+/*
+ * Fixed capacities: on Mac OS 9 a bounded, statically sized model is worth far
+ * more than an unbounded one. A GazettePrefs is about 41 KB, which the 8 MB
+ * partition carries without trouble, and nothing in the prefs path can then
+ * fail for want of memory -- no allocation, so no allocation failure.
+ *
+ * 64 is a judgement, not a limit anything imposes. It is well past what
+ * Newsstand offered, it keeps the one live GazettePrefs plus the two
+ * serialisation buffers under about 140 KB, and at full length it serialises
+ * to roughly 42 KB against the 48 KB text buffer below. Raising it is one
+ * number -- but kGazettePrefsTextMax has to move with it, or saving quietly
+ * starts failing. gazette_prefs.c carries a compile-time check so that cannot
+ * happen unnoticed.
+ */
 enum {
     kGazetteMaxFeeds  = 64,
     kGazetteURLLen    = 512,

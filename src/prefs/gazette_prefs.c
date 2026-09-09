@@ -24,6 +24,27 @@ enum {
     kDefaultMaxArticles    = 100
 };
 
+/*
+ * kGazetteMaxFeeds and kGazettePrefsTextMax are coupled, and silently: if the
+ * feed list can hold more than the text buffer can serialise,
+ * GazettePrefsSerialize starts returning 0 and preferences simply stop being
+ * saved. Nothing crashes and nothing complains -- the user's edits just do not
+ * survive a quit.
+ *
+ * Worst case is every feed at full length: "feed     = " (11) + a 511-byte URL
+ * + " | " (3) + a 127-byte title + CR. Plus the settings block and comments,
+ * for which 256 is generous. At 64 feeds that is about 42 KB against the
+ * 48 KB buffer.
+ *
+ * The array below has a negative size if that ever stops holding, which turns
+ * a bug that would show up months later as "my feeds keep disappearing" into
+ * a compile error on the line that raised the limit.
+ */
+typedef char gazette_prefs_text_buffer_is_large_enough[
+    (kGazettePrefsTextMax >
+     kGazetteMaxFeeds * (11 + kGazetteURLLen + 3 + kGazetteTitleLen + 1) + 256)
+    ? 1 : -1];
+
 /* ------------------------------------------------------------------ */
 /* Defaults                                                            */
 /* ------------------------------------------------------------------ */
