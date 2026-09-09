@@ -184,10 +184,64 @@ size_t GazetteDecodeEntities(char *s, size_t len)
     return out;
 }
 
+/*
+ * The HTML elements that end a paragraph. A description is prose written for
+ * a web page, and whether it is one paragraph or four is the difference
+ * between something to read and a wall of text -- so these become a line
+ * break rather than a space, and every other tag still becomes a space.
+ *
+ * The list is the block-level elements a publisher actually uses in a feed
+ * summary. It does not need to be the whole of HTML: an element that is not
+ * here costs a paragraph break, not correctness.
+ */
+static const char *const kBlockTags[] = {
+    "p", "br", "div", "li", "ul", "ol", "tr", "table", "pre", "hr",
+    "h1", "h2", "h3", "h4", "h5", "h6",
+    "blockquote", "section", "article", "figure", "figcaption"
+};
+
+/* The element name out of a tag's raw text, lowercased, with any leading '/'
+   and any attributes dropped. Empty for a comment, a doctype or anything else
+   that is not an element. */
+static void MarkupTagName(const char *tag, size_t len, char *out, size_t cap)
+{
+    size_t start = 0;
+    size_t n     = 0;
+
+    if (start < len && tag[start] == '/') {
+        start++;
+    }
+    while (start + n < len && n + 1 < cap) {
+        char c = tag[start + n];
+
+        if (c >= 'A' && c <= 'Z') {
+            c = (char)(c - 'A' + 'a');
+        } else if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) {
+            break;
+        }
+        out[n] = c;
+        n++;
+    }
+    out[n] = '\0';
+}
+
+static int IsBlockTag(const char *name)
+{
+    size_t i;
+
+    for (i = 0; i < sizeof kBlockTags / sizeof kBlockTags[0]; i++) {
+        if (strcmp(name, kBlockTags[i]) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 size_t GazetteStripMarkup(char *s, size_t len)
 {
-    size_t in  = 0;
-    size_t out = 0;
+    size_t in    = 0;
+    size_t out   = 0;
+    size_t start = 0;        /* where the current tag's text begins */
     int    depth = 0;
 
     if (s == NULL) {
@@ -198,13 +252,31 @@ size_t GazetteStripMarkup(char *s, size_t len)
         char c = s[in++];
 
         if (c == '<') {
+            if (depth == 0) {
+                start = in;
+            }
             depth++;
         } else if (c == '>') {
             if (depth > 0) {
                 depth--;
-                /* A tag becomes a space, not nothing: "a<br>b" is two words. */
-                if (depth == 0 && out > 0 && s[out - 1] != ' ') {
-                    s[out++] = ' ';
+                if (depth == 0) {
+                    char name[24];
+
+                    MarkupTagName(s + start, in - 1 - start, name, sizeof name);
+
+                    /* A tag becomes whitespace, not nothing: "a<br>b" is two
+                       words, and two paragraphs when the tag says so. */
+                    if (IsBlockTag(name)) {
+                        if (out > 0 && s[out - 1] != '\n') {
+                            if (out > 0 && s[out - 1] == ' ') {
+                                out--;      /* the break replaces the space */
+                            }
+                            s[out++] = '\n';
+                        }
+                    } else if (out > 0 && s[out - 1] != ' ' &&
+                               s[out - 1] != '\n') {
+                        s[out++] = ' ';
+                    }
                 }
             } else {
                 s[out++] = c;
@@ -550,7 +622,7 @@ static void CaptureByte(GazetteFeedParser *p, char c)
    Split out from CaptureFinish so a caller that has to inspect the text
    before deciding where it goes does not need a buffer of its own -- which on
    this stack, several frames inside the fetch pump, is worth avoiding. */
-static size_t CaptureProcess(GazetteFeedParser *p)
+static size_t CaptureProcess(GazetteFeedParser *p, int keepParagraphs)
 {
     size_t len;
 
@@ -561,12 +633,19 @@ static size_t CaptureProcess(GazetteFeedParser *p)
     len = GazetteDecodeEntities(p->capture, len);
     len = GazetteStripMarkup(p->capture, len);
     len = gz_utf8_to_ascii(p->capture, len, p->scratch, sizeof p->scratch);
+
+    /* A body is prose and keeps its paragraphs; a headline, a source or a
+       date has to sit on one line and has no use for a break. */
+    if (keepParagraphs) {
+        return gz_flatten_lines(p->scratch, len);
+    }
     return gz_flatten_ws(p->scratch, len);
 }
 
-static void CaptureFinish(GazetteFeedParser *p, char *out, size_t cap)
+static void CaptureFinish(GazetteFeedParser *p, char *out, size_t cap,
+                          int keepParagraphs)
 {
-    size_t len = CaptureProcess(p);
+    size_t len = CaptureProcess(p, keepParagraphs);
 
     gz_copy_n(out, cap, p->scratch, len);
 }
@@ -844,29 +923,29 @@ static void EndElement(GazetteFeedParser *p, const char *name)
     if (p->capturing != kFieldNone) {
         switch (p->capturing) {
             case kFieldFeedTitle:
-                CaptureFinish(p, p->feedTitle, sizeof p->feedTitle);
+                CaptureFinish(p, p->feedTitle, sizeof p->feedTitle, 0);
                 if (p->feedTitle[0] != '\0') {
                     p->sawFeedTitle = 1;
                 }
                 break;
             case kFieldTitle:
-                CaptureFinish(p, p->article.title, sizeof p->article.title);
+                CaptureFinish(p, p->article.title, sizeof p->article.title, 0);
                 break;
             case kFieldLink:
-                CaptureFinish(p, p->article.link, sizeof p->article.link);
+                CaptureFinish(p, p->article.link, sizeof p->article.link, 0);
                 break;
             case kFieldSource:
-                CaptureFinish(p, p->article.source, sizeof p->article.source);
+                CaptureFinish(p, p->article.source, sizeof p->article.source, 0);
                 break;
             case kFieldBody:
                 if (p->article.body[0] == '\0') {
-                    CaptureFinish(p, p->article.body, sizeof p->article.body);
+                    CaptureFinish(p, p->article.body, sizeof p->article.body, 1);
                 }
                 break;
             case kFieldBodyRich: {
                 /* Only if it actually says something: an empty <content/> is
                    common and must not wipe a description already captured. */
-                size_t len = CaptureProcess(p);
+                size_t len = CaptureProcess(p, 1);
 
                 if (len > 0) {
                     gz_copy_n(p->article.body, sizeof p->article.body,
@@ -877,7 +956,7 @@ static void EndElement(GazetteFeedParser *p, const char *name)
             case kFieldDate: {
                 char text[64];
 
-                CaptureFinish(p, text, sizeof text);
+                CaptureFinish(p, text, sizeof text, 0);
                 p->article.date = GazetteParseDate(text, strlen(text));
                 break;
             }

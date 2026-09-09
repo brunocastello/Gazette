@@ -488,7 +488,9 @@ size_t gz_utf8_to_ascii(const char *src, size_t len, char *out, size_t cap)
     return written;
 }
 
-size_t gz_flatten_ws(char *s, size_t len)
+/* Shared by both flatteners: keepBreaks decides what a whitespace run that
+   contains a newline collapses to. */
+static size_t FlattenWhitespace(char *s, size_t len, int keepBreaks)
 {
     size_t in  = 0;
     size_t out = 0;
@@ -503,11 +505,17 @@ size_t gz_flatten_ws(char *s, size_t len)
 
     while (in < len) {
         if (gz_is_space((unsigned char)s[in])) {
+            int sawBreak = 0;
+
             while (in < len && gz_is_space((unsigned char)s[in])) {
+                if (s[in] == '\n' || s[in] == '\r') {
+                    sawBreak = 1;
+                }
                 in++;
             }
+            /* Nothing follows the run: it was trailing, and is dropped. */
             if (in < len) {
-                s[out++] = ' ';
+                s[out++] = (keepBreaks && sawBreak) ? '\n' : ' ';
             }
         } else {
             s[out++] = s[in++];
@@ -517,3 +525,14 @@ size_t gz_flatten_ws(char *s, size_t len)
     s[out] = '\0';
     return out;
 }
+
+size_t gz_flatten_ws(char *s, size_t len)
+{
+    return FlattenWhitespace(s, len, 0);
+}
+
+size_t gz_flatten_lines(char *s, size_t len)
+{
+    return FlattenWhitespace(s, len, 1);
+}
+

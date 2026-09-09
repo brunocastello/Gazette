@@ -116,6 +116,18 @@ size_t gz_utf8_to_ascii(const char *src, size_t len, char *out, size_t cap);
    trim both ends, in place. Returns the new length. NUL-terminates. */
 size_t gz_flatten_ws(char *s, size_t len);
 
+/*
+ * The same, except that a run of whitespace containing a line break collapses
+ * to a single '\n' rather than to a space, so paragraph boundaries survive.
+ * Runs without one still become a single space, and both ends are trimmed.
+ *
+ * This is for text a reader pane will lay out, where the difference between
+ * one paragraph and four is the difference between prose and a wall. Anything
+ * that has to sit on one line -- a headline, a source, a date -- wants
+ * gz_flatten_ws instead, which has no newline to get out of.
+ */
+size_t gz_flatten_lines(char *s, size_t len);
+
 #ifdef __cplusplus
 }
 #endif

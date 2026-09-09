@@ -60,8 +60,12 @@ enum { kMacToUnixEpoch = 2082844800L };
  * carry the "&nbsp;" that fix removed, and refusing them is what makes the
  * fix reach a feed the user has already read without them having to know to
  * refresh it by hand.
+ *
+ * 3: a body keeps its paragraphs. That changes the file's shape as well as
+ * its text -- a body is written as one 'B' line per paragraph now, because a
+ * line-oriented format cannot hold a newline inside a field.
  */
-static const char kCacheMagic[] = "GAZETTE-CACHE 2";
+static const char kCacheMagic[] = "GAZETTE-CACHE 3";
 
 static void SaveCache(const char *url, long fetchedAt);
 
@@ -314,6 +318,31 @@ static void WriteTextLine(GazetteStoreFile *f, char tag, const char *text)
     GazetteStoreWrite(f, "\r", 1);
 }
 
+/*
+ * The body, one 'B' line per paragraph. The format is line-oriented and a
+ * field cannot hold a newline, so a body that has paragraphs is written as
+ * several lines and read back joined by the newline they stand for. An empty
+ * body writes nothing, which reads back as an empty body.
+ */
+static void WriteBodyLines(GazetteStoreFile *f, const char *body)
+{
+    const char *at = body;
+
+    while (*at != '\0') {
+        const char *end = strchr(at, '\n');
+        size_t      len = (end != NULL) ? (size_t)(end - at) : strlen(at);
+
+        GazetteStoreWrite(f, "B ", 2);
+        GazetteStoreWrite(f, at, (long)len);
+        GazetteStoreWrite(f, "\r", 1);
+
+        if (end == NULL) {
+            break;
+        }
+        at = end + 1;
+    }
+}
+
 static void SaveCache(const char *url, long fetchedAt)
 {
     GazetteStoreFile *f = GazetteStoreCacheCreate(url);
@@ -336,10 +365,27 @@ static void SaveCache(const char *url, long fetchedAt)
         WriteTextLine(f, 'L', a->link);
         WriteTextLine(f, 'S', a->source);
         WriteLongLine(f, 'D', a->date);
-        WriteTextLine(f, 'B', a->body);
+        WriteBodyLines(f, a->body);
     }
 
     GazetteStoreClose(f);
+}
+
+/* The other half of WriteBodyLines: each 'B' line is a paragraph, joined back
+   by the newline the split stood for. */
+static void AppendBodyLine(GazetteArticle *article, const char *text)
+{
+    size_t used = strlen(article->body);
+    size_t room = sizeof article->body - used;
+
+    if (room <= 1) {
+        return;                     /* full; the rest of the body is dropped */
+    }
+    if (used > 0) {
+        article->body[used++] = '\n';
+        room--;
+    }
+    gz_copy_n(article->body + used, room, text, strlen(text));
 }
 
 int GazetteFeedsLoadCache(int feedIndex, const char *url, long maxArticles)
@@ -408,8 +454,7 @@ int GazetteFeedsLoadCache(int feedIndex, const char *url, long maxArticles)
                                 rest, strlen(rest)); break;
             case 'S': gz_copy_n(article.source, sizeof article.source,
                                 rest, strlen(rest)); break;
-            case 'B': gz_copy_n(article.body, sizeof article.body,
-                                rest, strlen(rest)); break;
+            case 'B': AppendBodyLine(&article, rest); break;
             case 'D': article.date = gz_parse_dec(rest, strlen(rest), 0); break;
             default:  break;                /* an unknown tag is skipped */
         }

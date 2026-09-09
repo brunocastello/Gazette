@@ -146,6 +146,39 @@ static void TestPrefsText(void)
 /* Transliteration and whitespace                                      */
 /* ------------------------------------------------------------------ */
 
+/* gz_flatten_lines is gz_flatten_ws with one difference, and the difference
+   is the whole point: a run of whitespace that contained a line break stays a
+   line break. */
+static void TestFlattenLines(void)
+{
+    char buf[128];
+
+    strcpy(buf, "  one   two  ");
+    CheckLong("flatten_lines trims and collapses",
+              (long)gz_flatten_lines(buf, strlen(buf)), 7);
+    CheckStr("like flatten_ws does", buf, "one two");
+
+    strcpy(buf, "one\ntwo");
+    gz_flatten_lines(buf, strlen(buf));
+    CheckStr("a break survives", buf, "one\ntwo");
+
+    strcpy(buf, "one \n\n \t two");
+    gz_flatten_lines(buf, strlen(buf));
+    CheckStr("a run around it is one break", buf, "one\ntwo");
+
+    strcpy(buf, "\n\n  one  \n\n");
+    gz_flatten_lines(buf, strlen(buf));
+    CheckStr("and the ends are still trimmed", buf, "one");
+
+    strcpy(buf, "a\r\nb");
+    gz_flatten_lines(buf, strlen(buf));
+    CheckStr("a CRLF is one break too", buf, "a\nb");
+
+    strcpy(buf, "one\ntwo");
+    gz_flatten_ws(buf, strlen(buf));
+    CheckStr("flatten_ws still flattens the break away", buf, "one two");
+}
+
 static void TestAsciiText(void)
 {
     char out[128];
@@ -926,7 +959,28 @@ static void TestEntities(void)
 
         strcpy(buf, "a<br>b");
         GazetteStripMarkup(buf, strlen(buf));
-        CheckStr("a tag becomes a space, so words stay apart", buf, "a b");
+        CheckStr("a block tag ends the line instead", buf, "a\nb");
+
+        strcpy(buf, "a<span>b</span>c");
+        GazetteStripMarkup(buf, strlen(buf));
+        CheckStr("an inline one is still a space", buf, "a b c");
+
+        /* The break replaces a space rather than following it, so a paragraph
+           never begins with one. */
+        strcpy(buf, "one <p>two");
+        GazetteStripMarkup(buf, strlen(buf));
+        CheckStr("a break absorbs the space before it", buf, "one\ntwo");
+
+        strcpy(buf, "one</p><p>two");
+        GazetteStripMarkup(buf, strlen(buf));
+        CheckStr("and two tags in a row are one break", buf, "one\ntwo");
+
+        /* Nothing precedes the first word, so no break is written there. The
+           trailing one is left for the flattener to trim, the same as the
+           trailing space this used to leave. */
+        strcpy(buf, "<p>Leading</p>");
+        GazetteStripMarkup(buf, strlen(buf));
+        CheckStr("no break before the first word", buf, "Leading\n");
 
         strcpy(buf, "5 > 3 and 2 < 4");
         GazetteStripMarkup(buf, strlen(buf));
@@ -1292,7 +1346,7 @@ static void TestFeedParsing(void)
         GazetteFeedParserFinish(&q);
         CheckLong("an escaped description parses", (long)gCollectedCount, 1);
         CheckStr("nested entities are decoded and the markup taken out",
-                 gCollected[0].body, "Ten degrees -- said the mayor");
+                 gCollected[0].body, "Ten degrees\n-- said the mayor");
     }
 
     {
@@ -1310,6 +1364,62 @@ static void TestFeedParsing(void)
         ParseFeed(&q, escaped, 1);
         CheckStr("byte at a time, the same text comes out",
                  gCollected[0].body, "A B");
+    }
+
+    {
+        /*
+         * A description with real paragraphs in it. What comes out has to
+         * keep them: the reader pane lays each one out on its own, and a
+         * four-paragraph article rendered as one block is a wall of text.
+         */
+        static const char paras[] =
+            "<rss><channel><item><title>T</title><link>https://e/1</link>"
+            "<description>&lt;p&gt;First para.&lt;/p&gt;"
+            "&lt;p&gt;Second para.&lt;/p&gt;"
+            "&lt;ul&gt;&lt;li&gt;A point&lt;/li&gt;"
+            "&lt;li&gt;Another&lt;/li&gt;&lt;/ul&gt;"
+            "&lt;p&gt;Last&lt;br&gt;line.&lt;/p&gt;</description>"
+            "</item></channel></rss>";
+        GazetteFeedParser q;
+
+        gCollectedCount = 0;
+        GazetteFeedParserInit(&q, Collect, NULL);
+        GazetteFeedParserFeed(&q, paras, sizeof paras - 1);
+        GazetteFeedParserFinish(&q);
+        CheckStr("paragraphs survive the pipeline", gCollected[0].body,
+                 "First para.\nSecond para.\nA point\nAnother\nLast\nline.");
+    }
+
+    {
+        /* Split across chunks, the breaks land in the same places. */
+        static const char paras[] =
+            "<rss><channel><item><title>T</title><link>https://e/1</link>"
+            "<description>&lt;p&gt;One&lt;/p&gt;&lt;p&gt;Two&lt;/p&gt;"
+            "</description></item></channel></rss>";
+        GazetteFeedParser q;
+
+        gCollectedCount = 0;
+        GazetteFeedParserInit(&q, Collect, NULL);
+        ParseFeed(&q, paras, 1);
+        CheckStr("byte at a time, the same paragraphs",
+                 gCollected[0].body, "One\nTwo");
+    }
+
+    {
+        /* A headline is not prose and has nowhere to put a break: markup in
+           one still collapses to a single line. */
+        static const char titleBreak[] =
+            "<rss><channel><item>"
+            "<title>Storm&lt;br&gt;hits coast</title>"
+            "<link>https://e/1</link></item></channel></rss>";
+        GazetteFeedParser q;
+
+        gCollectedCount = 0;
+        GazetteFeedParserInit(&q, Collect, NULL);
+        GazetteFeedParserFeed(&q, titleBreak, sizeof titleBreak - 1);
+        GazetteFeedParserFinish(&q);
+        CheckStr("a headline stays on one line",
+                 gCollected[0].title, "Storm hits coast");
     }
 
     {
@@ -1815,6 +1925,7 @@ int main(void)
     TestStringHelpers();
     TestPrefsText();
     TestAsciiText();
+    TestFlattenLines();
     TestPrefsModel();
     TestPrefsParse();
     TestPrefsRoundTrip();

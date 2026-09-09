@@ -430,7 +430,31 @@ static void RewrapReader(void)
     TextSize(10);
     AddReaderLine(0, 0, 2);                 /* a blank line before the body */
     if (bodyLen > 0) {
-        WrapParagraph(bodyStart, bodyLen, 2, width);
+        /*
+         * The body arrives with its paragraphs marked by newlines, so each
+         * one is wrapped on its own with a blank line between. Handing the
+         * whole thing to WrapParagraph would lay a four-paragraph article
+         * out as one unbroken block, which is what this used to do.
+         */
+        short at    = bodyStart;
+        short end   = (short)(bodyStart + bodyLen);
+        int   first = 1;
+
+        while (at < end) {
+            short stop = at;
+
+            while (stop < end && gReaderText[stop] != '\n') {
+                stop++;
+            }
+            if (stop > at) {
+                if (!first) {
+                    AddReaderLine(0, 0, 2);
+                }
+                WrapParagraph(at, (short)(stop - at), 2, width);
+                first = 0;
+            }
+            at = (short)(stop + 1);
+        }
     } else {
         static const char kNone[] = "(This feed carries no summary for "
                                     "this article.)";
