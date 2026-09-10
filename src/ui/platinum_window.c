@@ -194,10 +194,11 @@ static char gStatus[192];
  * application font is", which is what OE asks for and what GetAppFont
  * answers.
  */
-static short gViewFont = kFontIDGeneva;   /* lists, headings, labels */
-static short gViewSize = 9;
-static short gReadFont = kFontIDGeneva;   /* the article */
-static short gReadSize = 12;
+static short gViewFont  = kFontIDGeneva;  /* lists, headings, status */
+static short gViewSize  = 12;
+static short gReadFont  = kFontIDGeneva;  /* the article's body       */
+static short gReadSize  = 12;
+static short gLabelSize = 9;              /* the byline under a headline */
 
 static short gRowHeight    = kRowHeight;
 static short gRowBaseline  = kBaseline;
@@ -285,8 +286,9 @@ static void MeasureFonts(void)
     /* applFont — 'Txtr' 500 and 501 both ask for it; the sizes are OE's. */
     gViewFont = GetAppFont();
     gReadFont = gViewFont;
-    gViewSize = 9;
-    gReadSize = 12;
+    gViewSize  = 12;
+    gReadSize  = 12;
+    gLabelSize = 9;
 
     UseViewFont();
     GetFontInfo(&info);
@@ -304,7 +306,7 @@ static void MeasureFonts(void)
     gDateColumn = (short)(TextWidth("Sep 00 00:00", 0, 12) + kTextInset * 2);
 
     /* Both chrome bars are set in the same font, so they measure alike. */
-    gHeaderHeight = (short)(info.ascent + info.descent + info.leading + 6);
+    gHeaderHeight = (short)(info.ascent + info.descent + info.leading + 9);
     if (gHeaderHeight < kHeaderHeight) {
         gHeaderHeight = kHeaderHeight;
     }
@@ -569,8 +571,10 @@ static void Layout(void)
     SetRect(&gSidebarHeader, bounds.left, bounds.top,
             (short)(bounds.left + gSidebarWidth),
             (short)(bounds.top + gHeaderHeight));
+    /* One pixel up, so the list's own top frame line lands on the header's
+       bottom edge instead of drawing a second line just below it. */
     SetRect(&gSidebarPane, bounds.left,
-            (short)(bounds.top + gHeaderHeight),
+            (short)(bounds.top + gHeaderHeight - 1),
             (short)(bounds.left + gSidebarWidth), contentBottom);
 
     SetRect(&gVDivider, (short)(bounds.left + gSidebarWidth), bounds.top,
@@ -591,7 +595,7 @@ static void Layout(void)
 
     SetRect(&gListHeader, rightLeft, bounds.top,
             bounds.right, (short)(bounds.top + gHeaderHeight));
-    SetRect(&gListPane, rightLeft, (short)(bounds.top + gHeaderHeight),
+    SetRect(&gListPane, rightLeft, (short)(bounds.top + gHeaderHeight - 1),
             bounds.right, listBottom);
 
     SetRect(&gHDivider, rightLeft, listBottom,
@@ -606,9 +610,11 @@ static void Layout(void)
             (short)(gReaderPane.right - kScrollWidth),
             (short)(gReaderPane.bottom - 1));
 
-    /* Short of the grow box, which shares the bottom right corner. */
+    /* End to end, and flush with the panes above: the placard's own top
+       edge is the line between them, so there is nothing to leave a gap
+       for. The grow box is drawn on top of its right hand corner. */
     SetRect(&gStatusRect, bounds.left, contentBottom,
-            (short)(bounds.right - kScrollWidth), bounds.bottom);
+            bounds.right, bounds.bottom);
 
     SizeListBox(gSidebarCtl, gSidebarList, &gSidebarPane);
     SizeListBox(gArticleCtl, gArticleList, &gListPane);
@@ -803,7 +809,7 @@ static size_t AppendBody(size_t used, const char *body)
    is already in the record. Setting a style on an insertion point and
    trusting the next TEInsert to pick it up is documented but delicate;
    styling text that is already there cannot be misread. */
-static void ApplyRunStyle(long start, long end, short face)
+static void ApplyRunStyle(long start, long end, short face, short size)
 {
     TextStyle style;
 
@@ -812,7 +818,7 @@ static void ApplyRunStyle(long start, long end, short face)
     }
     style.tsFont = gReadFont;
     style.tsFace = face;
-    style.tsSize = gReadSize;
+    style.tsSize = size;
     style.tsColor.red   = 0;
     style.tsColor.green = 0;
     style.tsColor.blue  = 0;
@@ -853,7 +859,7 @@ static void SetReaderText(void)
 
         used = AppendText(0, kNothing, sizeof kNothing - 1);
         TESetText(gReaderText, (long)used, gReaderTE);
-        ApplyRunStyle(0, (long)used, normal);
+        ApplyRunStyle(0, (long)used, normal, gReadSize);
     } else {
         used     = AppendText(0, a->title, strlen(a->title));
         titleEnd = (long)used;
@@ -918,9 +924,9 @@ static void SetReaderText(void)
 
         /* One font throughout; the headline is the only thing set apart,
            and weight is enough to do it. */
-        ApplyRunStyle(0, titleEnd, bold);
-        ApplyRunStyle(titleEnd, bylineEnd, normal);
-        ApplyRunStyle(bylineEnd, (long)used, normal);
+        ApplyRunStyle(0, titleEnd, bold, gReadSize);
+        ApplyRunStyle(titleEnd, bylineEnd, normal, gLabelSize);
+        ApplyRunStyle(bylineEnd, (long)used, normal, gReadSize);
     }
 
     TESetSelect(0, 0, gReaderTE);
@@ -1077,8 +1083,13 @@ static void DrawDisclosure(const Rect *cell, short left, Boolean open)
     info.value     = open ? kThemeDisclosureDown : kThemeDisclosureRight;
     info.adornment = kThemeAdornmentNone;
 
+    /* DrawThemeButton erases its own bounds with the current background, so
+       the sidebar's grey has to be current or the triangle arrives sitting
+       in a white square. */
+    SetThemeBackground(kThemeBrushDialogBackgroundActive, 8, true);
     (void)DrawThemeButton(&box, kThemeDisclosureButton, &info, NULL,
                           NULL, NULL, 0);
+    SetThemeBackground(kThemeBrushDocumentWindowBackground, 8, true);
 }
 
 /*
@@ -1171,6 +1182,20 @@ static int GroupUnread(int group)
 /* "Name (12)", with the count only when there is one. Drawn as one string so
    the truncation takes the name and never the number — the count is the part
    that has to stay legible in a narrow sidebar. */
+/* ASCII upper-casing: the group names are already transliterated, so there
+   is nothing here for a locale to disagree with. */
+static void UpperCase(const char *in, char *out, size_t cap)
+{
+    size_t i = 0;
+
+    for (i = 0; i + 1 < cap && in[i] != '\0'; i++) {
+        char c = in[i];
+
+        out[i] = (char)((c >= 'a' && c <= 'z') ? (c - 'a' + 'A') : c);
+    }
+    out[i] = '\0';
+}
+
 /*
  * Compose "Name (12)" into out, truncated to fit maxWidth, and answer how
  * wide it came out. It has to be built and measured before anything is
@@ -1275,9 +1300,12 @@ static void DrawSidebarCell(const Rect *cell, short row, Boolean selected)
     /* The weight is decided before the label is measured, because a bold
        name is wider than a plain one and the selection is drawn to fit. */
     if (r.kind == kGazetteRowGroup) {
+        char caps[kGazetteTitleLen];
+
+        /* A category is set in capitals, the way a section head is. */
+        UpperCase(GazetteCoreGroupName(r.index), caps, sizeof caps);
         TextFace(bold);
-        width = BuildRowLabel(GazetteCoreGroupName(r.index),
-                              GroupUnread(r.index),
+        width = BuildRowLabel(caps, GroupUnread(r.index),
                               (short)(cell->right - kTextInset - textLeft),
                               label, sizeof label, &labelLen);
     } else {
@@ -1297,18 +1325,17 @@ static void DrawSidebarCell(const Rect *cell, short row, Boolean selected)
      * paints it: an unfocused list outlines the same box instead, which is
      * the List Manager's own convention for a list that is not in charge.
      */
+    /*
+     * Always the highlight colour, never an outline. A box drawn round the
+     * name in black reads as a bug rather than as a selection — which is
+     * exactly how it read — and the highlight colour is what the user chose
+     * for a selection whether or not this list happens to have the focus.
+     */
     if (selected) {
         Rect box;
 
         LabelBox(cell, textLeft, width, baseline, &box);
-        if (FocusedPane() == kRefSidebar) {
-            FillHighlight(&box);
-        } else {
-            PenNormal();
-            SetThemeTextColor(kThemeTextColorListView, 8, true);
-            FrameRect(&box);
-            ForeColor(blackColor);
-        }
+        FillHighlight(&box);
     }
 
     if (r.kind == kGazetteRowGroup) {
@@ -1369,6 +1396,10 @@ static void DrawArticleCell(const Rect *cell, short row, Boolean selected)
     baseline = (short)(cell->top + gRowBaseline);
     SetThemeTextColor(kThemeTextColorListView, 8, true);
 
+    /* Unread in bold — the whole row of it, date included, because the
+       weight is about the article and not about the headline. */
+    TextFace(a->read ? normal : bold);
+
     /* The date sits in a fixed column so the headlines line up; an article
        with no date simply leaves it blank rather than shifting. */
     GazetteFormatDate(a->date, UnixNow(), when, sizeof when);
@@ -1377,10 +1408,6 @@ static void DrawArticleCell(const Rect *cell, short row, Boolean selected)
         DrawTruncated(when, (short)(gDateColumn - kTextInset));
     }
 
-    /* Unread in bold, the way every mail and news reader of the era marked
-       one. The date column stays plain either way, so the weight reads as
-       being about the headline rather than the row. */
-    TextFace(a->read ? normal : bold);
     MoveTo((short)(cell->left + kTextInset + gDateColumn), baseline);
     DrawTruncated(a->title,
                   (short)(cell->right - cell->left - gDateColumn -
@@ -1520,9 +1547,20 @@ static pascal void ReaderDraw(ControlRef control, SInt16 part)
     }
     SetPortWindowPort(gWindow);
 
-    /* The frame goes round the whole pane, scroll bar included, which is
-       what a List Box control's frame does. */
-    DrawThemeListBoxFrame(&gReaderPane, kThemeStateActive);
+    /*
+     * The frame goes round the whole pane, scroll bar included, which is
+     * what a List Box control's frame does. DrawThemeListBoxFrame draws
+     * just *outside* the rectangle it is given, so it is given one inset by
+     * a pixel — otherwise the reader's frame lands a pixel outside its own
+     * bounds and collides with the divider above it, which is what made its
+     * borders look unlike the two lists'.
+     */
+    {
+        Rect frame = gReaderPane;
+
+        InsetRect(&frame, 1, 1);
+        DrawThemeListBoxFrame(&frame, kThemeStateActive);
+    }
 
     clip = NewRgn();
     if (clip != NULL) {
@@ -1646,6 +1684,18 @@ void GazetteUIUpdate(void)
        reader and its bar, and the status placard. */
     DrawControls(gWindow);
 
+    /*
+     * The List Box CDEF erases its whole view with its own background before
+     * the rows go down, so below the last row the sidebar comes out white
+     * rather than grey. This was being put right in DrawSidebarPane, which a
+     * full update does not go through — so on every redraw of the window the
+     * sidebar's empty half went back to white.
+     */
+    FillListRemainder(gSidebarList, GazetteCoreSidebarRowCount(),
+                      kThemeBrushDialogBackgroundActive);
+    FillListRemainder(gArticleList, GazetteFeedsArticleCount(),
+                      kThemeBrushWhite);
+
     /* Their titles go on top of them: a window header control and a placard
        have no text of their own. */
     DrawHeaderTitle(&gSidebarHeader, "Feeds");
@@ -1657,8 +1707,7 @@ void GazetteUIUpdate(void)
        which is the one part of a Platinum window a user looks for. */
     DrawGrowIcon(gWindow);
 
-    /* An empty headline list has no cell to say so in, and DrawControls has
-       just painted over anything said earlier. */
+    /* An empty headline list has no cell to say so in. */
     if (GazetteFeedsArticleCount() == 0) {
         DrawArticlePane();
     }
