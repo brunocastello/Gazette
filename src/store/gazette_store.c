@@ -724,6 +724,28 @@ static OSErr FirstReplySpec(const NavReplyRecord *reply, FSSpec *spec)
                        spec, (Size)sizeof(FSSpec), &actual);
 }
 
+/*
+ * Turn off the file-kind popup.
+ *
+ * Nav builds that popup out of the human-readable "kind" strings for the file
+ * types on offer, and there is no kind registered for 'TEXT' documents owned
+ * by 'Gzt9' -- Gazette's FREF claims the application, not a document type. So
+ * NavPutFile fails outright with kNavMissingKindStringErr (-5699) before the
+ * dialog ever appears, which is what "the Save dialog could not be shown"
+ * was reporting.
+ *
+ * kNavDefaultNavDlogOptions is 0xE4 and already turns translation items off;
+ * the type popup is the one it leaves on. Gazette reads and writes exactly
+ * one kind of file, so a popup offering a choice of one was never worth
+ * anything here anyway.
+ */
+static void NoKindStrings(NavDialogOptions *options)
+{
+    options->dialogOptionFlags |= kNavNoTypePopup;
+    options->dialogOptionFlags |= kNavDontAddTranslateItems;
+    options->dialogOptionFlags |= kNavDontAutoTranslate;
+}
+
 static void SetPrompt(NavDialogOptions *options, const char *prompt)
 {
     size_t len;
@@ -767,6 +789,7 @@ int GazetteStoreAskAndReadFile(const char *prompt, char *buf, long cap,
     if (err != noErr) {
         return Failed("The Open dialog could not be set up.", err);
     }
+    NoKindStrings(&options);
     SetPrompt(&options, prompt);
 
     eventUPP = NewNavEventUPP(GazetteNavEvent);
@@ -841,6 +864,7 @@ int GazetteStoreAskAndWriteFile(const char *prompt, const char *defaultName,
     if (err != noErr) {
         return Failed("The Save dialog could not be set up.", err);
     }
+    NoKindStrings(&options);
     SetPrompt(&options, prompt);
 
     if (defaultName != NULL) {
