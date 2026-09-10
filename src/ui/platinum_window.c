@@ -210,11 +210,6 @@ static void DrawHeaderTitle(const Rect *r, const char *text);
 /* Small helpers                                                       */
 /* ------------------------------------------------------------------ */
 
-static short WidthOfN(const char *text, short len)
-{
-    return (len <= 0) ? 0 : TextWidth(text, 0, len);
-}
-
 /* The font a list's rows are written in, and the one its chrome is. */
 static void UseListFont(void)
 {
@@ -275,31 +270,37 @@ static void MeasureThemeFonts(void)
  * Draw text clipped to a width, ending in an ellipsis when it does not fit.
  * A headline is nearly always too long for its column, and a hard clip mid
  * word reads as a drawing bug rather than as truncation.
+ *
+ * TruncText is the Script Manager's own truncation rather than a loop that
+ * counts bytes backwards until the width fits: it shortens the text, puts
+ * the ellipsis in, and knows where a character actually ends — which the
+ * loop this used to be did not, and would have cut a two-byte character in
+ * half on a non-Roman system. It works in place, hence the copy.
  */
 static void DrawTruncated(const char *text, short maxWidth)
 {
+    char  buf[512];
     short len;
-    short ellipsis;
 
     if (text == NULL || maxWidth <= 0) {
         return;
     }
 
     len = (short)strlen(text);
-    if (WidthOfN(text, len) <= maxWidth) {
-        DrawText(text, 0, len);
+    if (len > (short)(sizeof buf)) {
+        len = (short)(sizeof buf);      /* longer than any column is wide */
+    }
+    if (len <= 0) {
         return;
     }
+    memcpy(buf, text, (size_t)len);
 
-    /* "\311" is the MacRoman ellipsis, one character rather than three. */
-    ellipsis = CharWidth('\311');
-    while (len > 0 && WidthOfN(text, len) + ellipsis > maxWidth) {
-        len--;
+    if (TruncText(maxWidth, buf, &len, truncEnd) == truncErr) {
+        return;
     }
     if (len > 0) {
-        DrawText(text, 0, len);
+        DrawText(buf, 0, len);
     }
-    DrawChar('\311');
 }
 
 static long UnixNow(void)
