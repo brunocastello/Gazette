@@ -123,14 +123,12 @@ static ListDefUPP gSidebarLDEF;
 static ListDefUPP gArticleLDEF;
 
 /* A window header over each list — CDEF 21's list-view variant, which is
-   what Platinum puts above a list. Only their text is drawn here.
-
-   The status line along the bottom is deliberately *not* a control. Outlook
-   Express leaves that strip flat, on the window's own background, and a
-   placard's bevel there would be a box around something that is not a
-   button. */
+   what Platinum puts above a list — and a placard along the bottom for the
+   status line, which is the Platinum widget for exactly that. None of the
+   three carries a title of its own, so only their text is drawn here. */
 static ControlRef gSidebarHeaderCtl;
 static ControlRef gListHeaderCtl;
+static ControlRef gStatusCtl;
 
 /* The reader is a user pane control, so that it draws through the hierarchy,
    takes the keyboard focus like the two lists and gets a real focus ring
@@ -175,31 +173,21 @@ static int gSelectedGroup   = -1;
 static char gStatus[192];
 
 /*
- * The theme's fonts, asked for once rather than assumed. kThemeViewsFont is
- * what a list view is written in and kThemeSmallSystemFont what its chrome
- * is; both are Geneva on a stock Platinum system, which is what this file
- * used to hard-code — but the Appearance control panel can change them, and
- * an application that ignores that is drawing its own idea of a list rather
- * than the machine's.
+ * Two fonts, and the rule is Apple's own.
  *
- * The row height follows from the font rather than the other way round.
- */
-/*
- * One font, one size, for the whole window — the sidebar, the headlines, the
- * article, the two headers and the status line. This file used to set the
- * chrome in the system font, the lists in the views font and the article in
- * the application font, on the theory that each is what the Appearance
- * Manager says that part of a window is written in. The result was a window
- * with three different sizes in it, and Newsstand — which is the thing this
- * is a successor to — uses one throughout.
+ *   Charcoal, bold, for headings — the two pane titles. That is the system
+ *   font, what menus and window titles are set in, and a heading belongs
+ *   with them.
  *
- * It is the application font at the default size, which is Geneva 12 on a
- * stock Mac OS 9: the system's own default for the text a document is made
- * of. Deliberately *not* the system font, which is Charcoal — that is for
- * window titles and menus, and a list set in it reads as a dialog.
+ *   Geneva for everything a view holds: both lists, the article, the byline
+ *   and the status line. Its size is not ours to choose — it is whatever the
+ *   Appearance control panel's views font size is set to, which is the size
+ *   the user has told the machine they want lists at.
  */
-static short gUIFont = kFontIDGeneva;
-static short gUISize = 12;
+static short gHeadFont = 0;             /* 0 is the system font */
+static short gHeadSize = 12;
+static short gViewFont = kFontIDGeneva;
+static short gViewSize = 10;
 
 static short gRowHeight    = kRowHeight;
 static short gRowBaseline  = kBaseline;
@@ -209,8 +197,9 @@ static short gRowDescent   = 3;
 /* The chrome's bars are as tall as the chrome's font needs, not 17 and 20
    because Geneva 9 once fitted in them. */
 static short gHeaderHeight = kHeaderHeight;
+static short gHeaderBase   = 12;
 static short gStatusHeight = kStatusHeight;
-static short gChromeBase   = 12;
+static short gStatusBase   = 13;
 
 /* Wide enough for "Sep 00 00:00", measured rather than guessed at 46. */
 static short gDateColumn   = kDateColumn;
@@ -241,12 +230,40 @@ static void DrawHeaderTitle(const Rect *r, const char *text);
 /* Small helpers                                                       */
 /* ------------------------------------------------------------------ */
 
-/* The window's font, which is the only one it has. */
-static void UseUIFont(void)
+/* Geneva at the views size: the lists, the article, the labels. */
+static void UseViewFont(void)
 {
-    TextFont(gUIFont);
-    TextSize(gUISize);
+    TextFont(gViewFont);
+    TextSize(gViewSize);
     TextFace(normal);
+}
+
+/* Charcoal: the two headings, and nothing else. */
+static void UseHeadFont(void)
+{
+    TextFont(gHeadFont);
+    TextSize(gHeadSize);
+    TextFace(normal);
+}
+
+/*
+ * The background a selected row is painted with — the highlight colour from
+ * the Appearance control panel, which is the colour the user has said a
+ * selection should be. Painting it is deliberate rather than inverting with
+ * the hilite bit: the invert depended on QuickDraw honouring a low-memory
+ * flag that is set again by the next drawing call, and when it did not the
+ * selection came out with no background at all.
+ */
+static void FillHighlight(const Rect *box)
+{
+    RGBColor hilite;
+    RGBColor saveBack;
+
+    GetBackColor(&saveBack);
+    LMGetHiliteRGB(&hilite);
+    RGBBackColor(&hilite);
+    EraseRect(box);
+    RGBBackColor(&saveBack);
 }
 
 /*
@@ -255,19 +272,58 @@ static void UseUIFont(void)
  * window's port current, so that nothing in the layout is a number chosen
  * to suit a font that might not be the one in use.
  */
-static void MeasureFont(void)
+/* Ask a theme font its name and size; leave the fallback alone if the
+   Appearance Manager has nothing to say. */
+static void AskThemeFont(ThemeFontID which, short *font, short *size)
+{
+    Str255 name;
+    SInt16 points = 0;
+    Style  face   = 0;
+
+    if (GetThemeFont(which, smSystemScript, name, &points, &face) != noErr) {
+        return;
+    }
+    if (points > 0) {
+        *size = points;
+    }
+    if (name[0] != 0) {
+        short id = 0;
+
+        GetFNum(name, &id);
+        *font = id;                     /* 0 is the system font, and legal */
+    }
+}
+
+/*
+ * The fonts, and every height that follows from them: the row height and
+ * baselines from Geneva, the two chrome bars from Charcoal, and the headline
+ * list's date column measured rather than guessed. Called once, with the
+ * window's port current.
+ */
+static void MeasureFonts(void)
 {
     FontInfo info;
 
-    gUIFont = GetAppFont();
-    gUISize = GetDefFontSize();
-    if (gUISize < 9 || gUISize > 24) {
-        gUISize = 12;                   /* the Mac OS 9 default */
+    /* Geneva at the Appearance control panel's views size. GetFNum answers 0
+       for a name it does not know, and font 0 is the system font — Charcoal,
+       which is emphatically not what a list is set in — so Geneva is put
+       back if that happens. */
+    AskThemeFont(kThemeViewsFont, &gViewFont, &gViewSize);
+    if (gViewFont == 0) {
+        gViewFont = kFontIDGeneva;
+    }
+    if (gViewSize < 9 || gViewSize > 24) {
+        gViewSize = 10;
     }
 
-    UseUIFont();
-    GetFontInfo(&info);
+    /* Charcoal, or whatever the theme calls its system font. */
+    AskThemeFont(kThemeSystemFont, &gHeadFont, &gHeadSize);
+    if (gHeadSize < 9 || gHeadSize > 24) {
+        gHeadSize = 12;
+    }
 
+    UseViewFont();
+    GetFontInfo(&info);
     gRowAscent  = info.ascent;
     gRowDescent = info.descent;
     gRowHeight  = (short)(info.ascent + info.descent + info.leading + 3);
@@ -276,16 +332,22 @@ static void MeasureFont(void)
     }
     gRowBaseline = (short)(info.ascent +
                            ((gRowHeight - info.ascent - info.descent) / 2));
-
     gDateColumn = (short)(TextWidth("Sep 00 00:00", 0, 12) + kTextInset * 2);
 
-    gHeaderHeight = (short)(info.ascent + info.descent + info.leading + 5);
+    /* The status line is Geneva too — it is a label, not a heading — so its
+       bar is measured before the font changes. */
+    gStatusHeight = (short)(info.ascent + info.descent + info.leading + 7);
+    gStatusBase   = (short)(info.ascent +
+                            ((gStatusHeight - info.ascent - info.descent) / 2));
+
+    UseHeadFont();
+    GetFontInfo(&info);
+    gHeaderHeight = (short)(info.ascent + info.descent + info.leading + 6);
     if (gHeaderHeight < kHeaderHeight) {
         gHeaderHeight = kHeaderHeight;
     }
-    gStatusHeight = (short)(gHeaderHeight + 2);
-    gChromeBase   = (short)(info.ascent +
-                            ((gHeaderHeight - info.ascent - info.descent) / 2));
+    gHeaderBase = (short)(info.ascent +
+                          ((gHeaderHeight - info.ascent - info.descent) / 2));
 }
 
 /*
@@ -593,6 +655,9 @@ static void Layout(void)
     if (gListHeaderCtl != NULL) {
         SetControlBounds(gListHeaderCtl, &gListHeader);
     }
+    if (gStatusCtl != NULL) {
+        SetControlBounds(gStatusCtl, &gStatusRect);
+    }
     if (gReaderCtl != NULL) {
         SetControlBounds(gReaderCtl, &gReaderPane);
     }
@@ -781,9 +846,9 @@ static void ApplyRunStyle(long start, long end, short face)
     if (gReaderTE == NULL || end <= start) {
         return;
     }
-    style.tsFont = gUIFont;
+    style.tsFont = gViewFont;
     style.tsFace = face;
-    style.tsSize = gUISize;
+    style.tsSize = gViewSize;
     style.tsColor.red   = 0;
     style.tsColor.green = 0;
     style.tsColor.blue  = 0;
@@ -985,15 +1050,17 @@ static void DrawHeaderTitle(const Rect *r, const char *text)
 {
     Rect inner = *r;
 
-    UseUIFont();
+    UseHeadFont();
+    TextFace(bold);
     SetThemeTextColor(kThemeTextColorWindowHeaderActive, 8, true);
 
     inner.left  = (short)(inner.left + kTextInset + 2);
     inner.right = (short)(inner.right - kTextInset);
 
-    MoveTo(inner.left, (short)(r->top + gChromeBase));
+    MoveTo(inner.left, (short)(r->top + gHeaderBase));
     DrawTruncated(text, (short)(inner.right - inner.left));
 
+    TextFace(normal);
     ForeColor(blackColor);
 }
 
@@ -1004,61 +1071,23 @@ static void DrawHeaderTitle(const Rect *r, const char *text)
  * a solid black bar leave no way to tell which one the arrow keys will move.
  */
 /*
- * The sidebar's selection, drawn the way Outlook Express 5 draws its folder
- * list: a box around the *name*, not a bar across the row. Focused, it is
- * filled with the highlight colour; unfocused, the same box is outlined and
- * the name stays legible on the list background.
+ * The box a sidebar row's name sits in — what the selection is painted
+ * behind, rather than a bar across the whole row.
  */
-static void HighlightLabel(const Rect *cell, short left, short width,
-                           short baseline, Boolean focused)
+static void LabelBox(const Rect *cell, short left, short width,
+                     short baseline, Rect *box)
 {
-    Rect box;
-
-    if (width <= 0) {
-        return;
-    }
-    SetRect(&box, (short)(left - 2), (short)(baseline - gRowAscent - 1),
+    SetRect(box, (short)(left - 2), (short)(baseline - gRowAscent - 1),
             (short)(left + width + 2), (short)(baseline + gRowDescent + 1));
-    if (box.top < cell->top) {
-        box.top = cell->top;
+    if (box->top < cell->top) {
+        box->top = cell->top;
     }
-    if (box.bottom > cell->bottom) {
-        box.bottom = cell->bottom;
+    if (box->bottom > cell->bottom) {
+        box->bottom = cell->bottom;
     }
-    if (box.right > cell->right) {
-        box.right = cell->right;
+    if (box->right > cell->right) {
+        box->right = cell->right;
     }
-
-    if (focused) {
-        LMSetHiliteMode((UInt8)(LMGetHiliteMode() & ~(1 << hiliteBit)));
-        InvertRect(&box);
-        return;
-    }
-    PenNormal();
-    SetThemeTextColor(kThemeTextColorListView, 8, true);
-    FrameRect(&box);
-    ForeColor(blackColor);
-}
-
-static void HighlightRow(const Rect *row, Boolean focused)
-{
-    if (focused) {
-        /*
-         * Clearing the hilite bit tells QuickDraw to invert with the
-         * highlight colour the user picked in the Appearance control panel
-         * rather than with black, which is what every other list on the
-         * machine does and what this used to get wrong. It is a one-shot:
-         * QuickDraw puts the bit back on the next drawing call, so it is
-         * cleared immediately before the InvertRect that wants it.
-         */
-        LMSetHiliteMode((UInt8)(LMGetHiliteMode() & ~(1 << hiliteBit)));
-        InvertRect(row);
-        return;
-    }
-    PenNormal();
-    SetThemeTextColor(kThemeTextColorListView, 8, true);
-    FrameRect(row);
-    ForeColor(blackColor);
 }
 
 /*
@@ -1178,39 +1207,50 @@ static int GroupUnread(int group)
 /* "Name (12)", with the count only when there is one. Drawn as one string so
    the truncation takes the name and never the number — the count is the part
    that has to stay legible in a narrow sidebar. */
-static short DrawRowLabel(const char *name, int unread, short left,
-                          short right, short baseline)
+/*
+ * Compose "Name (12)" into out, truncated to fit maxWidth, and answer how
+ * wide it came out. It has to be built and measured before anything is
+ * drawn, because the selection is painted *behind* it and needs to know how
+ * far it reaches.
+ *
+ * The name is what gets truncated and never the number: the count is the
+ * part that has to stay legible in a narrow sidebar.
+ */
+static short BuildRowLabel(const char *name, int unread, short maxWidth,
+                           char *out, size_t cap, short *outLen)
 {
-    short width = (short)(right - left);
-    short used;
-    Point pen;
+    char  count[16];
+    short countLen   = 0;
+    short countWidth = 0;
+    short len;
 
+    count[0] = '\0';
     if (unread > 0) {
-        char  count[16];
-        short countWidth;
-
         snprintf(count, sizeof count, " (%d)", unread);
-        countWidth = (short)TextWidth(count, 0, (short)strlen(count));
-
-        MoveTo(left, baseline);
-        DrawTruncated(name, (short)(width - countWidth));
-        DrawText(count, 0, (short)strlen(count));
-    } else {
-        MoveTo(left, baseline);
-        DrawTruncated(name, width);
+        countLen   = (short)strlen(count);
+        countWidth = (short)TextWidth(count, 0, countLen);
     }
 
-    /* Where the pen ended up is how wide the label came out, and that is
-       what the selection is drawn around. */
-    GetPen(&pen);
-    used = (short)(pen.h - left);
-    if (used < 0) {
-        used = 0;
+    len = (short)strlen(name);
+    if (len > (short)(cap - sizeof count - 1)) {
+        len = (short)(cap - sizeof count - 1);
     }
-    if (used > width) {
-        used = width;
+    if (len < 0) {
+        len = 0;
     }
-    return used;
+    memcpy(out, name, (size_t)len);
+
+    if (TruncText((short)(maxWidth - countWidth), out, &len, truncEnd) ==
+        truncErr) {
+        len = 0;
+    }
+    if (countLen > 0) {
+        memcpy(out + len, count, (size_t)countLen);
+        len = (short)(len + countLen);
+    }
+
+    *outLen = len;
+    return (short)TextWidth(out, 0, len);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1224,12 +1264,16 @@ static short DrawRowLabel(const char *name, int unread, short left,
 /* saves having a second, subtly different, drawing path.               */
 /* ------------------------------------------------------------------ */
 
-static void EraseCell(const Rect *cell)
+/*
+ * The two lists do not share a background. The sidebar is Platinum grey —
+ * it is a place to choose from, like the Finder's or Newsstand's own
+ * sidebar, and grey is what says so. The headline list and the article are
+ * white, because they hold the thing being read.
+ */
+static void EraseWith(const Rect *r, ThemeBrush brush)
 {
-    /* kThemeBrushListViewBackground rather than plain white: it is white in
-       Platinum, but it is the theme's white and it tracks the theme. */
-    SetThemeBackground(kThemeBrushListViewBackground, 8, true);
-    EraseRect(cell);
+    SetThemeBackground(brush, 8, true);
+    EraseRect(r);
     SetThemeBackground(kThemeBrushDocumentWindowBackground, 8, true);
 }
 
@@ -1242,67 +1286,88 @@ static void EraseCell(const Rect *cell)
 static void DrawSidebarCell(const Rect *cell, short row, Boolean selected)
 {
     GazetteSidebarRow r;
+    char              label[kGazetteTitleLen + 32];
+    short             labelLen = 0;
     short             iconLeft;
     short             textLeft;
     short             baseline;
     short             width;
     Boolean           enabled = true;
 
-    EraseCell(cell);
+    EraseWith(cell, kThemeBrushDialogBackgroundActive);
     if (!GazetteCoreSidebarRowAt(row, &r)) {
         return;
     }
 
-    UseUIFont();
+    UseViewFont();
     baseline = (short)(cell->top + gRowBaseline);
     iconLeft = (short)(cell->left + kTextInset + kTriangleColumn);
+
+    if (r.kind == kGazetteRowFeed && GazetteCoreFeedGroup(r.index) >= 0) {
+        iconLeft = (short)(iconLeft + kGroupIndent);
+    }
+    textLeft = (short)(iconLeft + kIconSize + kIconGap);
+
+    /* The weight is decided before the label is measured, because a bold
+       name is wider than a plain one and the selection is drawn to fit. */
+    if (r.kind == kGazetteRowGroup) {
+        TextFace(bold);
+        width = BuildRowLabel(GazetteCoreGroupName(r.index),
+                              GroupUnread(r.index),
+                              (short)(cell->right - kTextInset - textLeft),
+                              label, sizeof label, &labelLen);
+    } else {
+        int unread;
+
+        enabled = GazetteCoreFeedEnabled(r.index);
+        unread  = enabled ? FeedUnread(r.index) : 0;
+        TextFace((unread > 0) ? bold : normal);
+        width = BuildRowLabel(GazetteCoreFeedTitle(r.index), unread,
+                              (short)(cell->right - kTextInset - textLeft),
+                              label, sizeof label, &labelLen);
+    }
+
+    /*
+     * The selection goes down first, so the name is drawn on top of it
+     * rather than the other way round. Only the pane the keyboard is driving
+     * paints it: an unfocused list outlines the same box instead, which is
+     * the List Manager's own convention for a list that is not in charge.
+     */
+    if (selected) {
+        Rect box;
+
+        LabelBox(cell, textLeft, width, baseline, &box);
+        if (FocusedPane() == kRefSidebar) {
+            FillHighlight(&box);
+        } else {
+            PenNormal();
+            SetThemeTextColor(kThemeTextColorListView, 8, true);
+            FrameRect(&box);
+            ForeColor(blackColor);
+        }
+    }
 
     if (r.kind == kGazetteRowGroup) {
         Boolean open = (Boolean)!GazetteCoreGroupCollapsed(r.index);
 
         DrawDisclosure(cell, (short)(cell->left + kTextInset), open);
         DrawRowIcon(cell, iconLeft, open ? gOpenFolderIcon : gFolderIcon, true);
-        textLeft = (short)(iconLeft + kIconSize + kIconGap);
-
-        SetThemeTextColor(kThemeTextColorListView, 8, true);
-        TextFace(bold);
-        width = DrawRowLabel(GazetteCoreGroupName(r.index),
-                             GroupUnread(r.index), textLeft,
-                             (short)(cell->right - kTextInset), baseline);
     } else {
-        int unread;
-
-        if (GazetteCoreFeedGroup(r.index) >= 0) {
-            iconLeft = (short)(iconLeft + kGroupIndent);
-        }
-        enabled  = GazetteCoreFeedEnabled(r.index);
         DrawRowIcon(cell, iconLeft, gFeedIcon, enabled);
-        textLeft = (short)(iconLeft + kIconSize + kIconGap);
+    }
 
-        /* A switched-off feed keeps its place and is drawn the way an
-           unavailable item is drawn anywhere else in Platinum, so it reads
-           as off rather than as missing. */
-        SetThemeTextColor(enabled ? kThemeTextColorListView
-                                  : kThemeTextColorDialogInactive,
-                          8, true);
-
-        /* A feed with something unread is bold, the same signal the headline
-           list uses for an unread article. A feed switched off shows no
-           count: it is not being fetched, so whatever number was last
-           recorded is not news. */
-        unread = enabled ? FeedUnread(r.index) : 0;
-        TextFace((unread > 0) ? bold : normal);
-        width = DrawRowLabel(GazetteCoreFeedTitle(r.index), unread, textLeft,
-                             (short)(cell->right - kTextInset), baseline);
+    /* A switched-off feed is drawn the way an unavailable item is drawn
+       anywhere else in Platinum, so it reads as off rather than as missing. */
+    SetThemeTextColor(enabled ? kThemeTextColorListView
+                              : kThemeTextColorDialogInactive,
+                      8, true);
+    if (labelLen > 0) {
+        MoveTo(textLeft, baseline);
+        DrawText(label, 0, labelLen);
     }
 
     TextFace(normal);
     ForeColor(blackColor);
-
-    if (selected) {
-        HighlightLabel(cell, textLeft, width, baseline,
-                       (Boolean)(FocusedPane() == kRefSidebar));
-    }
 }
 
 static pascal void SidebarLDEF(short message, Boolean isSelected, Rect *cellRect,
@@ -1324,13 +1389,21 @@ static void DrawArticleCell(const Rect *cell, short row, Boolean selected)
     char                  when[16];
     short                 baseline;
 
-    EraseCell(cell);
+    EraseWith(cell, kThemeBrushWhite);
     if (a == NULL) {
         return;
     }
 
-    UseUIFont();
+    /* A selected headline gets a background across the whole row — it is a
+       line in a list of them, not a name to be boxed. Down first, so the
+       headline is drawn on top of it. */
+    if (selected) {
+        FillHighlight(cell);
+    }
+
+    UseViewFont();
     baseline = (short)(cell->top + gRowBaseline);
+    SetThemeTextColor(kThemeTextColorListView, 8, true);
 
     /* The date sits in a fixed column so the headlines line up; an article
        with no date simply leaves it blank rather than shifting. */
@@ -1348,11 +1421,9 @@ static void DrawArticleCell(const Rect *cell, short row, Boolean selected)
     DrawTruncated(a->title,
                   (short)(cell->right - cell->left - gDateColumn -
                           2 * kTextInset));
-    TextFace(normal);
 
-    if (selected) {
-        HighlightRow(cell, (Boolean)(FocusedPane() == kRefList));
-    }
+    TextFace(normal);
+    ForeColor(blackColor);
 }
 
 static pascal void ArticleLDEF(short message, Boolean isSelected, Rect *cellRect,
@@ -1377,6 +1448,39 @@ static pascal void ArticleLDEF(short message, Boolean isSelected, Rect *cellRect
  * white behind the rows, the rows themselves, the scroll bar and the focus
  * ring are all the CDEF's — which is the whole point of it being a control.
  */
+/*
+ * The space below the last row. The List Box CDEF erases its whole view
+ * before the rows are drawn, and it uses its own background to do it — so
+ * the sidebar's grey and the headline list's white have to be put back over
+ * whatever is left after the last cell.
+ */
+static void FillListRemainder(ListHandle list, int rows, ThemeBrush brush)
+{
+    Rect view;
+    Rect rest;
+
+    ListView(list, &view);
+    if (view.right <= view.left) {
+        return;
+    }
+
+    rest = view;
+    if (rows > 0) {
+        Cell cell;
+        Rect last;
+
+        cell.h = 0;
+        cell.v = (short)(rows - 1);
+        LRect(&last, cell, list);
+        if (last.bottom > rest.top) {
+            rest.top = last.bottom;
+        }
+    }
+    if (rest.bottom > rest.top) {
+        EraseWith(&rest, brush);
+    }
+}
+
 static void DrawSidebarPane(void)
 {
     if (gWindow == NULL || gSidebarCtl == NULL) {
@@ -1384,6 +1488,8 @@ static void DrawSidebarPane(void)
     }
     SetPortWindowPort(gWindow);
     Draw1Control(gSidebarCtl);
+    FillListRemainder(gSidebarList, GazetteCoreSidebarRowCount(),
+                      kThemeBrushDialogBackgroundActive);
 }
 
 static void DrawArticlePane(void)
@@ -1396,6 +1502,8 @@ static void DrawArticlePane(void)
     }
     SetPortWindowPort(gWindow);
     Draw1Control(gArticleCtl);
+    FillListRemainder(gArticleList, GazetteFeedsArticleCount(),
+                      kThemeBrushWhite);
 
     if (GazetteFeedsArticleCount() != 0) {
         return;
@@ -1413,7 +1521,7 @@ static void DrawArticlePane(void)
     }
     ClipRect(&view);
 
-    UseUIFont();
+    UseViewFont();
     SetThemeTextColor(kThemeTextColorListView, 8, true);
     MoveTo((short)(view.left + kTextInset),
            (short)(view.top + gRowBaseline + 1));
@@ -1456,9 +1564,7 @@ static pascal void ReaderDraw(ControlRef control, SInt16 part)
     if (clip != NULL) {
         GetClip(clip);
     }
-    SetThemeBackground(kThemeBrushListViewBackground, 8, true);
-    EraseRect(&gReaderRect);
-    SetThemeBackground(kThemeBrushDocumentWindowBackground, 8, true);
+    EraseWith(&gReaderRect, kThemeBrushWhite);
     ClipRect(&gReaderRect);
 
     if (gReaderTE != NULL) {
@@ -1498,22 +1604,26 @@ static void DrawStatusText(void)
     }
     SetPortWindowPort(gWindow);
 
-    SetThemeBackground(kThemeBrushDocumentWindowBackground, 8, true);
-    EraseRect(&gStatusRect);
-
-    UseUIFont();
-    SetThemeTextColor(kThemeTextColorDialogActive, 8, true);
+    UseViewFont();
+    SetThemeTextColor(kThemeTextColorPlacardActive, 8, true);
     MoveTo((short)(gStatusRect.left + kTextInset + 4),
-           (short)(gStatusRect.top + gChromeBase));
+           (short)(gStatusRect.top + gStatusBase));
     DrawTruncated(gStatus,
                   (short)(gStatusRect.right - gStatusRect.left -
                           2 * kTextInset - 8));
     ForeColor(blackColor);
 }
 
-/* For when only the status line has changed. */
+/* The placard and its text, for when only the status line has changed. */
 static void DrawStatus(void)
 {
+    if (gWindow == NULL) {
+        return;
+    }
+    SetPortWindowPort(gWindow);
+    if (gStatusCtl != NULL) {
+        Draw1Control(gStatusCtl);
+    }
     DrawStatusText();
 }
 
@@ -2431,7 +2541,7 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
 
     /* Before anything is laid out: every height in the layout comes from
        the font. */
-    MeasureFont();
+    MeasureFonts();
     LoadRowIcons();
 
     /* Lay the rectangles out before the lists, so each one is born the size
@@ -2447,6 +2557,7 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
                                     &gSidebarHeaderCtl);
     (void)CreateWindowHeaderControl(gWindow, &gListHeader, true,
                                     &gListHeaderCtl);
+    (void)CreatePlacardControl(gWindow, &gStatusRect, &gStatusCtl);
 
     if (!MakeListBox(gSidebarLDEF, &gSidebarPane, &gSidebarCtl, &gSidebarList) ||
         !MakeListBox(gArticleLDEF, &gListPane, &gArticleCtl, &gArticleList)) {
@@ -2484,7 +2595,7 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
         Rect view;
 
         ReaderRects(&view);
-        UseUIFont();
+        UseViewFont();
         gReaderTE = TEStyleNew(&view, &view);
     }
     if (gReaderTE == NULL) {
@@ -2523,6 +2634,7 @@ void GazetteUIClose(void)
     gArticleCtl        = NULL;
     gSidebarHeaderCtl  = NULL;
     gListHeaderCtl     = NULL;
+    gStatusCtl         = NULL;
     gReaderCtl         = NULL;
     gRootControl       = NULL;
 
