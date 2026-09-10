@@ -180,10 +180,13 @@ enum {
     kMoveToFirstGroup = 3
 };
 
-/* Edit menu items. The first six are the standard set — inert in the window,
-   and the Dialog Manager's business while a dialog is up. */
+/* Edit menu items. Undo, Cut, Paste and Clear are the Dialog Manager's
+   business while a dialog is up and inert otherwise — nothing in the window
+   can be typed into. Copy is the exception: the reader pane holds a TextEdit
+   record and a drag in it selects text. */
 enum {
-    /* 1 Undo, 2 divider, 3 Cut, 4 Copy, 5 Paste, 6 Clear, 7 divider */
+    /* 1 Undo, 2 divider, 3 Cut, 5 Paste, 6 Clear, 7 divider */
+    kEditItemCopy    = 4,
     kEditItemFind    = 8,
     kEditItemShowAll = 9
 };
@@ -599,8 +602,10 @@ static void HandleMenuChoice(long menuResult)
 
         case kMenuEdit:
             /* The text fields in the dialogs get the Edit menu's behaviour
-               from the Dialog Manager; the reader pane is still to come. */
-            if (menuItem == kEditItemFind) {
+               from the Dialog Manager; Copy is the window's own. */
+            if (menuItem == kEditItemCopy) {
+                GazetteUIReaderCopy();
+            } else if (menuItem == kEditItemFind) {
                 HandleFind();
             } else if (menuItem == kEditItemShowAll) {
                 HandleShowAll();
@@ -747,11 +752,17 @@ static void AdjustMenus(void)
         }
     }
 
-    /* Find needs something to search; Show All needs a search to clear. */
+    /* Find needs something to search; Show All needs a search to clear;
+       Copy needs something selected in the reader. */
     {
         MenuRef edit = GetMenuHandle(kMenuEdit);
 
         if (edit != nil) {
+            if (GazetteUIReaderHasSelection()) {
+                MacEnableMenuItem(edit, kEditItemCopy);
+            } else {
+                DisableMenuItem(edit, kEditItemCopy);
+            }
             if (GazetteFeedsTotalCount() > 0) {
                 MacEnableMenuItem(edit, kEditItemFind);
             } else {

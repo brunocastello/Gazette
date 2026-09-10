@@ -22,9 +22,10 @@
  * Keeping a copy in the cells would only be a second thing to get out of
  * date.
  *
- * The reader pane is still drawn by hand, with its own scroll bar. Wrapped
- * prose is a different problem from a list of rows and it wants TextEdit,
- * not the List Manager.
+ * The reader pane is a styled TextEdit record. TextEdit is what the Toolbox
+ * has for wrapped, styled, selectable prose, and it replaced a greedy word
+ * wrapper, a line index and a drawing loop that between them did the same
+ * job less well.
  */
 
 #include "ui/platinum_window.h"
@@ -43,6 +44,8 @@
 #include <Lists.h>
 #include <Quickdraw.h>
 #include <QuickdrawText.h>
+#include <Scrap.h>
+#include <TextEdit.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -56,7 +59,7 @@ enum {
     kHeaderHeight  = 17,        /* the placard over each list                 */
     kStatusHeight  = 20,
     kRowHeight     = 14,        /* a list cell: Geneva 9 plus leading         */
-    kReaderLead    = 13,        /* a wrapped reader line                      */
+    kReaderLead    = 13,        /* what one arrow scrolls the article by      */
     kDividerWidth  = 4,         /* the draggable gap between panes            */
     kTextInset     = 4,
     kDateColumn    = 46,        /* headline text starts here, after the time  */
@@ -73,18 +76,7 @@ enum {
     kMaxSidebarPad = 160,       /* how much room the right side must keep     */
     kMinListHeight = 3 * kRowHeight,
     kMinReader     = 3 * kReaderLead,
-
-    /*
-     * The reader pane holds one article. That used to be a feed's summary
-     * and is now a whole page of extracted text when the full-text
-     * preference is on, so both of these are sized for the larger of the
-     * two: kGazetteExtractMax of body, plus the title and the byline.
-     *
-     * At a narrow window width a line is about fifty characters, which puts
-     * 8 KB at some 170 lines before the blank line between each paragraph.
-     * A ReaderLine is six bytes, so the headroom here costs 3 KB.
-     */
-    kMaxReaderLines = 512,
+    kReaderMargin  = 2,         /* above the first line and below the last */
 
     /* Which pane the keyboard is driving. The reader's scroll bar carries
        kRefReader as its control reference, so its action procedure and the
@@ -96,12 +88,6 @@ enum {
 
 /* Seconds between the Macintosh epoch (1904) and the Unix one (1970). */
 enum { kMacToUnixEpoch = 2082844800L };
-
-typedef struct {
-    short start;                /* offset into gReaderText */
-    short len;
-    short style;                /* 0 title, 1 byline, 2 body */
-} ReaderLine;
 
 /* ------------------------------------------------------------------ */
 /* State                                                               */
@@ -157,16 +143,17 @@ static short gFocus = kRefList;
 
 static char gStatus[192];
 
-/* The reader's text, copied out of the store rather than pointing into it:
-   a refresh replaces the articles, and a wrapped line index into freed
-   headlines is the kind of bug that shows up as garbage on screen days
-   later. */
-static char       gReaderText[kGazetteExtractMax + 512];
-static ReaderLine gReaderLines[kMaxReaderLines];
-static short      gReaderLineCount;
+/*
+ * The article, staged here and then handed to TextEdit, which keeps its own
+ * copy. Room for twice the extractor's output because a paragraph break
+ * becomes two carriage returns on the way in, plus the title and the byline.
+ */
+static TEHandle gReaderTE;
+static char     gReaderText[2 * kGazetteExtractMax + 512];
 
 static void Layout(void);
-static void RewrapReader(void);
+static void SetReaderText(void);
+static void SizeReader(void);
 static void ChooseRow(const GazetteSidebarRow *row);
 static int  SelectedRow(void);
 static void SetFocus(short pane);
@@ -221,40 +208,6 @@ static long UnixNow(void)
 
     GetDateTime(&macNow);
     return (long)macNow - kMacToUnixEpoch;
-}
-
-static short VisibleRowsIn(const Rect *r, short rowHeight)
-{
-    short h = (short)(r->bottom - r->top);
-
-    if (h < rowHeight) {
-        return 1;
-    }
-    return (short)(h / rowHeight);
-}
-
-/* Set a scroll bar's range from a content size, and clamp its value. A range
-   of zero disables the bar, which is what the Control Manager expects and
-   what makes it draw greyed rather than live. The two lists look after their
-   own bars; this is the reader's. */
-static void SyncScroll(ControlRef control, int total, short visible)
-{
-    int max = total - visible;
-
-    if (control == NULL) {
-        return;
-    }
-    if (max < 0) {
-        max = 0;
-    }
-    if (max > 32767) {
-        max = 32767;
-    }
-    SetControlMaximum(control, (short)max);
-    if (GetControlValue(control) > max) {
-        SetControlValue(control, (short)max);
-    }
-    HiliteControl(control, (max > 0) ? 0 : 255);
 }
 
 /* ------------------------------------------------------------------ */
@@ -491,211 +444,338 @@ static void Layout(void)
                     (short)(gReaderRect.bottom - gReaderRect.top));
     }
 
-    RewrapReader();
-
-    SyncScroll(gReaderScroll, gReaderLineCount,
-               VisibleRowsIn(&gReaderRect, kReaderLead));
+    SizeReader();
 }
 
 /* ------------------------------------------------------------------ */
 /* The reader pane                                                     */
+/*                                                                     */
+/* One styled TextEdit record holds the article. TextEdit is what the  */
+/* Toolbox has for wrapped, styled prose, and it replaces a greedy     */
+/* word wrapper, a line index and a drawing loop that between them did */
+/* the same job less well: they capped an article at five hundred      */
+/* lines, they measured every line again on every redraw, and there    */
+/* was no way to select a word of it.                                  */
+/*                                                                     */
+/* The record is kept inactive unless a drag is selecting something.    */
+/* An active TextEdit record with an empty selection draws an          */
+/* insertion point, and a caret in a pane that cannot be typed into is */
+/* a lie about what the pane is.                                       */
 /* ------------------------------------------------------------------ */
 
-static void AddReaderLine(short start, short len, short style)
+/* The view is the pane less its margin. The destination rectangle is the
+   same box, and it is its top that moves when the article is scrolled. */
+static void ReaderRects(Rect *view)
 {
-    if (gReaderLineCount >= kMaxReaderLines) {
+    SetRect(view, (short)(gReaderRect.left + kTextInset),
+            (short)(gReaderRect.top + kReaderMargin),
+            (short)(gReaderRect.right - kTextInset),
+            (short)(gReaderRect.bottom - kReaderMargin));
+}
+
+/* How far down the article the view has been scrolled, in pixels. Styled
+   text has no one line height to count in, so the reader's scroll bar is
+   measured in pixels where the lists' are measured in rows. */
+static short ReaderOffset(void)
+{
+    if (gReaderTE == NULL) {
+        return 0;
+    }
+    return (short)((**gReaderTE).viewRect.top - (**gReaderTE).destRect.top);
+}
+
+static short ReaderMaxOffset(void)
+{
+    long height;
+    long view;
+
+    if (gReaderTE == NULL) {
+        return 0;
+    }
+    height = TEGetHeight((**gReaderTE).nLines, 0, gReaderTE);
+    view   = (**gReaderTE).viewRect.bottom - (**gReaderTE).viewRect.top;
+
+    if (height <= view) {
+        return 0;
+    }
+    height -= view;
+    return (short)((height > 32767) ? 32767 : height);
+}
+
+/* A page keeps one line of context, the way the lists' page keys do. */
+static short ReaderPage(void)
+{
+    short page;
+
+    if (gReaderTE == NULL) {
+        return kReaderLead;
+    }
+    page = (short)((**gReaderTE).viewRect.bottom -
+                   (**gReaderTE).viewRect.top - kReaderLead);
+    return (page < kReaderLead) ? kReaderLead : page;
+}
+
+static void SyncReaderScroll(void)
+{
+    short max = ReaderMaxOffset();
+
+    if (gReaderScroll == NULL) {
         return;
     }
-    gReaderLines[gReaderLineCount].start = start;
-    gReaderLines[gReaderLineCount].len   = len;
-    gReaderLines[gReaderLineCount].style = style;
-    gReaderLineCount++;
+    SetControlMaximum(gReaderScroll, max);
+    SetControlValue(gReaderScroll, ReaderOffset());
+    HiliteControl(gReaderScroll, (max > 0) ? 0 : 255);
+}
+
+/* Scroll to an offset. TEScroll draws the strip that comes into view, which
+   is why this needs the port and not just the arithmetic. */
+static void ScrollReaderTo(short offset)
+{
+    RgnHandle save = NULL;
+    short     max;
+    short     now;
+
+    if (gWindow == NULL || gReaderTE == NULL) {
+        return;
+    }
+    max = ReaderMaxOffset();
+    now = ReaderOffset();
+
+    if (offset < 0)   offset = 0;
+    if (offset > max) offset = max;
+    if (offset == now) {
+        return;
+    }
+
+    SetPortWindowPort(gWindow);
+    save = NewRgn();
+    if (save != NULL) {
+        GetClip(save);
+    }
+    ClipRect(&gReaderRect);
+
+    TEScroll(0, (short)(now - offset), gReaderTE);
+
+    if (save != NULL) {
+        SetClip(save);
+        DisposeRgn(save);
+    }
+    if (gReaderScroll != NULL) {
+        SetControlValue(gReaderScroll, offset);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+
+static size_t AppendText(size_t used, const char *text, size_t len)
+{
+    return used + gz_copy_n(gReaderText + used, sizeof gReaderText - used,
+                            text, len);
+}
+
+static size_t AppendChar(size_t used, char c)
+{
+    if (used + 1 < sizeof gReaderText) {
+        gReaderText[used++] = c;
+        gReaderText[used]   = '\0';
+    }
+    return used;
 }
 
 /*
- * Greedy word wrap over one paragraph of gReaderText, in whatever font is
- * current. Words longer than the column are broken rather than allowed to
- * overhang, which a URL in a summary will otherwise do.
+ * The body arrives with its paragraphs marked by newlines. TextEdit breaks
+ * on carriage returns, and a paragraph wants a blank line after it, so each
+ * run of newlines becomes exactly two — however many the extractor left.
  */
-static void WrapParagraph(short start, short len, short style, short width)
+static size_t AppendBody(size_t used, const char *body)
 {
-    short pos = start;
-    short end = (short)(start + len);
+    const char *p = body;
 
-    if (len <= 0) {
-        AddReaderLine(start, 0, style);
-        return;
-    }
-
-    while (pos < end) {
-        short take  = 0;
-        short lastSpace = -1;
-        short i;
-
-        for (i = pos; i < end; i++) {
-            short trial = (short)(i - pos + 1);
-
-            if (WidthOfN(gReaderText + pos, trial) > width) {
+    while (*p != '\0') {
+        if (*p == '\n') {
+            while (*p == '\n') {
+                p++;
+            }
+            if (*p == '\0') {
                 break;
             }
-            take = trial;
-            if (gReaderText[i] == ' ') {
-                lastSpace = trial;
-            }
+            used = AppendChar(used, '\r');
+            used = AppendChar(used, '\r');
+            continue;
         }
-
-        if (take == 0) {
-            take = 1;                       /* a single character too wide */
-        } else if (pos + take < end && lastSpace > 0 &&
-                   gReaderText[pos + take] != ' ') {
-            take = lastSpace;               /* step back to the word break */
-        }
-
-        AddReaderLine(pos, take, style);
-        pos = (short)(pos + take);
-        while (pos < end && gReaderText[pos] == ' ') {
-            pos++;                          /* the break's own space */
-        }
+        used = AppendChar(used, *p++);
     }
+    return used;
 }
 
-static void RewrapReader(void)
+/* One of the three weights the pane has always had, applied to a range that
+   is already in the record. Setting a style on an insertion point and
+   trusting the next TEInsert to pick it up is documented but delicate;
+   styling text that is already there cannot be misread. */
+static void StyleRun(long start, long end, short size, short face)
+{
+    TextStyle style;
+
+    if (gReaderTE == NULL || end <= start) {
+        return;
+    }
+    style.tsFont = kFontIDGeneva;
+    style.tsFace = face;
+    style.tsSize = size;
+    style.tsColor.red   = 0;
+    style.tsColor.green = 0;
+    style.tsColor.blue  = 0;
+
+    TESetSelect(start, end, gReaderTE);
+    TESetStyle(doFont | doFace | doSize, &style, false, gReaderTE);
+}
+
+/*
+ * Compose the article and hand it to TextEdit. The text is copied out of
+ * the store rather than pointed into: a refresh replaces the articles, and
+ * a text handle into freed headlines is the kind of bug that shows up as
+ * garbage on screen days later.
+ */
+static void SetReaderText(void)
 {
     const GazetteArticle *a;
     GrafPtr savePort;
-    short   width;
-    size_t  used = 0;
-    short   titleStart, titleLen;
-    short   bylineStart, bylineLen;
-    short   bodyStart, bodyLen;
+    Rect    view;
+    size_t  used      = 0;
+    long    titleEnd  = 0;
+    long    bylineEnd = 0;
     char    when[16];
 
-    gReaderLineCount = 0;
-    gReaderText[0]   = '\0';
-
-    if (gWindow == NULL) {
+    if (gWindow == NULL || gReaderTE == NULL) {
         return;
-    }
-    a = GazetteFeedsArticleAt(gSelectedArticle);
-    if (a == NULL) {
-        return;
-    }
-
-    width = (short)(gReaderRect.right - gReaderRect.left - 2 * kTextInset - 2);
-    if (width < 32) {
-        return;
-    }
-
-    /* Compose the whole pane's text once, then index into it. */
-    titleStart = 0;
-    used  = gz_copy_n(gReaderText, sizeof gReaderText, a->title,
-                      strlen(a->title));
-    titleLen = (short)used;
-
-    GazetteFormatDate(a->date, UnixNow(), when, sizeof when);
-
-    bylineStart = (short)(used + 1);
-    gReaderText[used++] = '\0';
-    {
-        char byline[192];
-
-        const char *from = a->source;
-
-        /* In a group view the articles come from several feeds, so which one
-           this is from is worth saying. The feed's own name stands in when
-           the article does not name a publisher. */
-        if (from[0] == '\0' && GazetteFeedsCurrentGroup() >= 0) {
-            from = GazetteCoreFeedTitle(a->feed);
-        }
-
-        if (from[0] != '\0' && when[0] != '\0') {
-            snprintf(byline, sizeof byline, "%s - %s", from, when);
-        } else if (from[0] != '\0') {
-            snprintf(byline, sizeof byline, "%s", from);
-        } else {
-            snprintf(byline, sizeof byline, "%s", when);
-        }
-        used += gz_copy_n(gReaderText + used, sizeof gReaderText - used,
-                          byline, strlen(byline));
-        bylineLen = (short)(used - bylineStart);
-    }
-
-    /*
-     * The article's own page when it has been fetched and extracted, and the
-     * feed's summary otherwise. The store answers which article the held
-     * text belongs to, so switching articles cannot show the last one's body
-     * under this one's headline.
-     */
-    {
-        const char *body = a->body;
-
-        if (GazetteFeedsFullTextArticle() == gSelectedArticle) {
-            const char *full = GazetteFeedsFullText();
-
-            if (full[0] != '\0') {
-                body = full;
-            }
-        }
-
-        bodyStart = (short)(used + 1);
-        gReaderText[used++] = '\0';
-        used += gz_copy_n(gReaderText + used, sizeof gReaderText - used,
-                          body, strlen(body));
-        bodyLen = (short)(used - bodyStart);
     }
 
     GetPort(&savePort);
     SetPortWindowPort(gWindow);
 
-    TextFont(kFontIDGeneva);
-    TextSize(9);
-    TextFace(bold);
-    WrapParagraph(titleStart, titleLen, 0, width);
+    TEDeactivate(gReaderTE);
+    gReaderText[0] = '\0';
 
-    TextFace(normal);
-    if (bylineLen > 0) {
-        WrapParagraph(bylineStart, bylineLen, 1, width);
-    }
+    a = GazetteFeedsArticleAt(gSelectedArticle);
+    if (a == NULL) {
+        static const char kNothing[] = "Select a headline to read it.";
 
-    TextSize(10);
-    AddReaderLine(0, 0, 2);                 /* a blank line before the body */
-    if (bodyLen > 0) {
-        /*
-         * The body arrives with its paragraphs marked by newlines, so each
-         * one is wrapped on its own with a blank line between. Handing the
-         * whole thing to WrapParagraph would lay a four-paragraph article
-         * out as one unbroken block, which is what this used to do.
-         */
-        short at    = bodyStart;
-        short end   = (short)(bodyStart + bodyLen);
-        int   first = 1;
-
-        while (at < end) {
-            short stop = at;
-
-            while (stop < end && gReaderText[stop] != '\n') {
-                stop++;
-            }
-            if (stop > at) {
-                if (!first) {
-                    AddReaderLine(0, 0, 2);
-                }
-                WrapParagraph(at, (short)(stop - at), 2, width);
-                first = 0;
-            }
-            at = (short)(stop + 1);
-        }
+        used = AppendText(0, kNothing, sizeof kNothing - 1);
+        TESetText(gReaderText, (long)used, gReaderTE);
+        StyleRun(0, (long)used, 10, normal);
     } else {
-        static const char kNone[] = "(This feed carries no summary for "
-                                    "this article.)";
-        short at = (short)used;
+        used     = AppendText(0, a->title, strlen(a->title));
+        titleEnd = (long)used;
 
-        used += gz_copy_n(gReaderText + used, sizeof gReaderText - used,
-                          kNone, sizeof kNone - 1);
-        WrapParagraph(at, (short)(used - at), 2, width);
+        GazetteFormatDate(a->date, UnixNow(), when, sizeof when);
+        {
+            char        byline[192];
+            const char *from = a->source;
+
+            /* In a group view the articles come from several feeds, so which
+               one this is from is worth saying. The feed's own name stands
+               in when the article does not name a publisher. */
+            if (from[0] == '\0' && GazetteFeedsCurrentGroup() >= 0) {
+                from = GazetteCoreFeedTitle(a->feed);
+            }
+
+            if (from[0] != '\0' && when[0] != '\0') {
+                snprintf(byline, sizeof byline, "%s - %s", from, when);
+            } else if (from[0] != '\0') {
+                snprintf(byline, sizeof byline, "%s", from);
+            } else {
+                snprintf(byline, sizeof byline, "%s", when);
+            }
+
+            if (byline[0] != '\0') {
+                used = AppendChar(used, '\r');
+                used = AppendText(used, byline, strlen(byline));
+            }
+        }
+        bylineEnd = (long)used;
+
+        /*
+         * The article's own page when it has been fetched and extracted, and
+         * the feed's summary otherwise. The store answers which article the
+         * held text belongs to, so switching articles cannot show the last
+         * one's body under this one's headline.
+         */
+        {
+            const char *body = a->body;
+
+            if (GazetteFeedsFullTextArticle() == gSelectedArticle) {
+                const char *full = GazetteFeedsFullText();
+
+                if (full[0] != '\0') {
+                    body = full;
+                }
+            }
+
+            used = AppendChar(used, '\r');
+            used = AppendChar(used, '\r');
+            if (body[0] != '\0') {
+                used = AppendBody(used, body);
+            } else {
+                static const char kNone[] = "(This feed carries no summary "
+                                            "for this article.)";
+
+                used = AppendText(used, kNone, sizeof kNone - 1);
+            }
+        }
+
+        TESetText(gReaderText, (long)used, gReaderTE);
+
+        StyleRun(0, titleEnd, 9, bold);
+        StyleRun(titleEnd, bylineEnd, 9, normal);
+        StyleRun(bylineEnd, (long)used, 10, normal);
     }
 
-    TextFace(normal);
+    TESetSelect(0, 0, gReaderTE);
+
+    /* Back to the top, and the wrap and the bar back in step with the new
+       length. */
+    ReaderRects(&view);
+    (**gReaderTE).destRect = view;
+    TECalText(gReaderTE);
+    SyncReaderScroll();
+
+    SetPort(savePort);
+}
+
+/* The pane has moved or changed width, so the text has to be laid out again
+   in it. The article keeps its place as far as the new wrap allows, which is
+   what makes dragging the divider feel like resizing rather than rewinding. */
+static void SizeReader(void)
+{
+    GrafPtr savePort;
+    Rect    view;
+    short   was;
+    short   max;
+
+    if (gWindow == NULL || gReaderTE == NULL) {
+        return;
+    }
+
+    GetPort(&savePort);
+    SetPortWindowPort(gWindow);
+
+    was = ReaderOffset();
+
+    ReaderRects(&view);
+    (**gReaderTE).viewRect = view;
+    (**gReaderTE).destRect = view;
+    TECalText(gReaderTE);
+
+    max = ReaderMaxOffset();
+    if (was > max) {
+        was = max;
+    }
+    if (was < 0) {
+        was = 0;
+    }
+    (**gReaderTE).destRect.top = (short)(view.top - was);
+
+    SyncReaderScroll();
     SetPort(savePort);
 }
 
@@ -708,41 +788,23 @@ static void RewrapReader(void)
 
 static pascal void ScrollAction(ControlRef control, ControlPartCode part)
 {
-    short value;
-    short max;
-    short page;
     short delta = 0;
 
-    if (control == NULL || part == 0) {
+    if (control == NULL || part == 0 || gReaderTE == NULL) {
         return;
-    }
-
-    page = VisibleRowsIn(&gReaderRect, kReaderLead);
-    if (page > 1) {
-        page--;             /* a page scroll keeps one line of context */
     }
 
     switch (part) {
-        case kControlUpButtonPart:   delta = -1;    break;
-        case kControlDownButtonPart: delta = 1;     break;
-        case kControlPageUpPart:     delta = (short)-page; break;
-        case kControlPageDownPart:   delta = page;  break;
+        case kControlUpButtonPart:   delta = (short)-kReaderLead;  break;
+        case kControlDownButtonPart: delta = kReaderLead;          break;
+        case kControlPageUpPart:     delta = (short)-ReaderPage(); break;
+        case kControlPageDownPart:   delta = ReaderPage();         break;
         default: return;
     }
 
-    value = (short)(GetControlValue(control) + delta);
-    max   = GetControlMaximum(control);
-    if (value < 0)   value = 0;
-    if (value > max) value = max;
-
-    if (value == GetControlValue(control)) {
-        return;
-    }
-    SetControlValue(control, value);
-
-    /* Redraw here rather than invalidating: this runs inside TrackControl's
+    /* Scrolled here rather than invalidated: this runs inside TrackControl's
        own loop, and an update event would not be seen until it returned. */
-    DrawReader();
+    ScrollReaderTo((short)(ReaderOffset() + delta));
 }
 
 /* ------------------------------------------------------------------ */
@@ -1115,10 +1177,6 @@ static void DrawArticlePane(void)
 static void DrawReader(void)
 {
     RgnHandle clip = NULL;
-    short     rows;
-    short     top;
-    short     line;
-    short     i;
 
     if (gWindow == NULL) {
         return;
@@ -1126,38 +1184,12 @@ static void DrawReader(void)
     SetPortWindowPort(gWindow);
 
     BeginListArea(&gReaderRect, &clip);
+    if (gReaderTE != NULL) {
+        Rect view = (**gReaderTE).viewRect;   /* not a pointer into the
+                                                 handle, which can move */
 
-    rows = VisibleRowsIn(&gReaderRect, kReaderLead);
-    top  = (gReaderScroll != NULL) ? GetControlValue(gReaderScroll) : 0;
-    line = (short)(gReaderRect.top + 11);
-
-    if (gReaderLineCount == 0) {
-        TextFont(kFontIDGeneva);
-        TextSize(10);
-        MoveTo((short)(gReaderRect.left + kTextInset), line);
-        DrawString("\pSelect a headline to read it.");
-        EndListArea(clip);
-        return;
+        TEUpdate(&view, gReaderTE);
     }
-
-    for (i = top; i < gReaderLineCount && i < top + rows; i++) {
-        const ReaderLine *l = &gReaderLines[i];
-
-        TextFont(kFontIDGeneva);
-        switch (l->style) {
-            case 0: TextSize(9);  TextFace(bold);   break;
-            case 1: TextSize(9);  TextFace(normal); break;
-            default: TextSize(10); TextFace(normal); break;
-        }
-
-        if (l->len > 0) {
-            MoveTo((short)(gReaderRect.left + kTextInset), line);
-            DrawText(gReaderText + l->start, 0, l->len);
-        }
-        line = (short)(line + kReaderLead);
-    }
-
-    TextFace(normal);
     EndListArea(clip);
 }
 
@@ -1265,16 +1297,13 @@ static void SelectArticle(int index)
     }
 
     SelectRow(gArticleList, gSelectedArticle, true);
-
-    RewrapReader();
-    if (gReaderScroll != NULL) {
-        SetControlValue(gReaderScroll, 0);
-        SyncScroll(gReaderScroll, gReaderLineCount,
-                   VisibleRowsIn(&gReaderRect, kReaderLead));
-    }
+    SetReaderText();
 
     DrawArticlePane();
     DrawReader();
+    if (gReaderScroll != NULL) {
+        Draw1Control(gReaderScroll);
+    }
 
     /* Last, so the pane is already showing the summary when the shell decides
        whether to go and fetch anything better. */
@@ -1424,6 +1453,26 @@ static void SidebarClicked(Point where, EventModifiers modifiers)
     }
 }
 
+/*
+ * A drag in the article selects text, which is the one thing the pane is for
+ * besides being read. TextEdit will not hilite a selection in a record it
+ * thinks is inactive, so it is woken for the drag and put back to sleep when
+ * the drag turns out to have been a plain click — otherwise the pane would
+ * be left showing an insertion point it can do nothing with.
+ */
+static void ReaderClick(Point where, EventModifiers modifiers)
+{
+    if (gReaderTE == NULL) {
+        return;
+    }
+    TEActivate(gReaderTE);
+    TEClick(where, (Boolean)((modifiers & shiftKey) != 0), gReaderTE);
+
+    if ((**gReaderTE).selStart == (**gReaderTE).selEnd) {
+        TEDeactivate(gReaderTE);
+    }
+}
+
 void GazetteUIClick(Point where, EventModifiers modifiers)
 {
     ControlRef       control = NULL;
@@ -1485,6 +1534,7 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
 
     if (PtInRect(where, &gReaderRect)) {
         SetFocus(kRefReader);
+        ReaderClick(where, modifiers);
         return;
     }
 }
@@ -1608,43 +1658,23 @@ static Boolean ListKey(short key)
     }
 }
 
-/* Move the reader's scroll bar and redraw, which is what its own arrows and
-   page regions do — this is the same thing from the keyboard. */
+/* What the reader's own arrows and page regions do, from the keyboard. */
 static Boolean ScrollReader(short delta, Boolean absolute)
 {
-    short value;
-    short max;
-
-    if (gReaderScroll == NULL) {
+    if (gReaderTE == NULL) {
         return false;
     }
-    max   = GetControlMaximum(gReaderScroll);
-    value = absolute ? delta : (short)(GetControlValue(gReaderScroll) + delta);
-
-    if (value < 0)   value = 0;
-    if (value > max) value = max;
-
-    if (value == GetControlValue(gReaderScroll)) {
-        return true;                /* used the key, had nowhere to go */
-    }
-    SetControlValue(gReaderScroll, value);
-    DrawReader();
-    return true;
+    ScrollReaderTo(absolute ? delta : (short)(ReaderOffset() + delta));
+    return true;                /* used the key, even with nowhere to go */
 }
 
 static Boolean ReaderKey(short key)
 {
-    short page = VisibleRowsIn(&gReaderRect, kReaderLead);
-
-    if (page > 1) {
-        page--;                     /* a page keeps one line of context */
-    }
-
     switch (key) {
-        case 0x1E: return ScrollReader(-1, false);
-        case 0x1F: return ScrollReader(1, false);
-        case 0x0B: return ScrollReader((short)-page, false);
-        case 0x0C: return ScrollReader(page, false);
+        case 0x1E: return ScrollReader((short)-kReaderLead, false);
+        case 0x1F: return ScrollReader(kReaderLead, false);
+        case 0x0B: return ScrollReader((short)-ReaderPage(), false);
+        case 0x0C: return ScrollReader(ReaderPage(), false);
         case 0x01: return ScrollReader(0, true);
         case 0x04: return ScrollReader(32767, true);
         default:   return false;
@@ -1655,6 +1685,14 @@ static void SetFocus(short pane)
 {
     if (gFocus == pane) {
         return;
+    }
+
+    /* A selection left behind in a pane that no longer has the focus is a
+       highlight with nothing driving it. */
+    if (gFocus == kRefReader && gReaderTE != NULL) {
+        SetPortWindowPort(gWindow);
+        TEDeactivate(gReaderTE);
+        TESetSelect(0, 0, gReaderTE);
     }
     gFocus = pane;
 
@@ -1683,11 +1721,8 @@ Boolean GazetteUIKey(short key, EventModifiers modifiers)
        reader reaches for without looking, and making it depend on which pane
        has the focus would be a puzzle rather than a shortcut. */
     if (key == ' ') {
-        short page = VisibleRowsIn(&gReaderRect, kReaderLead);
+        short page = ReaderPage();
 
-        if (page > 1) {
-            page--;
-        }
         if ((modifiers & shiftKey) != 0) {
             page = (short)-page;
         }
@@ -1714,6 +1749,12 @@ void GazetteUIActivate(Boolean active)
     }
     if (gArticleList != NULL) {
         LActivate(active, gArticleList);
+    }
+
+    /* A selection is only meaningful while the window is in front. */
+    if (!active && gReaderTE != NULL) {
+        SetPortWindowPort(gWindow);
+        TEDeactivate(gReaderTE);
     }
 
     /* The Control Manager greys the reader's bar for us; 255 is the inactive
@@ -1772,12 +1813,7 @@ void GazetteUIArticlesChanged(void)
     LSetDrawingMode(true, gArticleList);
 
     Layout();
-    RewrapReader();
-    if (gReaderScroll != NULL) {
-        SetControlValue(gReaderScroll, 0);
-        SyncScroll(gReaderScroll, gReaderLineCount,
-                   VisibleRowsIn(&gReaderRect, kReaderLead));
-    }
+    SetReaderText();
     if (gSelectedArticle >= 0) {
         GazetteFeedsMarkRead(gSelectedArticle, 1);
     }
@@ -1794,18 +1830,34 @@ void GazetteUIArticleTextChanged(void)
     if (gWindow == NULL) {
         return;
     }
-    RewrapReader();
-    if (gReaderScroll != NULL) {
-        SetControlValue(gReaderScroll, 0);
-        SyncScroll(gReaderScroll, gReaderLineCount,
-                   VisibleRowsIn(&gReaderRect, kReaderLead));
-    }
+    SetReaderText();
     DrawReader();
 
     /* The scroll bar's own frame is outside the pane DrawReader repaints. */
     if (gReaderScroll != NULL) {
         Draw1Control(gReaderScroll);
     }
+}
+
+Boolean GazetteUIReaderHasSelection(void)
+{
+    if (gReaderTE == NULL) {
+        return false;
+    }
+    return (Boolean)((**gReaderTE).selStart != (**gReaderTE).selEnd);
+}
+
+void GazetteUIReaderCopy(void)
+{
+    if (!GazetteUIReaderHasSelection()) {
+        return;
+    }
+    /* TECopy puts the text on TextEdit's own private scrap; TEToScrap is
+       what moves it to the system's, so another application can have it.
+       ZeroScrap is not in Carbon — ClearCurrentScrap is what replaced it. */
+    (void)ClearCurrentScrap();
+    TECopy(gReaderTE);
+    (void)TEToScrap();
 }
 
 int GazetteUISelectedArticle(void)
@@ -1983,10 +2035,30 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
 
     gReaderScroll = MakeScroll(kRefReader);
 
+    /* TEStyleNew remembers the port it was made in, so the window's has to
+       be current; the font it is holding becomes the record's default. */
+    {
+        Rect view;
+
+        ReaderRects(&view);
+        TextFont(kFontIDGeneva);
+        TextSize(10);
+        TextFace(normal);
+        gReaderTE = TEStyleNew(&view, &view);
+    }
+    if (gReaderTE == NULL) {
+        GazetteUIClose();
+        return false;
+    }
+    /* The scroll offset is tracked here, so TextEdit must not scroll behind
+       our back when a drag runs off the bottom of the pane. */
+    TEAutoView(false, gReaderTE);
+
     SetRowCount(gSidebarList, GazetteCoreSidebarRowCount());
     SelectRow(gSidebarList, SelectedRow(), false);
 
     Layout();
+    SetReaderText();
 
     ShowWindow(gWindow);
     SelectWindow(gWindow);
@@ -2007,6 +2079,11 @@ void GazetteUIClose(void)
     if (gArticleList != NULL) {
         LDispose(gArticleList);
         gArticleList = NULL;
+    }
+
+    if (gReaderTE != NULL) {
+        TEDispose(gReaderTE);
+        gReaderTE = NULL;
     }
 
     /* DisposeWindow takes the remaining controls with it; the UPPs are

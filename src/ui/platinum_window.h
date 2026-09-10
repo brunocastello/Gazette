@@ -84,6 +84,14 @@ void GazetteUIArticleTextChanged(void);
 /* Which article the reader pane is showing, or -1. */
 int GazetteUISelectedArticle(void);
 
+/*
+ * The reader pane is a TextEdit record, so a drag in it selects text. These
+ * two are the Edit menu's Copy: whether it should be enabled, and what it
+ * does. Nothing else in the window has a selection to copy.
+ */
+Boolean GazetteUIReaderHasSelection(void);
+void    GazetteUIReaderCopy(void);
+
 /* The preferences' feed list has changed. */
 void GazetteUIFeedsChanged(void);
 
