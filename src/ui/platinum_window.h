@@ -35,8 +35,14 @@ typedef void (*GazetteUIFeedChosen)(int feedIndex);
    preference asks for it; the window itself has no opinion. */
 typedef void (*GazetteUIArticleChosen)(int articleIndex);
 
+/* Called when the user picks a group. A group is a place to read from, not
+   only a place to keep feeds: what the shell does with this is show every
+   article in it. */
+typedef void (*GazetteUIGroupChosen)(int groupIndex);
+
 Boolean   GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
-                        GazetteUIArticleChosen onArticleChosen);
+                        GazetteUIArticleChosen onArticleChosen,
+                        GazetteUIGroupChosen onGroupChosen);
 void      GazetteUIClose(void);
 WindowRef GazetteUIWindow(void);
 

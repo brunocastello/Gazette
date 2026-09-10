@@ -84,6 +84,7 @@ typedef struct {
 static WindowRef              gWindow;
 static GazetteUIFeedChosen    gOnFeedChosen;
 static GazetteUIArticleChosen gOnArticleChosen;
+static GazetteUIGroupChosen   gOnGroupChosen;
 
 static ControlRef gSidebarScroll;
 static ControlRef gListScroll;
@@ -409,10 +410,19 @@ static void RewrapReader(void)
     {
         char byline[192];
 
-        if (a->source[0] != '\0' && when[0] != '\0') {
-            snprintf(byline, sizeof byline, "%s - %s", a->source, when);
-        } else if (a->source[0] != '\0') {
-            snprintf(byline, sizeof byline, "%s", a->source);
+        const char *from = a->source;
+
+        /* In a group view the articles come from several feeds, so which one
+           this is from is worth saying. The feed's own name stands in when
+           the article does not name a publisher. */
+        if (from[0] == '\0' && GazetteFeedsCurrentGroup() >= 0) {
+            from = GazetteCoreFeedTitle(a->feed);
+        }
+
+        if (from[0] != '\0' && when[0] != '\0') {
+            snprintf(byline, sizeof byline, "%s - %s", from, when);
+        } else if (from[0] != '\0') {
+            snprintf(byline, sizeof byline, "%s", from);
         } else {
             snprintf(byline, sizeof byline, "%s", when);
         }
@@ -1159,6 +1169,11 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
                 return;
             } else {
                 gSelectedGroup = row.index;
+                DrawSidebar();
+                if (gOnGroupChosen != NULL) {
+                    gOnGroupChosen(row.index);
+                }
+                return;
             }
             DrawSidebar();
             return;
@@ -1430,7 +1445,8 @@ static ControlRef MakeScroll(long reference)
 }
 
 Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
-                      GazetteUIArticleChosen onArticleChosen)
+                      GazetteUIArticleChosen onArticleChosen,
+                      GazetteUIGroupChosen onGroupChosen)
 {
     OSStatus         err;
     Rect             bounds;
@@ -1442,6 +1458,7 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
 
     gOnFeedChosen    = onFeedChosen;
     gOnArticleChosen = onArticleChosen;
+    gOnGroupChosen   = onGroupChosen;
 
     SetRect(&bounds, 40, 48, 40 + 620, 48 + 420);
 

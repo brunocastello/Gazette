@@ -130,6 +130,21 @@ void GazetteFeedsRefreshCancel(void);
  */
 int GazetteFeedsLoadCache(int feedIndex, const char *url, long maxArticles);
 
+/*
+ * Load every enabled feed of a group, merged and newest first — what a group
+ * shows when it is selected. Returns the number of articles gathered.
+ *
+ * The store's ceiling applies to the whole group rather than to each feed in
+ * it, so a group of ten feeds is the newest kGazetteMaxArticles across the
+ * ten and not ten times that. Feeds with no cache contribute nothing and are
+ * not an error: a group is readable as soon as any one of its feeds has been
+ * fetched.
+ */
+int GazetteFeedsLoadGroup(int group, long maxArticles);
+
+/* Which group the store is showing, or -1 when it is showing one feed. */
+int GazetteFeedsCurrentGroup(void);
+
 /* When the loaded feed was last fetched, in seconds since 1970, or 0. Read
    from the cache; the auto-refresh timer uses it to decide what is stale. */
 long GazetteFeedsFetchedAt(void);

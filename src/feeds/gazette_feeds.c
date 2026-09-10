@@ -8,6 +8,7 @@
 #include "feeds/gazette_feeds.h"
 
 #include "extract/gazette_extract.h"
+#include "core/gazette_core.h"
 #include "feeds/gazette_index.h"
 #include "net/gazette_fetch.h"
 #include "portable/gazette_portable.h"
@@ -30,6 +31,7 @@ static int                gArticleCount;
 static char               gFeedTitle[kGazetteFeedTitleLen];
 static int                gCurrentFeed = -1;
 static int                gPendingFeed = -1;
+static int                gCurrentGroup = -1;
 
 static GazetteFeedParser *gParser;
 static GazetteFetch      *gFetch;
@@ -131,11 +133,17 @@ int GazetteFeedsCurrentFeed(void)
     return gCurrentFeed;
 }
 
+int GazetteFeedsCurrentGroup(void)
+{
+    return gCurrentGroup;
+}
+
 void GazetteFeedsClear(void)
 {
     gArticleCount = 0;
     gFeedTitle[0] = '\0';
     gCurrentFeed  = -1;
+    gCurrentGroup = -1;
     gFetchedAt    = 0;
 
     /* The held text is indexed by a position in the store that is about to
@@ -229,6 +237,7 @@ static int ArticleSink(const GazetteArticle *article, void *context)
     }
 
     gArticles[gArticleCount] = *article;
+    gArticles[gArticleCount].feed = gPendingFeed;
     /* The index knows, and knows across a refresh: an article that was read
        before this fetch replaced the store is still read. */
     gArticles[gArticleCount].read = GazetteIndexIsRead(article->link);
@@ -634,13 +643,24 @@ static void AppendBodyLine(GazetteArticle *article, const char *text)
     gz_copy_n(article->body + used, room, text, strlen(text));
 }
 
-int GazetteFeedsLoadCache(int feedIndex, const char *url, long maxArticles)
+/*
+ * Walk a feed's cache file, handing each complete article to emit. The two
+ * callers want the same parsing and different commit policies -- one feed
+ * appends in file order, a group merges by date -- so the policy is the
+ * callback and the parsing is here once.
+ *
+ * An article is only handed over when the next separator or the end of the
+ * file says its record is complete, so a cache truncated by a crash costs the
+ * article it was in the middle of and nothing else.
+ */
+static int ScanCache(const char *url, int feedIndex,
+                     void (*emit)(const GazetteArticle *a, void *ctx),
+                     void *ctx, char *titleOut, size_t titleCap,
+                     long *fetchedAtOut)
 {
     GazetteStoreFile *f;
     char              line[kGazetteArticleBodyLen + 8];
     GazetteArticle    article;
-    char              title[kGazetteFeedTitleLen];
-    long              fetchedAt = 0;
     int               count     = 0;
     int               inArticle = 0;
     long              n;
@@ -663,37 +683,33 @@ int GazetteFeedsLoadCache(int feedIndex, const char *url, long maxArticles)
     }
 
     memset(&article, 0, sizeof article);
-    title[0] = '\0';
+    article.feed = feedIndex;
 
-    /*
-     * Articles are built into a local and only committed to the store when
-     * the next separator or the end of the file says the record is complete.
-     * Nothing is written to gArticles until the first complete one, so a
-     * truncated cache leaves what was on screen alone.
-     */
     while ((n = GazetteStoreReadLine(f, line, (long)sizeof line)) >= 0) {
         char        tag  = (n > 0) ? line[0] : '\0';
         const char *rest = (n > 2) ? line + 2 : "";
 
         if (tag == '-') {
             if (inArticle) {
-                if (count == 0) {
-                    GazetteFeedsClear();
-                }
-                if (count < kGazetteMaxArticles &&
-                    (maxArticles <= 0 || count < maxArticles)) {
-                    gArticles[count++] = article;
-                }
+                emit(&article, ctx);
+                count++;
             }
             memset(&article, 0, sizeof article);
-            inArticle = 1;
+            article.feed = feedIndex;
+            inArticle    = 1;
             continue;
         }
 
         switch (tag) {
             case 'U': break;                /* the URL, for the reader's eye */
-            case 'F': gz_copy_n(title, sizeof title, rest, strlen(rest)); break;
-            case 'W': fetchedAt = gz_parse_dec(rest, strlen(rest), 0); break;
+            case 'F': if (titleOut != NULL) {
+                          gz_copy_n(titleOut, titleCap, rest, strlen(rest));
+                      }
+                      break;
+            case 'W': if (fetchedAtOut != NULL) {
+                          *fetchedAtOut = gz_parse_dec(rest, strlen(rest), 0);
+                      }
+                      break;
             case 'T': gz_copy_n(article.title, sizeof article.title,
                                 rest, strlen(rest)); break;
             case 'L': gz_copy_n(article.link, sizeof article.link,
@@ -707,23 +723,64 @@ int GazetteFeedsLoadCache(int feedIndex, const char *url, long maxArticles)
     }
 
     if (inArticle) {
-        if (count == 0) {
-            GazetteFeedsClear();
-        }
-        if (count < kGazetteMaxArticles &&
-            (maxArticles <= 0 || count < maxArticles)) {
-            gArticles[count++] = article;
-        }
+        emit(&article, ctx);
+        count++;
     }
 
     GazetteStoreClose(f);
+    return count;
+}
 
-    if (count == 0) {
+/* One feed: the store is emptied when the first complete article arrives, so
+   a cache that turns out to hold nothing leaves the window alone, and the
+   feed's own order is kept. */
+typedef struct {
+    int  count;
+    long max;
+} LoadOneCtx;
+
+static void EmitAppend(const GazetteArticle *a, void *ctx)
+{
+    LoadOneCtx *c = (LoadOneCtx *)ctx;
+
+    if (c->count == 0) {
+        GazetteFeedsClear();
+    }
+    if (c->count >= kGazetteMaxArticles ||
+        (c->max > 0 && c->count >= c->max)) {
+        c->count++;                 /* counted, not kept */
+        return;
+    }
+    gArticles[c->count++] = *a;
+}
+
+int GazetteFeedsLoadCache(int feedIndex, const char *url, long maxArticles)
+{
+    LoadOneCtx ctx;
+    char       title[kGazetteFeedTitleLen];
+    long       fetchedAt = 0;
+    int        i;
+
+    ctx.count = 0;
+    ctx.max   = maxArticles;
+    title[0]  = '\0';
+
+    ScanCache(url, feedIndex, EmitAppend, &ctx, title, sizeof title,
+              &fetchedAt);
+
+    if (ctx.count == 0) {
         return 0;
     }
+    if (ctx.count > kGazetteMaxArticles) {
+        ctx.count = kGazetteMaxArticles;
+    }
+    if (maxArticles > 0 && ctx.count > (int)maxArticles) {
+        ctx.count = (int)maxArticles;
+    }
 
-    gArticleCount = count;
+    gArticleCount = ctx.count;
     gCurrentFeed  = feedIndex;
+    gCurrentGroup = -1;
     gFetchedAt    = fetchedAt;
 
     /* Where a later Flush writes the read state back to. A refresh sets this
@@ -735,11 +792,84 @@ int GazetteFeedsLoadCache(int feedIndex, const char *url, long maxArticles)
     /* The cache says what the articles are; the index says which of them have
        been read. Applied here rather than stored in the cache so a group view
        and a feed view agree about the same article. */
-    for (count = 0; count < gArticleCount; count++) {
-        gArticles[count].read = GazetteIndexIsRead(gArticles[count].link);
+    for (i = 0; i < gArticleCount; i++) {
+        gArticles[i].read = GazetteIndexIsRead(gArticles[i].link);
     }
     PublishCounts();
     return 1;
+}
+
+/*
+ * A group: every enabled feed in it, merged newest first. Inserted in date
+ * order as they arrive rather than gathered and sorted, because gathering
+ * ten feeds' articles first would need ten times the store to hold what only
+ * kGazetteMaxArticles of will be kept.
+ */
+static void EmitMerge(const GazetteArticle *a, void *ctx)
+{
+    int at;
+
+    (void)ctx;
+
+    for (at = 0; at < gArticleCount; at++) {
+        if (gArticles[at].date < a->date) {
+            break;
+        }
+    }
+
+    if (gArticleCount >= kGazetteMaxArticles) {
+        if (at >= kGazetteMaxArticles) {
+            return;                 /* older than everything already held */
+        }
+        gArticleCount = kGazetteMaxArticles - 1;    /* the oldest drops out */
+    }
+
+    memmove(&gArticles[at + 1], &gArticles[at],
+            (size_t)(gArticleCount - at) * sizeof gArticles[0]);
+    gArticles[at] = *a;
+    gArticleCount++;
+}
+
+int GazetteFeedsLoadGroup(int group, long maxArticles)
+{
+    int cap = kGazetteMaxArticles;
+    int i;
+
+    if (maxArticles > 0 && maxArticles < cap) {
+        cap = (int)maxArticles;
+    }
+
+    GazetteFeedsClear();
+
+    for (i = 0; i < GazetteCoreFeedCount(); i++) {
+        if (GazetteCoreFeedGroup(i) != group || !GazetteCoreFeedEnabled(i)) {
+            continue;
+        }
+        ScanCache(GazetteCoreFeedURL(i), i, EmitMerge, NULL, NULL, 0, NULL);
+
+        /* Trim as we go, so ten feeds cost one store rather than ten. */
+        if (gArticleCount > cap) {
+            gArticleCount = cap;
+        }
+    }
+
+    gCurrentFeed  = -1;
+    gCurrentGroup = group;
+    gFetchedAt    = 0;
+
+    /*
+     * No single feed owns this view, so there is nothing for Flush to write
+     * back against and nothing to refresh into. Marking an article read still
+     * works: the index is keyed by the article, not by the feed.
+     */
+    gCurrentURL[0] = '\0';
+    gz_copy_n(gFeedTitle, sizeof gFeedTitle, GazetteCoreGroupName(group),
+              strlen(GazetteCoreGroupName(group)));
+
+    for (i = 0; i < gArticleCount; i++) {
+        gArticles[i].read = GazetteIndexIsRead(gArticles[i].link);
+    }
+    return gArticleCount;
 }
 
 void GazetteFeedsForgetCache(const char *url)

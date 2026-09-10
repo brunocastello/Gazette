@@ -64,6 +64,8 @@ static void    HandleQuit(void);
 static void    HandleRefresh(void);
 static void    ShowFeed(int feedIndex);
 static void    ShowArticle(int articleIndex);
+static void    ShowGroup(int groupIndex);
+static Boolean AdvanceGroupRefresh(void);
 static void    PumpRefresh(void);
 static void    PumpFullText(void);
 static void    CheckAutoRefresh(void);
@@ -90,6 +92,17 @@ static Boolean gNetUp = false;
 /* When the running refresh started, so it can be timed, and when the last one
    finished, so auto-refresh knows how long it has been. Both in ticks. */
 static unsigned long gLastRefreshTicks;
+
+/*
+ * Refreshing a group is the one place Gazette fetches more than one feed, and
+ * it does it one after another rather than at once: there is a single
+ * connection, and a queue of feeds fetched in turn is the whole of what a
+ * "refresh all" needs to be here.
+ */
+static int gQueue[kGazetteMaxFeeds];
+static int gQueueCount;
+static int gQueueAt;
+static int gQueueGroup = -1;       /* -1 when no group refresh is running */
 
 /* Menu IDs */
 enum {
@@ -202,7 +215,7 @@ static Boolean InitGazette(void)
         return false;
     }
 
-    if (!GazetteUIOpen(ShowFeed, ShowArticle)) {
+    if (!GazetteUIOpen(ShowFeed, ShowArticle, ShowGroup)) {
         return false;
     }
 
@@ -1029,13 +1042,88 @@ static void PumpFullText(void)
     }
 }
 
+/*
+ * A group has been selected: show every article from every enabled feed in
+ * it, merged newest first. Read out of the caches, so it is instant and works
+ * with the machine unplugged — a group is readable as soon as any one of its
+ * feeds has been fetched.
+ */
+static void ShowGroup(int groupIndex)
+{
+    char message[224];
+    int  count;
+
+    /* The feed being left may have had something read in it. */
+    GazetteFeedsFlush();
+
+    count = GazetteFeedsLoadGroup(groupIndex, PrefsMaxArticles());
+    GazetteUIArticlesChanged();
+
+    if (count == 0) {
+        GazetteUISetStatus("Nothing cached in this group yet - "
+                           "press Command-R to fetch it.");
+        return;
+    }
+    snprintf(message, sizeof message, "%d articles from %s.", count,
+             GazetteCoreGroupName(groupIndex));
+    GazetteUISetStatus(message);
+}
+
+/*
+ * Start the next feed of a group refresh, or finish it. Returns true while
+ * the queue is still running, which is what tells PumpRefresh to keep the
+ * window as it is rather than showing the one feed that just landed.
+ */
+static Boolean AdvanceGroupRefresh(void)
+{
+    char message[224];
+
+    if (gQueueGroup < 0) {
+        return false;
+    }
+
+    while (gQueueAt < gQueueCount) {
+        int feed = gQueue[gQueueAt++];
+
+        if (GazetteFeedsRefreshStart(feed, GazetteCoreFeedURL(feed),
+                                     PrefsMaxArticles())) {
+            snprintf(message, sizeof message, "Fetching %s (%d of %d)\311",
+                     GazetteCoreFeedTitle(feed), gQueueAt, gQueueCount);
+            GazetteUISetStatus(message);
+            return true;
+        }
+        /* A feed that will not start is skipped rather than stopping the
+           rest of the group. */
+    }
+
+    /* Done: the store holds whichever feed came last, so the group has to be
+       gathered again from the caches they all just wrote. */
+    {
+        int group = gQueueGroup;
+        int count;
+
+        gQueueGroup = -1;
+        gQueueCount = 0;
+        gQueueAt    = 0;
+
+        count = GazetteFeedsLoadGroup(group, PrefsMaxArticles());
+        GazetteUIArticlesChanged();
+        snprintf(message, sizeof message, "%d articles from %s.", count,
+                 GazetteCoreGroupName(group));
+        GazetteUISetStatus(message);
+    }
+    return false;
+}
+
 static void HandleRefresh(void)
 {
     char message[224];
+    int  kind      = 0;
+    int  selection = 0;
     int  feedIndex = GazetteUISelectedFeed();
 
     if (GazetteFeedsRefreshGetState() == kGazetteRefreshRunning) {
-        return;                     /* one at a time until Phase 4 */
+        return;                     /* one connection, one fetch */
     }
     if (!gNetUp) {
         GazetteUISetStatus("No network - check the TCP/IP control panel.");
@@ -1043,6 +1131,27 @@ static void HandleRefresh(void)
     }
     if (GazetteCoreFeedCount() == 0) {
         GazetteUISetStatus("No feeds configured.");
+        return;
+    }
+
+    /* A group refreshes everything in it, in turn. */
+    if (GazetteUISelection(&kind, &selection) && kind == kGazetteRowGroup) {
+        int i;
+
+        gQueueCount = 0;
+        gQueueAt    = 0;
+        for (i = 0; i < GazetteCoreFeedCount(); i++) {
+            if (GazetteCoreFeedGroup(i) == selection &&
+                GazetteCoreFeedEnabled(i)) {
+                gQueue[gQueueCount++] = i;
+            }
+        }
+        if (gQueueCount == 0) {
+            GazetteUISetStatus("This group has no feeds switched on.");
+            return;
+        }
+        gQueueGroup = selection;
+        (void)AdvanceGroupRefresh();
         return;
     }
 
@@ -1072,6 +1181,12 @@ static void PumpRefresh(void)
         case kGazetteRefreshDone:
             gLastRefreshTicks = TickCount();
             lastProgress      = -1;
+            if (AdvanceGroupRefresh()) {
+                break;              /* more of the group still to fetch */
+            }
+            if (gQueueGroup >= 0) {
+                break;              /* the queue just finished and redrew */
+            }
             GazetteUIArticlesChanged();
             snprintf(message, sizeof message, "%d articles from %s",
                      GazetteFeedsArticleCount(),
@@ -1084,6 +1199,14 @@ static void PumpRefresh(void)
         case kGazetteRefreshFailed:
             gLastRefreshTicks = TickCount();
             lastProgress      = -1;
+            /* One feed of a group failing is not the group failing: carry on
+               to the next and let the ones that worked show. */
+            if (AdvanceGroupRefresh()) {
+                break;
+            }
+            if (gQueueGroup >= 0) {
+                break;
+            }
             snprintf(message, sizeof message, "Failed: %s",
                      GazetteFeedsRefreshErrorText());
             GazetteUISetStatus(message);
@@ -1126,6 +1249,15 @@ static void CheckAutoRefresh(void)
         return;                     /* 0 means manual only */
     }
     if (!gNetUp || GazetteFeedsRefreshGetState() == kGazetteRefreshRunning) {
+        return;
+    }
+    if (gQueueGroup >= 0) {
+        return;                     /* a group refresh is already running */
+    }
+    /* A group is on screen. The clock refreshes one feed, and replacing a
+       merged view with that one feed's articles is not what anyone asked
+       for -- Command-R on the group is. */
+    if (GazetteFeedsCurrentGroup() >= 0) {
         return;
     }
     /* A feed switched off is skipped by the clock, not by the user: asking

@@ -74,6 +74,14 @@ typedef struct {
      * article is unread, which memset already makes true.
      */
     int  read;
+
+    /*
+     * Which feed in the preferences it came from. The store used to hold one
+     * feed's articles, where the answer was the same for all of them and did
+     * not need saying; a group view holds several feeds' at once, and each
+     * headline still has to know whose it is.
+     */
+    int  feed;
 } GazetteArticle;
 
 /*
