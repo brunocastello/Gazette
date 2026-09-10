@@ -78,7 +78,7 @@ enum {
     kIconSize       = 16,       /* the small icon beside a row's name */
     kIconGap        = 3,
 
-    kMinSidebar    = 96,
+    kMinSidebar    = 120,
     kMaxSidebarPad = 160,       /* how much room the right side must keep     */
     kMinListHeight = 3 * kRowHeight,
     kMinReader     = 3 * kReaderLead,
@@ -152,12 +152,13 @@ static Rect gSidebarPane;
 static Rect gSidebarHeader;
 static Rect gListPane;
 static Rect gListHeader;
-static Rect gReaderRect;
+static Rect gReaderPane;        /* the framed box, bar included */
+static Rect gReaderRect;        /* the text inside it, bar excluded */
 static Rect gStatusRect;
 static Rect gVDivider;          /* between sidebar and the right side */
 static Rect gHDivider;          /* between headlines and the article  */
 
-static short gSidebarWidth = 168;
+static short gSidebarWidth = 200;
 static short gListShare    = 45;    /* percent of the right side given to the
                                        headline list; the article gets the rest */
 
@@ -183,12 +184,22 @@ static char gStatus[192];
  *
  * The row height follows from the font rather than the other way round.
  */
-static short gListFont     = kFontIDGeneva;
-static short gListSize     = 10;
-static short gChromeFont   = kFontIDGeneva;
-static short gChromeSize   = 12;
-static short gReadFont     = kFontIDGeneva;
-static short gReadSize     = 12;
+/*
+ * One font, one size, for the whole window — the sidebar, the headlines, the
+ * article, the two headers and the status line. This file used to set the
+ * chrome in the system font, the lists in the views font and the article in
+ * the application font, on the theory that each is what the Appearance
+ * Manager says that part of a window is written in. The result was a window
+ * with three different sizes in it, and Newsstand — which is the thing this
+ * is a successor to — uses one throughout.
+ *
+ * It is the application font at the default size, which is Geneva 12 on a
+ * stock Mac OS 9: the system's own default for the text a document is made
+ * of. Deliberately *not* the system font, which is Charcoal — that is for
+ * window titles and menus, and a list set in it reads as a dialog.
+ */
+static short gUIFont = kFontIDGeneva;
+static short gUISize = 12;
 
 static short gRowHeight    = kRowHeight;
 static short gRowBaseline  = kBaseline;
@@ -230,80 +241,44 @@ static void DrawHeaderTitle(const Rect *r, const char *text);
 /* Small helpers                                                       */
 /* ------------------------------------------------------------------ */
 
-/* The font a list's rows are written in, the one its chrome is, and the one
-   the article is set in. */
-static void UseListFont(void)
+/* The window's font, which is the only one it has. */
+static void UseUIFont(void)
 {
-    TextFont(gListFont);
-    TextSize(gListSize);
+    TextFont(gUIFont);
+    TextSize(gUISize);
     TextFace(normal);
-}
-
-static void UseChromeFont(void)
-{
-    TextFont(gChromeFont);
-    TextSize(gChromeSize);
-    TextFace(normal);
-}
-
-/* Ask a theme font its name and size, and turn the name into a font ID. */
-static void AskThemeFont(ThemeFontID which, short *font, short *size)
-{
-    Str255 name;
-    SInt16 points = 0;
-    Style  face   = 0;
-
-    if (GetThemeFont(which, smSystemScript, name, &points, &face) == noErr &&
-        name[0] != 0 && points > 0) {
-        short id = 0;
-
-        GetFNum(name, &id);
-        *font = id;                     /* 0 is the system font, which is legal */
-        *size = points;
-    }
 }
 
 /*
- * The three fonts, asked for once with the window's port current.
- *
- * kThemeSystemFont for the chrome — Charcoal 12 on a stock Mac OS 9, which
- * is the system's own font at the system's own size, and what every window
- * header and status line on the machine is set in. This file used to use
- * the *small* system font for those, which is Geneva 9, and the result was
- * a window whose chrome was smaller than everything around it.
- *
- * kThemeViewsFont for the two lists — Geneva 10, what the Finder sets a list
- * view in. The application font at its default size for the article, which
- * is what a document is set in and is the one place on screen holding
- * prose rather than labels.
+ * The font, and everything sized from it: row height, baselines, the two
+ * chrome bars and the headline list's date column. Called once, with the
+ * window's port current, so that nothing in the layout is a number chosen
+ * to suit a font that might not be the one in use.
  */
-static void MeasureThemeFonts(void)
+static void MeasureFont(void)
 {
     FontInfo info;
 
-    AskThemeFont(kThemeViewsFont, &gListFont, &gListSize);
-    AskThemeFont(kThemeSystemFont, &gChromeFont, &gChromeSize);
-
-    gReadFont = GetAppFont();
-    gReadSize = GetDefFontSize();
-    if (gReadSize <= 0) {
-        gReadSize = 12;
+    gUIFont = GetAppFont();
+    gUISize = GetDefFontSize();
+    if (gUISize < 9 || gUISize > 24) {
+        gUISize = 12;                   /* the Mac OS 9 default */
     }
 
-    UseListFont();
+    UseUIFont();
     GetFontInfo(&info);
+
     gRowAscent  = info.ascent;
     gRowDescent = info.descent;
-    gRowHeight  = (short)(info.ascent + info.descent + info.leading + 2);
+    gRowHeight  = (short)(info.ascent + info.descent + info.leading + 3);
     if (gRowHeight < kIconSize + 2) {
         gRowHeight = kIconSize + 2;     /* a row has to hold its icon */
     }
     gRowBaseline = (short)(info.ascent +
                            ((gRowHeight - info.ascent - info.descent) / 2));
+
     gDateColumn = (short)(TextWidth("Sep 00 00:00", 0, 12) + kTextInset * 2);
 
-    UseChromeFont();
-    GetFontInfo(&info);
     gHeaderHeight = (short)(info.ascent + info.descent + info.leading + 5);
     if (gHeaderHeight < kHeaderHeight) {
         gHeaderHeight = kHeaderHeight;
@@ -596,8 +571,14 @@ static void Layout(void)
     SetRect(&gHDivider, rightLeft, listBottom,
             bounds.right, (short)(listBottom + kDividerWidth));
 
-    SetRect(&gReaderRect, rightLeft, (short)(listBottom + kDividerWidth),
-            (short)(bounds.right - kScrollWidth), contentBottom);
+    /* The same shape as a list box: one framed box holding the text and the
+       scroll bar, rather than a framed box with a bar bolted to its side. */
+    SetRect(&gReaderPane, rightLeft, (short)(listBottom + kDividerWidth),
+            bounds.right, contentBottom);
+    SetRect(&gReaderRect, (short)(gReaderPane.left + 1),
+            (short)(gReaderPane.top + 1),
+            (short)(gReaderPane.right - kScrollWidth),
+            (short)(gReaderPane.bottom - 1));
 
     /* Short of the grow box, which shares the bottom right corner. */
     SetRect(&gStatusRect, bounds.left, contentBottom,
@@ -613,16 +594,16 @@ static void Layout(void)
         SetControlBounds(gListHeaderCtl, &gListHeader);
     }
     if (gReaderCtl != NULL) {
-        SetControlBounds(gReaderCtl, &gReaderRect);
+        SetControlBounds(gReaderCtl, &gReaderPane);
     }
 
-    /* The reader's bar sits in the gutter the pane leaves for it, overlapping
-       the pane frame by a pixel the way Platinum does. */
+    /* Inside the frame, down the right hand edge — where a List Box control
+       puts its own, so all three panes read as the same thing. */
     if (gReaderScroll != NULL) {
-        MoveControl(gReaderScroll, (short)(gReaderRect.right - 1),
-                    gReaderRect.top);
-        SizeControl(gReaderScroll, (short)(kScrollWidth + 1),
-                    (short)(gReaderRect.bottom - gReaderRect.top));
+        MoveControl(gReaderScroll, (short)(gReaderPane.right - kScrollWidth),
+                    gReaderPane.top);
+        SizeControl(gReaderScroll, kScrollWidth,
+                    (short)(gReaderPane.bottom - gReaderPane.top));
     }
 
     SizeReader();
@@ -793,16 +774,16 @@ static size_t AppendBody(size_t used, const char *body)
    is already in the record. Setting a style on an insertion point and
    trusting the next TEInsert to pick it up is documented but delicate;
    styling text that is already there cannot be misread. */
-static void ApplyRunStyle(long start, long end, Boolean chrome, short face)
+static void ApplyRunStyle(long start, long end, short face)
 {
     TextStyle style;
 
     if (gReaderTE == NULL || end <= start) {
         return;
     }
-    style.tsFont = chrome ? gListFont : gReadFont;
+    style.tsFont = gUIFont;
     style.tsFace = face;
-    style.tsSize = chrome ? gListSize : gReadSize;
+    style.tsSize = gUISize;
     style.tsColor.red   = 0;
     style.tsColor.green = 0;
     style.tsColor.blue  = 0;
@@ -843,7 +824,7 @@ static void SetReaderText(void)
 
         used = AppendText(0, kNothing, sizeof kNothing - 1);
         TESetText(gReaderText, (long)used, gReaderTE);
-        ApplyRunStyle(0, (long)used, false, normal);
+        ApplyRunStyle(0, (long)used, normal);
     } else {
         used     = AppendText(0, a->title, strlen(a->title));
         titleEnd = (long)used;
@@ -906,12 +887,11 @@ static void SetReaderText(void)
 
         TESetText(gReaderText, (long)used, gReaderTE);
 
-        /* The headline and the body in the application font the article is
-           set in, the byline a size down in the views font — it is a label
-           about the article rather than part of it. */
-        ApplyRunStyle(0, titleEnd, false, bold);
-        ApplyRunStyle(titleEnd, bylineEnd, true, normal);
-        ApplyRunStyle(bylineEnd, (long)used, false, normal);
+        /* One font throughout; the headline is the only thing set apart,
+           and weight is enough to do it. */
+        ApplyRunStyle(0, titleEnd, bold);
+        ApplyRunStyle(titleEnd, bylineEnd, normal);
+        ApplyRunStyle(bylineEnd, (long)used, normal);
     }
 
     TESetSelect(0, 0, gReaderTE);
@@ -1005,7 +985,7 @@ static void DrawHeaderTitle(const Rect *r, const char *text)
 {
     Rect inner = *r;
 
-    UseChromeFont();
+    UseUIFont();
     SetThemeTextColor(kThemeTextColorWindowHeaderActive, 8, true);
 
     inner.left  = (short)(inner.left + kTextInset + 2);
@@ -1079,34 +1059,6 @@ static void HighlightRow(const Rect *row, Boolean focused)
     SetThemeTextColor(kThemeTextColorListView, 8, true);
     FrameRect(row);
     ForeColor(blackColor);
-}
-
-/* A white list area with the Platinum list-box frame around it. Used by the
-   reader, which is not a list but is framed like one. */
-static void BeginListArea(const Rect *r, RgnHandle *saveClip)
-{
-    Rect frame = *r;
-
-    *saveClip = NewRgn();
-    if (*saveClip != NULL) {
-        GetClip(*saveClip);
-    }
-
-    frame.right = (short)(frame.right + 1);     /* the scroll bar overlaps */
-    DrawThemeListBoxFrame(&frame, kThemeStateActive);
-
-    SetThemeBackground(kThemeBrushListViewBackground, 8, true);
-    EraseRect(r);
-    ClipRect(r);
-}
-
-static void EndListArea(RgnHandle saveClip)
-{
-    SetThemeBackground(kThemeBrushDocumentWindowBackground, 8, true);
-    if (saveClip != NULL) {
-        SetClip(saveClip);
-        DisposeRgn(saveClip);
-    }
 }
 
 /*
@@ -1301,7 +1253,7 @@ static void DrawSidebarCell(const Rect *cell, short row, Boolean selected)
         return;
     }
 
-    UseListFont();
+    UseUIFont();
     baseline = (short)(cell->top + gRowBaseline);
     iconLeft = (short)(cell->left + kTextInset + kTriangleColumn);
 
@@ -1377,7 +1329,7 @@ static void DrawArticleCell(const Rect *cell, short row, Boolean selected)
         return;
     }
 
-    UseListFont();
+    UseUIFont();
     baseline = (short)(cell->top + gRowBaseline);
 
     /* The date sits in a fixed column so the headlines line up; an article
@@ -1461,7 +1413,7 @@ static void DrawArticlePane(void)
     }
     ClipRect(&view);
 
-    UseListFont();
+    UseUIFont();
     SetThemeTextColor(kThemeTextColorListView, 8, true);
     MoveTo((short)(view.left + kTextInset),
            (short)(view.top + gRowBaseline + 1));
@@ -1496,19 +1448,35 @@ static pascal void ReaderDraw(ControlRef control, SInt16 part)
     }
     SetPortWindowPort(gWindow);
 
-    BeginListArea(&gReaderRect, &clip);
+    /* The frame goes round the whole pane, scroll bar included, which is
+       what a List Box control's frame does. */
+    DrawThemeListBoxFrame(&gReaderPane, kThemeStateActive);
+
+    clip = NewRgn();
+    if (clip != NULL) {
+        GetClip(clip);
+    }
+    SetThemeBackground(kThemeBrushListViewBackground, 8, true);
+    EraseRect(&gReaderRect);
+    SetThemeBackground(kThemeBrushDocumentWindowBackground, 8, true);
+    ClipRect(&gReaderRect);
+
     if (gReaderTE != NULL) {
         Rect view = (**gReaderTE).viewRect;   /* not a pointer into the
                                                  handle, which can move */
 
         TEUpdate(&view, gReaderTE);
     }
-    EndListArea(clip);
 
-    /* The ring the two lists get from their CDEF, drawn by hand here because
-       a user pane has no idea what it contains. It is still the Appearance
+    if (clip != NULL) {
+        SetClip(clip);
+        DisposeRgn(clip);
+    }
+
+    /* The ring the two lists get from their CDEF, drawn here because a user
+       pane has no idea what it contains. It is still the Appearance
        Manager's ring, not a rectangle of our own devising. */
-    (void)DrawThemeFocusRect(&gReaderRect,
+    (void)DrawThemeFocusRect(&gReaderPane,
                              (Boolean)(gReaderCtl != NULL &&
                                        GetControlValue(gReaderCtl) != 0));
 }
@@ -1533,7 +1501,7 @@ static void DrawStatusText(void)
     SetThemeBackground(kThemeBrushDocumentWindowBackground, 8, true);
     EraseRect(&gStatusRect);
 
-    UseChromeFont();
+    UseUIFont();
     SetThemeTextColor(kThemeTextColorDialogActive, 8, true);
     MoveTo((short)(gStatusRect.left + kTextInset + 4),
            (short)(gStatusRect.top + gChromeBase));
@@ -2461,10 +2429,9 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
     gReaderFocusUPP = NewControlUserPaneFocusUPP(ReaderFocus);
     gReaderTrackUPP = NewControlUserPaneTrackingUPP(ReaderTrack);
 
-    /* Before anything is laid out: the row height comes from the theme's
-       views font and the chrome's bars from the system font, and the layout
-       is in both. */
-    MeasureThemeFonts();
+    /* Before anything is laid out: every height in the layout comes from
+       the font. */
+    MeasureFont();
     LoadRowIcons();
 
     /* Lay the rectangles out before the lists, so each one is born the size
@@ -2493,7 +2460,7 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
      * AdvanceKeyboardFocus would skip straight past the pane a reader spends
      * all their time in.
      */
-    if (CreateUserPaneControl(gWindow, &gReaderRect,
+    if (CreateUserPaneControl(gWindow, &gReaderPane,
                               kControlSupportsFocus | kControlHandlesTracking,
                               &gReaderCtl) != noErr || gReaderCtl == NULL) {
         GazetteUIClose();
@@ -2517,9 +2484,7 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
         Rect view;
 
         ReaderRects(&view);
-        TextFont(kFontIDGeneva);
-        TextSize(10);
-        TextFace(normal);
+        UseUIFont();
         gReaderTE = TEStyleNew(&view, &view);
     }
     if (gReaderTE == NULL) {

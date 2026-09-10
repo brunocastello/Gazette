@@ -235,6 +235,21 @@ static Boolean InitGazette(void)
 {
     InitCursor();
 
+    /*
+     * Before any control, menu or window exists. Without this the Appearance
+     * Manager hands the application the *pre-Appearance* control definitions
+     * — System 7's — and every scroll bar, list frame and placard draws flat
+     * and square instead of Platinum. It is the one call that decides whether
+     * the whole interface looks like Mac OS 9 or like 1991, and it was
+     * missing: the scroll bars looked hand-drawn because in effect they were
+     * being drawn by a CDEF that predates the theme.
+     *
+     * Carbon applications are documented as being Appearance clients
+     * implicitly, but that is Mac OS X. On Mac OS 9 CarbonLib sits on top of
+     * the real Appearance Manager and the registration is still wanted.
+     */
+    (void)RegisterAppearanceClient();
+
     /* Preferences before anything is drawn: the window's first update event
        already wants the feed list. */
     (void)GazetteCoreInit();
