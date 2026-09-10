@@ -224,7 +224,7 @@ static void DrawArticlePane(void);
 static void DrawReader(void);
 static void DrawStatus(void);
 static void DrawStatusText(void);
-static void DrawHeaderTitle(const Rect *r, const char *text, Boolean centre);
+static void DrawHeaderTitle(const Rect *r, const char *text);
 
 /* ------------------------------------------------------------------ */
 /* Small helpers                                                       */
@@ -1001,33 +1001,18 @@ static pascal void ScrollAction(ControlRef control, ControlPartCode part)
  * and not the placard this used to draw. The control has no title of its
  * own, so the text goes on top of it in the theme's small system font.
  */
-static void DrawHeaderTitle(const Rect *r, const char *text, Boolean centre)
+static void DrawHeaderTitle(const Rect *r, const char *text)
 {
-    Rect  inner = *r;
-    short width;
-    short left;
+    Rect inner = *r;
 
     UseChromeFont();
     SetThemeTextColor(kThemeTextColorWindowHeaderActive, 8, true);
 
     inner.left  = (short)(inner.left + kTextInset + 2);
     inner.right = (short)(inner.right - kTextInset);
-    width = (short)(inner.right - inner.left);
-    left  = inner.left;
 
-    /* The sidebar's title is centred over its list, the way "Folders" is in
-       Outlook Express; the headline list's is left-aligned because it says
-       what is being shown and how much of it, and that reads as a label. */
-    if (centre) {
-        short text_width = (short)TextWidth(text, 0, (short)strlen(text));
-
-        if (text_width < width) {
-            left = (short)(inner.left + (width - text_width) / 2);
-        }
-    }
-
-    MoveTo(left, (short)(r->top + gChromeBase));
-    DrawTruncated(text, (short)(inner.right - left));
+    MoveTo(inner.left, (short)(r->top + gChromeBase));
+    DrawTruncated(text, (short)(inner.right - inner.left));
 
     ForeColor(blackColor);
 }
@@ -1621,8 +1606,8 @@ void GazetteUIUpdate(void)
 
     /* Their titles go on top of them: a window header control and a placard
        have no text of their own. */
-    DrawHeaderTitle(&gSidebarHeader, "Feeds", true);
-    DrawHeaderTitle(&gListHeader, header, false);
+    DrawHeaderTitle(&gSidebarHeader, "Feeds");
+    DrawHeaderTitle(&gListHeader, header);
     DrawStatusText();
 
     /* The grow box lives in the content region, so it is the application
