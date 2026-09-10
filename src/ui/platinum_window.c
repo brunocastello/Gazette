@@ -2444,6 +2444,29 @@ static Boolean MakeListBox(ListDefUPP defProc, const Rect *bounds,
     return true;
 }
 
+/*
+ * A control from its procID rather than from a Create…Control call.
+ *
+ * NewControl is "in CarbonLib 1.0 and later"; CreateWindowHeaderControl,
+ * CreatePlacardControl and CreateUserPaneControl are all "1.1 and later",
+ * and they do nothing NewControl cannot with the same CDEF. Using them
+ * bought three entry points that a CFM loader has to resolve at launch, and
+ * an import an installed CarbonLib does not export is what produces
+ *
+ *     The application "Gazette" could not be opened because "CarbonLib"
+ *     could not be found.
+ *
+ * — a famously misleading message that means "a symbol was missing", not
+ * "the file was missing". Fewer new entry points, fewer ways to fail.
+ *
+ * A user pane's feature bits go in the control's value, which is where a
+ * 'CNTL' resource puts them and what the CDEF reads at creation.
+ */
+static ControlRef MakeControl(const Rect *bounds, short procID, short value)
+{
+    return NewControl(gWindow, bounds, "\p", true, value, 0, 0, procID, 0);
+}
+
 static ControlRef MakeScroll(long reference)
 {
     Rect r;
@@ -2517,11 +2540,11 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
 
     /* The headers first, so that they are behind the lists in the hierarchy
        and a list's frame wins where the two meet by a pixel. */
-    (void)CreateWindowHeaderControl(gWindow, &gSidebarHeader, true,
-                                    &gSidebarHeaderCtl);
-    (void)CreateWindowHeaderControl(gWindow, &gListHeader, true,
-                                    &gListHeaderCtl);
-    (void)CreatePlacardControl(gWindow, &gStatusRect, &gStatusCtl);
+    gSidebarHeaderCtl = MakeControl(&gSidebarHeader,
+                                    kControlWindowListViewHeaderProc, 0);
+    gListHeaderCtl    = MakeControl(&gListHeader,
+                                    kControlWindowListViewHeaderProc, 0);
+    gStatusCtl        = MakeControl(&gStatusRect, kControlPlacardProc, 0);
 
     if (!MakeListBox(gSidebarLDEF, &gSidebarPane, &gSidebarCtl, &gSidebarList) ||
         !MakeListBox(gArticleLDEF, &gListPane, &gArticleCtl, &gArticleList)) {
@@ -2535,9 +2558,10 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
      * AdvanceKeyboardFocus would skip straight past the pane a reader spends
      * all their time in.
      */
-    if (CreateUserPaneControl(gWindow, &gReaderPane,
-                              kControlSupportsFocus | kControlHandlesTracking,
-                              &gReaderCtl) != noErr || gReaderCtl == NULL) {
+    gReaderCtl = MakeControl(&gReaderPane, kControlUserPaneProc,
+                             (short)(kControlSupportsFocus |
+                                     kControlHandlesTracking));
+    if (gReaderCtl == NULL) {
         GazetteUIClose();
         return false;
     }
