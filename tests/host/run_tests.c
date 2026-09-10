@@ -2221,6 +2221,51 @@ static void TestExtract(void)
     }
 }
 
+/* Discovery reached the UI in Phase 4, so what it will and will not accept
+   is now the difference between "paste a home page" working and not. */
+static const char *DiscoverIn(GazetteFeedParser *p, const char *page)
+{
+    GazetteFeedParserInitDiscovery(p);
+    GazetteFeedParserFeed(p, page, strlen(page));
+    GazetteFeedParserFinish(p);
+    return GazetteFeedParserDiscovered(p);
+}
+
+static void TestDiscoveryPaths(void)
+{
+    static GazetteFeedParser p;
+
+    CheckStr("an RSS link is found", DiscoverIn(&p,
+             "<html><head><link rel=\"alternate\" "
+             "type=\"application/rss+xml\" href=\"/feed.xml\"></head></html>"),
+             "/feed.xml");
+
+    CheckStr("an Atom link too", DiscoverIn(&p,
+             "<html><head><link type=\"application/atom+xml\" "
+             "rel=\"alternate\" href=\"https://e/atom\"></head></html>"),
+             "https://e/atom");
+
+    /* Attribute order is not fixed, and rel is often left out entirely. */
+    CheckStr("rel may be absent", DiscoverIn(&p,
+             "<link type=\"application/rss+xml\" href=\"a.xml\">"), "a.xml");
+
+    CheckStr("a stylesheet link is not a feed", DiscoverIn(&p,
+             "<link rel=\"stylesheet\" type=\"text/css\" href=\"s.css\">"), "");
+
+    CheckStr("nor is an icon", DiscoverIn(&p,
+             "<link rel=\"icon\" href=\"/favicon.ico\">"), "");
+
+    CheckStr("a page with no feed link says nothing", DiscoverIn(&p,
+             "<html><body><p>Nothing here.</p></body></html>"), "");
+
+    /* The first one wins: a page listing several feeds is offering its main
+       one first, and asking the user to choose is a dialog nobody wants. */
+    CheckStr("the first link wins", DiscoverIn(&p,
+             "<link rel=\"alternate\" type=\"application/rss+xml\" href=\"1\">"
+             "<link rel=\"alternate\" type=\"application/rss+xml\" href=\"2\">"),
+             "1");
+}
+
 /* ------------------------------------------------------------------ */
 /* OPML                                                                */
 /* ------------------------------------------------------------------ */
@@ -2374,6 +2419,7 @@ int main(void)
     TestExtractTags();
     TestExtract();
     TestDiscovery();
+    TestDiscoveryPaths();
     TestGoogleNews();
 
     printf("Gazette host tests: %d checks, %d failure%s\n",

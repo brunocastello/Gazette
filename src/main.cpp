@@ -45,6 +45,8 @@
 #include "core/gazette_core.h"
 #include "feeds/gazette_feeds.h"
 #include "feeds/gazette_index.h"
+#include "portable/gazette_portable.h"
+#include "portable/gazette_url.h"
 #include "prefs/gazette_opml.h"
 #include "store/gazette_store.h"
 #include "net/gazette_net.h"
@@ -113,6 +115,17 @@ static int gQueue[kGazetteMaxFeeds];
 static int gQueueCount;
 static int gQueueAt;
 static int gQueueGroup = -1;       /* -1 when no group refresh is running */
+
+/*
+ * The feed a discovery attempt is still owed, or -1.
+ *
+ * Set when a feed is added, cleared the moment the attempt is made. Pasting a
+ * site's home page into New Feed is the case this exists for: the fetch comes
+ * back as a page rather than a feed, and the page says where its feed is.
+ * One attempt, and only for a feed just added, so a feed that has always
+ * worked can never be quietly replaced by something it links to.
+ */
+static int gDiscoverFeed = -1;
 
 /* Menu IDs */
 enum {
@@ -819,6 +832,10 @@ static void HandleNewFeed(void)
 
     GazetteCoreSavePrefs();
     GazetteUIFeedsChanged();
+
+    /* A newly added feed gets one attempt at discovery, so pasting a site's
+       home page finds the feed on it. */
+    gDiscoverFeed = added;
     ShowFeed(added);
 }
 
@@ -881,7 +898,10 @@ static void HandleEditFeed(void)
     GazetteUIFeedsChanged();
 
     /* A new address is a different feed with a different cache file, so this
-       reads that one — or fetches it when there is nothing cached yet. */
+       reads that one — or fetches it when there is nothing cached yet. It
+       earns a discovery attempt for the same reason a new feed does: what was
+       typed may be a home page. */
+    gDiscoverFeed = index;
     ShowFeed(index);
 }
 
@@ -1385,7 +1405,7 @@ static Boolean AdvanceGroupRefresh(void)
         int feed = gQueue[gQueueAt++];
 
         if (GazetteFeedsRefreshStart(feed, GazetteCoreFeedURL(feed),
-                                     PrefsMaxArticles())) {
+                                     PrefsMaxArticles(), 0)) {
             snprintf(message, sizeof message, "Fetching %s (%d of %d)\311",
                      GazetteCoreFeedTitle(feed), gQueueAt, gQueueCount);
             GazetteUISetStatus(message);
@@ -1455,7 +1475,8 @@ static void HandleRefresh(void)
     }
 
     if (!GazetteFeedsRefreshStart(feedIndex, GazetteCoreFeedURL(feedIndex),
-                                  PrefsMaxArticles())) {
+                                  PrefsMaxArticles(),
+                                  (feedIndex == gDiscoverFeed) ? 1 : 0)) {
         snprintf(message, sizeof message, "Failed: %s",
                  GazetteFeedsRefreshErrorText());
         GazetteUISetStatus(message);
@@ -1465,6 +1486,68 @@ static void HandleRefresh(void)
     snprintf(message, sizeof message, "Fetching %s\311",
              GazetteCoreFeedTitle(feedIndex));
     GazetteUISetStatus(message);
+}
+
+/*
+ * A refresh came back with nothing that looked like a feed, and the document
+ * named one. Point the feed at it and try again — which is what turns a
+ * pasted home page into a subscription.
+ *
+ * Returns true when a second refresh was started, so the caller leaves the
+ * status line and the window alone until that one lands.
+ */
+static Boolean TryDiscovery(void)
+{
+    const char *found = GazetteFeedsDiscoveredURL();
+    int         feed  = gDiscoverFeed;
+    GazetteURL  base;
+    GazetteURL  target;
+    char        resolved[kGazetteURLLen];
+    char        wasURL[kGazetteURLLen];
+    char        message[224];
+
+    /* One attempt, whatever happens below. */
+    gDiscoverFeed = -1;
+
+    if (feed < 0 || feed >= GazetteCoreFeedCount() || found[0] == '\0') {
+        return false;
+    }
+
+    snprintf(wasURL, sizeof wasURL, "%s", GazetteCoreFeedURL(feed));
+
+    /* The href is whatever the page wrote, so it is resolved against the page
+       it was found on -- "/feed" and "feed.xml" are both ordinary. */
+    if (!GazetteURLSplit(wasURL, strlen(wasURL), &base)) {
+        return false;
+    }
+    if (!GazetteURLResolve(&base, found, strlen(found), &target)) {
+        return false;
+    }
+    if (GazetteURLFormat(&target, resolved, sizeof resolved) == 0) {
+        return false;
+    }
+    if (gz_stricmp(resolved, wasURL) == 0) {
+        return false;               /* the page pointed at itself */
+    }
+
+    if (!GazetteCoreSetFeedURL(feed, resolved)) {
+        /* Already subscribed to under its real address. Say so rather than
+           leaving a duplicate that will never load. */
+        GazetteUISetStatus("That site's feed is already in the list.");
+        return false;
+    }
+    GazetteFeedsForgetCache(wasURL);
+    GazetteIndexForgetFeed(wasURL);
+    GazetteCoreSavePrefs();
+    GazetteUIFeedsChanged();
+
+    if (!GazetteFeedsRefreshStart(feed, resolved, PrefsMaxArticles(), 0)) {
+        return false;
+    }
+    snprintf(message, sizeof message, "Found a feed on that page - "
+             "fetching it\311");
+    GazetteUISetStatus(message);
+    return true;
 }
 
 static void PumpRefresh(void)
@@ -1498,6 +1581,10 @@ static void PumpRefresh(void)
         case kGazetteRefreshFailed:
             gLastRefreshTicks = TickCount();
             lastProgress      = -1;
+            /* What came back may have been a page that names its feed. */
+            if (TryDiscovery()) {
+                break;
+            }
             /* One feed of a group failing is not the group failing: carry on
                to the next and let the ones that worked show. */
             if (AdvanceGroupRefresh()) {

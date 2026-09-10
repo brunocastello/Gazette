@@ -44,6 +44,15 @@ static int                gPendingFeed = -1;
 static int                gCurrentGroup = -1;
 
 static GazetteFeedParser *gParser;
+
+/*
+ * A second scanner, in discovery mode, fed the same bytes as the first. That
+ * is cheaper than fetching the page twice, and the two answers arrive
+ * together: either the document parsed as a feed, or it did not and this says
+ * where the feed actually is.
+ */
+static GazetteFeedParser *gDiscover;
+static char               gDiscovered[kGazetteArticleLinkLen];
 static GazetteFetch      *gFetch;
 static GazetteRefreshState gState = kGazetteRefreshIdle;
 static long               gMaxArticles;
@@ -315,13 +324,17 @@ static int ArticleSink(const GazetteArticle *article, void *context)
     return 1;
 }
 
-/* The fetch's body sink: everything read goes straight into the parser. */
+/* The fetch's body sink: everything read goes straight into the parser, and
+   into the discovery scanner alongside it when one is running. */
 static int BodySink(const char *data, size_t len, void *context)
 {
     (void)context;
 
     if (gParser == NULL) {
         return 0;
+    }
+    if (gDiscover != NULL) {
+        (void)GazetteFeedParserFeed(gDiscover, data, len);
     }
     return GazetteFeedParserFeed(gParser, data, len);
 }
@@ -340,9 +353,19 @@ static void ReleaseRefresh(void)
         DisposePtr((Ptr)gParser);
         gParser = NULL;
     }
+    if (gDiscover != NULL) {
+        DisposePtr((Ptr)gDiscover);
+        gDiscover = NULL;
+    }
 }
 
-int GazetteFeedsRefreshStart(int feedIndex, const char *url, long maxArticles)
+const char *GazetteFeedsDiscoveredURL(void)
+{
+    return gDiscovered;
+}
+
+int GazetteFeedsRefreshStart(int feedIndex, const char *url, long maxArticles,
+                             int allowDiscovery)
 {
     if (gState == kGazetteRefreshRunning) {
         return 0;
@@ -367,6 +390,17 @@ int GazetteFeedsRefreshStart(int feedIndex, const char *url, long maxArticles)
         return 0;
     }
     GazetteFeedParserInit(gParser, ArticleSink, NULL);
+
+    gDiscovered[0] = '\0';
+    if (allowDiscovery) {
+        /* Failing to allocate this is not a reason to fail the refresh: the
+           feed may well parse, and then discovery was never needed. */
+        gDiscover = (GazetteFeedParser *)
+                        NewPtrClear((Size)sizeof(GazetteFeedParser));
+        if (gDiscover != NULL) {
+            GazetteFeedParserInitDiscovery(gDiscover);
+        }
+    }
 
     gFetch = GazetteFetchStart(url, BodySink, NULL);
     if (gFetch == NULL) {
@@ -405,6 +439,13 @@ GazetteRefreshState GazetteFeedsRefreshPump(void)
        result by what came out of it rather than by the HTTP status: a 200
        carrying an HTML error page is a failed refresh. */
     GazetteFeedParserFinish(gParser);
+
+    if (gDiscover != NULL) {
+        GazetteFeedParserFinish(gDiscover);
+        gz_copy_n(gDiscovered, sizeof gDiscovered,
+                  GazetteFeedParserDiscovered(gDiscover),
+                  strlen(GazetteFeedParserDiscovered(gDiscover)));
+    }
 
     if (GazetteFeedParserTitle(gParser)[0] != '\0') {
         gz_copy_n(gFeedTitle, sizeof gFeedTitle,

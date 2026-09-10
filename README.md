@@ -393,7 +393,7 @@ started by hand from the Actions tab (`workflow_dispatch`).
 | 1 | **Done** | Networking: Certainly/BearSSL vendored and building under Carbon, non-blocking stream, HTTPS GET with redirects driven from the event loop |
 | 2 | **Done** | Feed engine: incremental RSS 2.0 / Atom parser, Google News country and topic maps, feed auto-discovery, headline list |
 | 3 | **Done** | Platinum UI: sidebar + headline list + reader pane, scroll bars, draggable dividers, on-disk cache, auto-refresh |
-| 4 | **Done** | Polish: feed and group management, full-text fetch with block-aware extraction, search, read/unread with per-feed unread counts, readable groups, OPML import/export, keyboard navigation |
+| 4 | **Done** | Polish: feed and group management with auto-discovery, full-text fetch with block-aware extraction, search, read/unread with per-feed unread counts, readable groups, OPML import/export, keyboard navigation |
 
 ## Known limitations
 

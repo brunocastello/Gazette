@@ -133,7 +133,9 @@ Single cooperative event loop. Network fetches and parsing progress via poll fun
   host-tested whole / in 7-byte chunks / one byte at a time.
 - Google News topic/section fetching using the maps from NewsProxy. ✅ 29
   countries and 184 curated topics; `tools/generate_gnews_topics.py`.
-- Feed auto-discovery. ✅ In the parser; reachable from the UI in Phase 4.
+- Feed auto-discovery. ✅ In the parser; reached the UI in Phase 4 — a URL
+  added or edited gets one attempt, so pasting a site's home page finds the
+  feed on it.
 - Simple in-memory feed + article list. ✅ One feed at a time; Phase 3's cache
   is what lets several be held and survive a restart.
 - Display titles in a basic list window. ✅ Geneva 9, fixed date column,
@@ -153,6 +155,8 @@ Single cooperative event loop. Network fetches and parsing progress via poll fun
 - Custom feed management UI. ✅ A Feeds menu over Dialog Manager dialogs:
   add, edit, rename, remove, enable/disable, groups, and Move to Group as a
   hierarchical submenu. Groups are the user's own tree, ordered by hand.
+  Adding or re-addressing a feed also runs auto-discovery, so a site's home
+  page is a valid thing to paste.
 - Full-text fetch option with HTML stripping. ✅ Fetched lazily when an
   article is opened, never during a refresh. `extract/` drops the elements
   that are never prose and the blocks a page wraps around its article

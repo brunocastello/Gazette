@@ -123,7 +123,25 @@ void GazetteFeedsFlush(void);
  * already there on screen rather than emptying the window. Returns 1 if the
  * refresh started.
  */
-int GazetteFeedsRefreshStart(int feedIndex, const char *url, long maxArticles);
+/*
+ * allowDiscovery asks the refresh to also watch for a feed link, so that a
+ * site's home page pasted into New Feed can be turned into its feed. It costs
+ * a second scanner over the same bytes, so it is asked for only on the first
+ * refresh after a feed is added and not on every refresh thereafter.
+ */
+int GazetteFeedsRefreshStart(int feedIndex, const char *url, long maxArticles,
+                             int allowDiscovery);
+
+/*
+ * The feed link found while refreshing, or "" — set only when discovery was
+ * asked for and the document turned out to be a page rather than a feed.
+ * It is whatever the page wrote, so it may be relative and the caller
+ * resolves it against the URL that was fetched.
+ *
+ * Only meaningful on a refresh that produced no articles. A working feed that
+ * happens to link to another feed must not be quietly replaced by it.
+ */
+const char *GazetteFeedsDiscoveredURL(void);
 
 /* One slice, from the event loop's idle branch. */
 GazetteRefreshState GazetteFeedsRefreshPump(void);
