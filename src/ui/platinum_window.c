@@ -6,15 +6,22 @@
  * line.
  *
  * The window is a control hierarchy, not a set of rectangles this file
- * draws into. There is a root control, and the sidebar and the headline
- * list are real List Box controls — CDEF 22, through CreateListBoxControl.
- * The control draws its own Platinum frame and focus ring, carries its own
- * scroll bar, tracks its own clicks and moves its own selection from the
- * keyboard, and it is the Control Manager that decides which of them the
- * keyboard is talking to.
+ * draws into. There is a root control, and every pane is a control embedded
+ * in it: the Control Manager decides which one the keyboard is talking to,
+ * and each pane draws through the hierarchy.
+ *
+ * The sidebar, the headline list and the article are **user pane** controls
+ * with something of ours inside — a List Manager list for the two lists, a
+ * TextEdit record for the article. They were List Box controls (CDEF 22)
+ * for a while, which is more of the Toolbox doing the work; but that CDEF
+ * always draws a sunken Platinum frame round the whole control, scroll bar
+ * included, and always puts its focus ring at that same outer edge, and
+ * Outlook Express has neither. OE's resource fork holds no 'CNTL' and no
+ * 'ldes' at all — its panes are PowerPlant views drawing themselves — so
+ * "use the stock CDEF" and "look like OE" were never the same thing.
  *
  * Only what goes *inside* a cell is ours, through a list definition
- * function handed to CreateListBoxControl as a ListDefSpec of
+ * function handed to CreateCustomList as a ListDefSpec of
  * kListDefUserProcType — a callback in this file rather than an 'LDEF' code
  * resource, which Carbon does not allow anyway. The cells carry no data.
  * Both lists are a view onto something the engine already holds in order,
@@ -112,9 +119,23 @@ static GazetteUIGroupChosen   gOnGroupChosen;
    is what makes SetKeyboardFocus and the Tab key mean anything. */
 static ControlRef gRootControl;
 
-/* The two List Box controls and the List Manager lists inside them. The
-   control is what gets moved, drawn, clicked and focused; the list is what
-   gets asked about rows and selections. */
+/*
+ * The two list panes. Each is a user pane control with a List Manager list
+ * inside it — not a List Box control, which is what these were until the
+ * side-by-side with Outlook Express settled it.
+ *
+ * CDEF 22 always draws a sunken Platinum frame round the whole control,
+ * scroll bar included, and always puts its focus ring at that same outer
+ * edge. Neither can be switched off, and OE has neither: its panes are
+ * frameless, separated by single rules, and nothing it draws wraps a scroll
+ * bar. OE's resource fork has no 'CNTL' and no 'ldes' in it at all — its
+ * lists are PowerPlant views drawing themselves, so "use the stock CDEF"
+ * and "look like OE" were never the same thing.
+ *
+ * A user pane is still a real control: it takes the keyboard focus, sits in
+ * the Tab order and draws through the hierarchy. It just leaves the border
+ * and the ring to us, which is the whole point.
+ */
 static ControlRef gSidebarCtl;
 static ControlRef gArticleCtl;
 static ListHandle gSidebarList;
@@ -144,6 +165,8 @@ static ControlActionUPP        gScrollUPP;
 static ControlUserPaneDrawUPP  gReaderDrawUPP;
 static ControlUserPaneFocusUPP gReaderFocusUPP;
 static ControlUserPaneTrackingUPP gReaderTrackUPP;
+static ControlUserPaneDrawUPP  gPaneDrawUPP;
+static ControlUserPaneFocusUPP gPaneFocusUPP;
 
 /* Pane rectangles, recomputed by Layout() and by nothing else. A list's
    pane is its control's bounds: the frame and the scroll bar are the CDEF's
@@ -369,7 +392,19 @@ static long UnixNow(void)
 /* Talking to a list                                                   */
 /* ------------------------------------------------------------------ */
 
-/* Where a list's rows actually are, inside its control's frame. */
+/*
+ * Where the rows go inside a pane. No frame to allow for — the pane has
+ * none — only the scroll bar down the right, and a pixel top and bottom
+ * because the List Manager draws its bar one pixel taller than the view at
+ * each end.
+ */
+static void ListViewIn(const Rect *pane, Rect *view)
+{
+    SetRect(view, pane->left, (short)(pane->top + 1),
+            (short)(pane->right - kScrollWidth), (short)(pane->bottom - 1));
+}
+
+/* Where a list's rows actually are. */
 static void ListView(ListHandle list, Rect *view)
 {
     SetRect(view, 0, 0, 0, 0);
@@ -525,7 +560,14 @@ static Boolean CellAtPoint(ListHandle list, Point where, Cell *out)
  * bounds. Only the cell width is left over — the list would otherwise keep
  * the width it was born with and start wanting to scroll sideways.
  */
-static void SizeListBox(ControlRef control, ListHandle list, const Rect *bounds)
+/*
+ * Move and resize a list pane: the control, then the list inside it.
+ * SetListViewBounds places the list and LSize brings its scroll bar along —
+ * the List Manager derives the bar's rectangle from the view, so the order
+ * matters.
+ */
+static void SizeListPane(ControlRef control, ListHandle list,
+                         const Rect *bounds)
 {
     Rect  view;
     Point cell;
@@ -539,7 +581,12 @@ static void SizeListBox(ControlRef control, ListHandle list, const Rect *bounds)
         return;
     }
     LSetDrawingMode(false, list);
-    ListView(list, &view);
+
+    ListViewIn(bounds, &view);
+    SetListViewBounds(list, &view);
+    LSize((short)(view.right - view.left),
+          (short)(view.bottom - view.top), list);
+
     cell.v = gRowHeight;
     cell.h = (short)(view.right - view.left);
     if (cell.h > 0) {
@@ -620,8 +667,8 @@ static void Layout(void)
     SetRect(&gStatusRect, bounds.left, contentBottom,
             bounds.right, bounds.bottom);
 
-    SizeListBox(gSidebarCtl, gSidebarList, &gSidebarPane);
-    SizeListBox(gArticleCtl, gArticleList, &gListPane);
+    SizeListPane(gSidebarCtl, gSidebarList, &gSidebarPane);
+    SizeListPane(gArticleCtl, gArticleList, &gListPane);
 
     if (gSidebarHeaderCtl != NULL) {
         SetControlBounds(gSidebarHeaderCtl, &gSidebarHeader);
@@ -1473,6 +1520,89 @@ static void FillListRemainder(ListHandle list, int rows, ThemeBrush brush)
     }
 }
 
+/*
+ * A list pane draws itself: its background, its rows, and — when it has the
+ * keyboard — a focus ring round the rows *only*. The ring stops short of the
+ * scroll bar because that is what Outlook Express does; a ring that wraps a
+ * scroll bar is CDEF 22's habit and it is the reason these are user panes.
+ */
+static void DrawListPane(ControlRef control, ListHandle list, int rows,
+                         ThemeBrush brush)
+{
+    Rect      pane;
+    Rect      view;
+    RgnHandle clip = NULL;
+    RgnHandle rgn  = NULL;
+
+    if (gWindow == NULL || control == NULL || list == NULL) {
+        return;
+    }
+    SetPortWindowPort(gWindow);
+    GetControlBounds(control, &pane);
+    ListView(list, &view);
+    if (view.right <= view.left) {
+        return;
+    }
+
+    clip = NewRgn();
+    if (clip != NULL) {
+        GetClip(clip);
+    }
+    /* Never outside the rows: the scroll bar is a control of its own and
+       draws itself, and nothing here may paint over it. */
+    ClipRect(&view);
+
+    EraseWith(&view, brush);
+
+    rgn = NewRgn();
+    if (rgn != NULL) {
+        RectRgn(rgn, &view);
+        LUpdate(rgn, list);
+        DisposeRgn(rgn);
+    }
+
+    /* Below the last row the list has drawn nothing, so the pane's own
+       colour goes down over whatever is there. */
+    FillListRemainder(list, rows, brush);
+
+    if (GetControlValue(control) != 0) {
+        Rect ring = view;
+
+        InsetRect(&ring, 1, 1);
+        (void)DrawThemeFocusRect(&ring, true);
+    }
+
+    if (clip != NULL) {
+        SetClip(clip);
+        DisposeRgn(clip);
+    }
+}
+
+static pascal void PaneDraw(ControlRef control, SInt16 part)
+{
+    (void)part;
+
+    if (control == gSidebarCtl) {
+        DrawListPane(control, gSidebarList, GazetteCoreSidebarRowCount(),
+                     kThemeBrushDialogBackgroundActive);
+    } else if (control == gArticleCtl) {
+        DrawListPane(control, gArticleList, GazetteFeedsArticleCount(),
+                     kThemeBrushWhite);
+    }
+}
+
+static pascal ControlPartCode PaneFocus(ControlRef control,
+                                        ControlFocusPart action)
+{
+    if (control == NULL) {
+        return kControlFocusNoPart;
+    }
+    SetControlValue(control, (action == kControlFocusNoPart) ? 0 : 1);
+    Draw1Control(control);
+    return (action == kControlFocusNoPart) ? kControlFocusNoPart
+                                           : kControlReaderFocusPart;
+}
+
 static void DrawSidebarPane(void)
 {
     if (gWindow == NULL || gSidebarCtl == NULL) {
@@ -1480,8 +1610,6 @@ static void DrawSidebarPane(void)
     }
     SetPortWindowPort(gWindow);
     Draw1Control(gSidebarCtl);
-    FillListRemainder(gSidebarList, GazetteCoreSidebarRowCount(),
-                      kThemeBrushDialogBackgroundActive);
 }
 
 static void DrawArticlePane(void)
@@ -1494,8 +1622,6 @@ static void DrawArticlePane(void)
     }
     SetPortWindowPort(gWindow);
     Draw1Control(gArticleCtl);
-    FillListRemainder(gArticleList, GazetteFeedsArticleCount(),
-                      kThemeBrushWhite);
 
     if (GazetteFeedsArticleCount() != 0) {
         return;
@@ -1528,66 +1654,6 @@ static void DrawArticlePane(void)
         SetClip(clip);
         DisposeRgn(clip);
     }
-}
-
-/*
- * The reader's contents. This is the user pane control's drawing procedure,
- * so the Control Manager calls it — from DrawControls, from Draw1Control and
- * whenever the focus ring has to change — and the pane is drawn through the
- * hierarchy like everything else rather than painted over the top of it.
- */
-static pascal void ReaderDraw(ControlRef control, SInt16 part)
-{
-    RgnHandle clip = NULL;
-
-    (void)control;
-    (void)part;
-
-    if (gWindow == NULL) {
-        return;
-    }
-    SetPortWindowPort(gWindow);
-
-    /*
-     * The frame goes round the whole pane, scroll bar included, which is
-     * what a List Box control's frame does. DrawThemeListBoxFrame draws
-     * just *outside* the rectangle it is given, so it is given one inset by
-     * a pixel — otherwise the reader's frame lands a pixel outside its own
-     * bounds and collides with the divider above it, which is what made its
-     * borders look unlike the two lists'.
-     */
-    {
-        Rect frame = gReaderPane;
-
-        InsetRect(&frame, 1, 1);
-        DrawThemeListBoxFrame(&frame, kThemeStateActive);
-    }
-
-    clip = NewRgn();
-    if (clip != NULL) {
-        GetClip(clip);
-    }
-    EraseWith(&gReaderRect, kThemeBrushWhite);
-    ClipRect(&gReaderRect);
-
-    if (gReaderTE != NULL) {
-        Rect view = (**gReaderTE).viewRect;   /* not a pointer into the
-                                                 handle, which can move */
-
-        TEUpdate(&view, gReaderTE);
-    }
-
-    if (clip != NULL) {
-        SetClip(clip);
-        DisposeRgn(clip);
-    }
-
-    /* The ring the two lists get from their CDEF, drawn here because a user
-       pane has no idea what it contains. It is still the Appearance
-       Manager's ring, not a rectangle of our own devising. */
-    (void)DrawThemeFocusRect(&gReaderPane,
-                             (Boolean)(gReaderCtl != NULL &&
-                                       GetControlValue(gReaderCtl) != 0));
 }
 
 static void DrawReader(void)
@@ -1710,18 +1776,6 @@ void GazetteUIUpdate(void)
        frames, scroll bars and focus rings, the two window headers, the
        reader and its bar, and the status placard. */
     DrawControls(gWindow);
-
-    /*
-     * The List Box CDEF erases its whole view with its own background before
-     * the rows go down, so below the last row the sidebar comes out white
-     * rather than grey. This was being put right in DrawSidebarPane, which a
-     * full update does not go through — so on every redraw of the window the
-     * sidebar's empty half went back to white.
-     */
-    FillListRemainder(gSidebarList, GazetteCoreSidebarRowCount(),
-                      kThemeBrushDialogBackgroundActive);
-    FillListRemainder(gArticleList, GazetteFeedsArticleCount(),
-                      kThemeBrushWhite);
 
     /* Their titles go on top of them: a window header control and a placard
        have no text of their own. */
@@ -1918,7 +1972,7 @@ static void SidebarClicked(Point where, EventModifiers modifiers)
         return;
     }
 
-    (void)HandleControlClick(gSidebarCtl, where, modifiers, NULL);
+    (void)LClick(where, modifiers, gSidebarList);
 
     at = SelectedListRow(gSidebarList);
     if (at < 0) {
@@ -2005,17 +2059,22 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
     }
     SetPortWindowPort(gWindow);
 
-    control = FindControlUnderMouse(where, gWindow, &part);
-
-    if (control != NULL && control == gSidebarCtl) {
+    /*
+     * The list panes are hit-tested by rectangle rather than by
+     * FindControlUnderMouse, because a list's scroll bar is a control of its
+     * own sitting inside the pane: the Control Manager would hand back the
+     * bar, whereas LClick wants the click whether it landed on a row or on
+     * the bar and tracks either.
+     */
+    if (PtInRect(where, &gSidebarPane)) {
         SetFocus(kRefSidebar);
         SidebarClicked(where, modifiers);
         return;
     }
 
-    if (control != NULL && control == gArticleCtl) {
+    if (PtInRect(where, &gListPane)) {
         SetFocus(kRefList);
-        (void)HandleControlClick(gArticleCtl, where, modifiers, NULL);
+        (void)LClick(where, modifiers, gArticleList);
         {
             int row = SelectedListRow(gArticleList);
 
@@ -2028,6 +2087,8 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
         }
         return;
     }
+
+    control = FindControlUnderMouse(where, gWindow, &part);
 
     if (control != NULL && control == gReaderCtl) {
         SetFocus(kRefReader);
@@ -2268,8 +2329,15 @@ void GazetteUIActivate(Boolean active)
         return;
     }
 
-    /* One call for the whole hierarchy: the CDEFs grey their own frames,
-       scroll bars and selections. */
+    /* The lists grey their own scroll bars and selections. */
+    if (gSidebarList != NULL) {
+        LActivate(active, gSidebarList);
+    }
+    if (gArticleList != NULL) {
+        LActivate(active, gArticleList);
+    }
+
+    /* And one call for the rest of the hierarchy. */
     if (gRootControl != NULL) {
         if (active) {
             ActivateControl(gRootControl);
@@ -2471,73 +2539,61 @@ void GazetteUISelectFeed(int index)
 
 /*
  * A List Box control with a list definition function of our own. The
- * ListDefSpec goes straight into CreateListBoxControl, so no 'LDEF'
+ * ListDefSpec goes straight into CreateCustomList, so no 'LDEF'
  * resource and no RegisterListDefinition are involved — the first is
  * impossible under Carbon and the second would cost CarbonLib 1.5.
  *
  * It starts with no rows; the shell fills it in through
  * GazetteUIFeedsChanged and GazetteUIArticlesChanged.
  */
-static Boolean MakeListBox(ListDefUPP defProc, const Rect *bounds,
-                           ControlRef *outControl, ListHandle *outList)
+/*
+ * A list pane: a user pane control, and a List Manager list living inside
+ * it. The list brings its own scroll bar — a real Control Manager one — and
+ * puts it down the right hand edge of the view it is given, which is where
+ * OE's sits.
+ *
+ * The ListDefSpec is the same one CDEF 22 was being handed, so the cells are
+ * drawn by exactly the code as before; only the chrome around them changed.
+ */
+static Boolean MakeListPane(ListDefUPP defProc, const Rect *bounds,
+                            ControlRef *outControl, ListHandle *outList)
 {
     ListDefSpec spec;
-    ControlRef  control = NULL;
-    ListHandle  list    = NULL;
+    ListBounds  data;
+    Rect        view;
+    Point       cell;
 
     *outControl = NULL;
     *outList    = NULL;
 
-    spec.defType    = kListDefUserProcType;
-    spec.u.userProc = defProc;
-
-    if (CreateListBoxControl(gWindow, bounds,
-                             false,             /* not auto-sizing        */
-                             0, 1,              /* no rows yet, one column */
-                             false, true,       /* vertical bar only      */
-                             gRowHeight,
-                             (short)(bounds->right - bounds->left -
-                                     kScrollWidth),
-                             false,             /* no grow box corner     */
-                             &spec, &control) != noErr || control == NULL) {
+    *outControl = MakeControl(bounds, kControlUserPaneProc,
+                              (short)(kControlSupportsFocus |
+                                      kControlHandlesTracking));
+    if (*outControl == NULL) {
         return false;
     }
 
-    if (GetControlData(control, kControlEntireControl,
-                       kControlListBoxListHandleTag, sizeof list,
-                       (Ptr)&list, NULL) != noErr || list == NULL) {
-        DisposeControl(control);
+    spec.defType    = kListDefUserProcType;
+    spec.u.userProc = defProc;
+
+    ListViewIn(bounds, &view);
+    SetRect(&data, 0, 0, 1, 0);         /* one column, no rows yet */
+    cell.v = gRowHeight;
+    cell.h = (short)(view.right - view.left);
+
+    if (CreateCustomList(&view, &data, cell, &spec, gWindow,
+                         false, false, false, true, outList) != noErr ||
+        *outList == NULL) {
         return false;
     }
 
     /* One row at a time, and no drag-selecting several. lOnlyOne is a
        negative constant in a byte-wide field, so it is masked rather than
        sign-extended into the flags word. */
-    SetListSelectionFlags(list, (OptionBits)(lOnlyOne & 0xFF));
-
-    *outControl = control;
-    *outList    = list;
+    SetListSelectionFlags(*outList, (OptionBits)(lOnlyOne & 0xFF));
     return true;
 }
 
-/*
- * A control from its procID rather than from a Create…Control call.
- *
- * NewControl is "in CarbonLib 1.0 and later"; CreateWindowHeaderControl,
- * CreatePlacardControl and CreateUserPaneControl are all "1.1 and later",
- * and they do nothing NewControl cannot with the same CDEF. Using them
- * bought three entry points that a CFM loader has to resolve at launch, and
- * an import an installed CarbonLib does not export is what produces
- *
- *     The application "Gazette" could not be opened because "CarbonLib"
- *     could not be found.
- *
- * — a famously misleading message that means "a symbol was missing", not
- * "the file was missing". Fewer new entry points, fewer ways to fail.
- *
- * A user pane's feature bits go in the control's value, which is where a
- * 'CNTL' resource puts them and what the CDEF reads at creation.
- */
 static ControlRef MakeControl(const Rect *bounds, short procID, short value)
 {
     return NewControl(gWindow, bounds, "\p", true, value, 0, 0, procID, 0);
@@ -2601,6 +2657,8 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
     gReaderDrawUPP  = NewControlUserPaneDrawUPP(ReaderDraw);
     gReaderFocusUPP = NewControlUserPaneFocusUPP(ReaderFocus);
     gReaderTrackUPP = NewControlUserPaneTrackingUPP(ReaderTrack);
+    gPaneDrawUPP    = NewControlUserPaneDrawUPP(PaneDraw);
+    gPaneFocusUPP   = NewControlUserPaneFocusUPP(PaneFocus);
 
     /* Before anything is laid out: every height in the layout comes from
        the font. */
@@ -2621,11 +2679,25 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
     gListHeaderCtl    = MakeControl(&gListHeader,
                                     kControlWindowListViewHeaderProc, 0);
 
-    if (!MakeListBox(gSidebarLDEF, &gSidebarPane, &gSidebarCtl, &gSidebarList) ||
-        !MakeListBox(gArticleLDEF, &gListPane, &gArticleCtl, &gArticleList)) {
+    if (!MakeListPane(gSidebarLDEF, &gSidebarPane, &gSidebarCtl,
+                      &gSidebarList) ||
+        !MakeListPane(gArticleLDEF, &gListPane, &gArticleCtl,
+                      &gArticleList)) {
         GazetteUIClose();
         return false;
     }
+    (void)SetControlData(gSidebarCtl, kControlEntireControl,
+                         kControlUserPaneDrawProcTag,
+                         sizeof gPaneDrawUPP, (Ptr)&gPaneDrawUPP);
+    (void)SetControlData(gSidebarCtl, kControlEntireControl,
+                         kControlUserPaneFocusProcTag,
+                         sizeof gPaneFocusUPP, (Ptr)&gPaneFocusUPP);
+    (void)SetControlData(gArticleCtl, kControlEntireControl,
+                         kControlUserPaneDrawProcTag,
+                         sizeof gPaneDrawUPP, (Ptr)&gPaneDrawUPP);
+    (void)SetControlData(gArticleCtl, kControlEntireControl,
+                         kControlUserPaneFocusProcTag,
+                         sizeof gPaneFocusUPP, (Ptr)&gPaneFocusUPP);
 
     /*
      * The reader. kControlSupportsFocus puts it in the Tab order and
@@ -2691,8 +2763,13 @@ void GazetteUIClose(void)
         return;
     }
 
-    /* The List Box controls own their lists; disposing the window disposes
-       the controls, and each one takes its ListHandle with it. */
+    /* The lists own their scroll bars, so they go before the window does. */
+    if (gSidebarList != NULL) {
+        LDispose(gSidebarList);
+    }
+    if (gArticleList != NULL) {
+        LDispose(gArticleList);
+    }
     gSidebarList       = NULL;
     gArticleList       = NULL;
     gSidebarCtl        = NULL;
@@ -2737,6 +2814,14 @@ void GazetteUIClose(void)
     if (gReaderTrackUPP != NULL) {
         DisposeControlUserPaneTrackingUPP(gReaderTrackUPP);
         gReaderTrackUPP = NULL;
+    }
+    if (gPaneDrawUPP != NULL) {
+        DisposeControlUserPaneDrawUPP(gPaneDrawUPP);
+        gPaneDrawUPP = NULL;
+    }
+    if (gPaneFocusUPP != NULL) {
+        DisposeControlUserPaneFocusUPP(gPaneFocusUPP);
+        gPaneFocusUPP = NULL;
     }
 }
 
