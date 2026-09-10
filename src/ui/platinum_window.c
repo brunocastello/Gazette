@@ -510,9 +510,14 @@ static void WakeScrollBar(ListHandle list)
         return;
     }
     bar = GetListVerticalScrollBar(list);
-    if (bar != NULL && GetControlHilite(bar) == 255) {
-        HiliteControl(bar, 0);
+    if (bar == NULL || GetControlHilite(bar) != 255) {
+        return;
     }
+    /* Draw1Control as well as HiliteControl: the bar is already on screen in
+       its greyed form, and un-greying it without redrawing leaves the grey
+       there until something else happens to repaint it. */
+    HiliteControl(bar, 0);
+    Draw1Control(bar);
 }
 
 /*
@@ -680,11 +685,19 @@ static void Layout(void)
         gSidebarWidth = kMinSidebar;
     }
 
-    SetRect(&gSidebarHeader, bounds.left, bounds.top,
+    /*
+     * A pixel above the content region, so the header's own top line falls
+     * outside it and gets clipped away. Without that it lands right under
+     * the title bar's bottom line and the two read as one thick black
+     * border — which is what they did.
+     */
+    SetRect(&gSidebarHeader, bounds.left, (short)(bounds.top - 1),
             (short)(bounds.left + gSidebarWidth),
             (short)(bounds.top + gHeaderHeight));
+    /* The list's own view sits one pixel inside its pane, so the pane goes
+       one pixel under the header to leave exactly two of grey showing. */
     SetRect(&gSidebarPane, (short)(bounds.left + kPaneInset),
-            (short)(bounds.top + gHeaderHeight + kPaneInset),
+            (short)(bounds.top + gHeaderHeight + kPaneInset - 1),
             (short)(bounds.left + gSidebarWidth - kPaneInset),
             (short)(contentBottom - kPaneInset));
 
@@ -704,10 +717,10 @@ static void Layout(void)
         listBottom = (short)(contentBottom - kMinReader - kDividerWidth);
     }
 
-    SetRect(&gListHeader, rightLeft, bounds.top,
+    SetRect(&gListHeader, rightLeft, (short)(bounds.top - 1),
             bounds.right, (short)(bounds.top + gHeaderHeight));
     SetRect(&gListPane, (short)(rightLeft + kPaneInset),
-            (short)(bounds.top + gHeaderHeight + kPaneInset),
+            (short)(bounds.top + gHeaderHeight + kPaneInset - 1),
             (short)(bounds.right - kPaneInset),
             (short)(listBottom - kPaneInset));
 
@@ -1370,11 +1383,17 @@ static short BuildRowLabel(const char *name, int unread, short maxWidth,
  * background (216, too dark) and the headline list on white (too light),
  * which is two mistakes in opposite directions.
  */
+/*
+ * Erase, and *leave the brush set*. It used to put the window's grey back
+ * before returning, which meant the very next thing to erase on its own
+ * account did so in grey — TEUpdate does exactly that, so the article came
+ * out on a grey ground however carefully its rectangle had just been
+ * painted white. Whoever wants a different background asks for one.
+ */
 static void EraseWith(const Rect *r, ThemeBrush brush)
 {
     SetThemeBackground(brush, 8, true);
     EraseRect(r);
-    SetThemeBackground(kThemeBrushDialogBackgroundActive, 8, true);
 }
 
 /*
@@ -1491,7 +1510,7 @@ static void DrawArticleCell(const Rect *cell, short row, Boolean selected)
     char                  when[16];
     short                 baseline;
 
-    EraseWith(cell, kThemeBrushListViewBackground);
+    EraseWith(cell, kThemeBrushWhite);
     if (a == NULL) {
         return;
     }
@@ -1628,6 +1647,9 @@ static void DrawListPane(ControlRef control, ListHandle list, int rows,
        colour goes down over whatever is there. */
     FillListRemainder(list, rows, brush);
 
+    /* LUpdate greys the bar again on its way past, so this goes after it. */
+    WakeScrollBar(list);
+
     if (GetControlValue(control) != 0) {
         Rect ring = view;
 
@@ -1650,7 +1672,7 @@ static pascal void PaneDraw(ControlRef control, SInt16 part)
                      kThemeBrushListViewBackground);
     } else if (control == gArticleCtl) {
         DrawListPane(control, gArticleList, GazetteFeedsArticleCount(),
-                     kThemeBrushListViewBackground);
+                     kThemeBrushWhite);
     }
 }
 
@@ -1922,8 +1944,24 @@ void GazetteUIUpdate(void)
        track the theme rather than being two hard-coded greys, and the
        horizontal one carries the row of dots Outlook Express puts in a
        splitter to say that it can be dragged. */
-    DrawThemeSeparator(&gVDivider, kThemeStateActive);
-    DrawThemeSeparator(&gHDivider, kThemeStateActive);
+    /*
+     * A separator is a line, so it is given a one-pixel rectangle down the
+     * middle of the divider rather than the whole four-pixel gap — handed
+     * the gap it fills it, and the border between the panes came out four
+     * times thicker than OE's.
+     */
+    {
+        Rect rule;
+        short mid;
+
+        mid = (short)((gVDivider.left + gVDivider.right) / 2);
+        SetRect(&rule, mid, gVDivider.top, (short)(mid + 1), gVDivider.bottom);
+        DrawThemeSeparator(&rule, kThemeStateActive);
+
+        mid = (short)((gHDivider.top + gHDivider.bottom) / 2);
+        SetRect(&rule, gHDivider.left, mid, gHDivider.right, (short)(mid + 1));
+        DrawThemeSeparator(&rule, kThemeStateActive);
+    }
     DrawGrabHandle(&gHDivider);
 
     /* The whole control hierarchy in one call — the two lists with their
@@ -2491,6 +2529,13 @@ void GazetteUIActivate(Boolean active)
     }
     if (gArticleList != NULL) {
         LActivate(active, gArticleList);
+    }
+    if (active) {
+        /* LActivate decides a bar with nothing to scroll should be greyed;
+           Platinum's answer is an empty track drawn normally, so it is put
+           back. Measured: OE's edges are black, ours were (75,75,75). */
+        WakeScrollBar(gSidebarList);
+        WakeScrollBar(gArticleList);
     }
 
     /* And one call for the rest of the hierarchy. */
