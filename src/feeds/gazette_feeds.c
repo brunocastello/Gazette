@@ -28,6 +28,16 @@
  */
 static GazetteArticle     gArticles[kGazetteMaxArticles];
 static int                gArticleCount;
+
+/*
+ * The search. gFilterMap holds the store indices that match, in order, and
+ * every index crossing this file's boundary is an index into it — so the
+ * window draws matches, clicks arrive as matches, and nothing outside has to
+ * know a filter is on.
+ */
+static char               gFilter[64];
+static short              gFilterMap[kGazetteMaxArticles];
+static int                gFilterCount;
 static char               gFeedTitle[kGazetteFeedTitleLen];
 static int                gCurrentFeed = -1;
 static int                gPendingFeed = -1;
@@ -110,17 +120,72 @@ static long UnixNow(void)
 /* The store                                                           */
 /* ------------------------------------------------------------------ */
 
-int GazetteFeedsArticleCount(void)
+/* A store index from a public one. They are the same thing when no filter is
+   set, which is the common case and costs a comparison. */
+static int StoreIndex(int index)
+{
+    if (gFilter[0] == '\0') {
+        return (index >= 0 && index < gArticleCount) ? index : -1;
+    }
+    if (index < 0 || index >= gFilterCount) {
+        return -1;
+    }
+    return gFilterMap[index];
+}
+
+static int Matches(const GazetteArticle *a)
+{
+    return gz_contains_ci(a->title, strlen(a->title), gFilter) ||
+           gz_contains_ci(a->source, strlen(a->source), gFilter) ||
+           gz_contains_ci(a->body, strlen(a->body), gFilter);
+}
+
+static void Refilter(void)
+{
+    int i;
+
+    gFilterCount = 0;
+    if (gFilter[0] == '\0') {
+        return;
+    }
+    for (i = 0; i < gArticleCount; i++) {
+        if (Matches(&gArticles[i])) {
+            gFilterMap[gFilterCount++] = (short)i;
+        }
+    }
+}
+
+void GazetteFeedsSetFilter(const char *text)
+{
+    gz_copy_n(gFilter, sizeof gFilter, (text != NULL) ? text : "",
+              (text != NULL) ? strlen(text) : 0);
+    Refilter();
+
+    /* The held full text is remembered by article index, and the indices have
+       just been renumbered under it. */
+    GazetteFeedsFullTextCancel();
+}
+
+const char *GazetteFeedsFilter(void)
+{
+    return gFilter;
+}
+
+int GazetteFeedsTotalCount(void)
 {
     return gArticleCount;
 }
 
+int GazetteFeedsArticleCount(void)
+{
+    return (gFilter[0] != '\0') ? gFilterCount : gArticleCount;
+}
+
 const GazetteArticle *GazetteFeedsArticleAt(int index)
 {
-    if (index < 0 || index >= gArticleCount) {
-        return NULL;
-    }
-    return &gArticles[index];
+    int at = StoreIndex(index);
+
+    return (at >= 0) ? &gArticles[at] : NULL;
 }
 
 const char *GazetteFeedsTitle(void)
@@ -141,6 +206,7 @@ int GazetteFeedsCurrentGroup(void)
 void GazetteFeedsClear(void)
 {
     gArticleCount = 0;
+    gFilterCount  = 0;
     gFeedTitle[0] = '\0';
     gCurrentFeed  = -1;
     gCurrentGroup = -1;
@@ -160,6 +226,8 @@ long GazetteFeedsFetchedAt(void)
 /* Read and unread                                                     */
 /* ------------------------------------------------------------------ */
 
+/* Over everything held, not over the matches: how much of a feed is unread is
+   a fact about the feed and not about what is being searched for. */
 int GazetteFeedsUnreadCount(void)
 {
     int n = 0;
@@ -185,14 +253,16 @@ static void PublishCounts(void)
 
 void GazetteFeedsMarkRead(int index, int read)
 {
-    if (index < 0 || index >= gArticleCount) {
+    int at = StoreIndex(index);
+
+    if (at < 0) {
         return;
     }
-    if (gArticles[index].read == (read ? 1 : 0)) {
+    if (gArticles[at].read == (read ? 1 : 0)) {
         return;
     }
-    gArticles[index].read = read ? 1 : 0;
-    GazetteIndexSetRead(gArticles[index].link, read);
+    gArticles[at].read = read ? 1 : 0;
+    GazetteIndexSetRead(gArticles[at].link, read);
     PublishCounts();
 }
 
@@ -367,6 +437,7 @@ GazetteRefreshState GazetteFeedsRefreshPump(void)
     gFetchedAt = UnixNow();
     SaveCache(gCurrentURL, gFetchedAt);
     PublishCounts();
+    Refilter();
 
     gState = kGazetteRefreshDone;
     return gState;
@@ -454,7 +525,7 @@ int GazetteFeedsFullTextStart(int articleIndex, const char *url)
     if (url == NULL || url[0] == '\0') {
         return 0;
     }
-    if (articleIndex < 0 || articleIndex >= gArticleCount) {
+    if (articleIndex < 0 || articleIndex >= GazetteFeedsArticleCount()) {
         return 0;
     }
 
@@ -796,6 +867,7 @@ int GazetteFeedsLoadCache(int feedIndex, const char *url, long maxArticles)
         gArticles[i].read = GazetteIndexIsRead(gArticles[i].link);
     }
     PublishCounts();
+    Refilter();
     return 1;
 }
 
@@ -869,6 +941,7 @@ int GazetteFeedsLoadGroup(int group, long maxArticles)
     for (i = 0; i < gArticleCount; i++) {
         gArticles[i].read = GazetteIndexIsRead(gArticles[i].link);
     }
+    Refilter();
     return gArticleCount;
 }
 

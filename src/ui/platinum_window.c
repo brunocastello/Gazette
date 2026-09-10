@@ -814,7 +814,11 @@ static void DrawList(void)
 
     if (count == 0) {
         MoveTo((short)(gListRect.left + kTextInset), line);
-        DrawString("\pNo headlines yet - press Command-R.");
+        if (GazetteFeedsFilter()[0] != '\0') {
+            DrawString("\pNothing here matches - Edit menu, Show All.");
+        } else {
+            DrawString("\pNo headlines yet - press Command-R.");
+        }
     }
 
     for (i = top; i < count && i < top + rows; i++) {
@@ -942,21 +946,28 @@ void GazetteUIUpdate(void)
 
     DrawHeader(&gSidebarHeader, "Feeds");
 
-    if (GazetteFeedsArticleCount() > 0) {
+    if (GazetteFeedsTotalCount() > 0) {
         const char *title  = GazetteFeedsTitle();
         int         unread = GazetteFeedsUnreadCount();
 
         if (title[0] == '\0') {
             title = GazetteCoreFeedTitle(gSelectedFeed);
         }
-        /* How many are left to read is the number worth reading; the total
-           is only interesting when there is nothing left. */
-        if (unread > 0) {
+
+        if (GazetteFeedsFilter()[0] != '\0') {
+            /* While a search is on, what is on screen is the matches, and
+               saying so is more use than an unread count of the whole. */
+            snprintf(header, sizeof header, "%s - \322%s\323 (%d of %d)",
+                     title, GazetteFeedsFilter(),
+                     GazetteFeedsArticleCount(), GazetteFeedsTotalCount());
+        } else if (unread > 0) {
+            /* How many are left to read is the number worth reading; the
+               total is only interesting when there is nothing left. */
             snprintf(header, sizeof header, "%s (%d unread of %d)", title,
-                     unread, GazetteFeedsArticleCount());
+                     unread, GazetteFeedsTotalCount());
         } else {
             snprintf(header, sizeof header, "%s (%d)", title,
-                     GazetteFeedsArticleCount());
+                     GazetteFeedsTotalCount());
         }
     } else {
         snprintf(header, sizeof header, "%s",
@@ -1179,13 +1190,18 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
             return;
         }
 
+        /*
+         * Either the feed changed, or a group was on screen and this feed is
+         * not it. Both mean the headline list is showing something else and
+         * has to be rebuilt — including when the feed clicked is the one that
+         * was selected before the group, which is the ordinary way back out
+         * of a group and used to do nothing at all.
+         */
         if (row.index != gSelectedFeed || gSelectedGroup >= 0) {
-            Boolean changed = (row.index != gSelectedFeed);
-
             gSelectedFeed  = row.index;
             gSelectedGroup = -1;
             DrawSidebar();
-            if (changed && gOnFeedChosen != NULL) {
+            if (gOnFeedChosen != NULL) {
                 gOnFeedChosen(row.index);
             }
         }

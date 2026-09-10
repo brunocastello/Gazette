@@ -46,6 +46,14 @@ long gz_parse_dec(const char *s, size_t len, long def);
    case-insensitively. */
 int gz_starts_ci(const char *s, size_t len, const char *prefix);
 
+/*
+ * 1 when needle appears anywhere in s[0..len), compared case-insensitively
+ * over ASCII. An empty needle matches — "everything" is the right answer to
+ * an empty search, and it is what lets a cleared field mean no filter at all
+ * without the caller special-casing it.
+ */
+int gz_contains_ci(const char *s, size_t len, const char *needle);
+
 /* ------------------------------------------------------------------ */
 /* RFC 822 header blocks — shared by the HTTP response parser           */
 /* ------------------------------------------------------------------ */

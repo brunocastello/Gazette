@@ -97,6 +97,31 @@ int gz_starts_ci(const char *s, size_t len, const char *prefix)
     return gz_strnicmp(s, prefix, plen) == 0;
 }
 
+int gz_contains_ci(const char *s, size_t len, const char *needle)
+{
+    size_t needleLen;
+    size_t at;
+
+    if (needle == NULL || needle[0] == '\0') {
+        return 1;
+    }
+    if (s == NULL) {
+        return 0;
+    }
+
+    needleLen = strlen(needle);
+    if (needleLen > len) {
+        return 0;
+    }
+
+    for (at = 0; at + needleLen <= len; at++) {
+        if (gz_starts_ci(s + at, len - at, needle)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 long gz_parse_dec(const char *s, size_t len, long def)
 {
     long  value = 0;

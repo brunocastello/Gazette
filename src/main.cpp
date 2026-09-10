@@ -81,6 +81,8 @@ static void    HandleMoveToGroup(short item);
 static void    HandleToggleFullText(void);
 static void    HandleMarkRead(void);
 static void    HandleMarkAllRead(void);
+static void    HandleFind(void);
+static void    HandleShowAll(void);
 
 /* ------------------------------------------------------------------ */
 /* Application globals                                                 */
@@ -152,6 +154,14 @@ enum {
 enum {
     kMoveToItemTop   = 1,
     kMoveToFirstGroup = 3
+};
+
+/* Edit menu items. The first six are the standard set — inert in the window,
+   and the Dialog Manager's business while a dialog is up. */
+enum {
+    /* 1 Undo, 2 divider, 3 Cut, 4 Copy, 5 Paste, 6 Clear, 7 divider */
+    kEditItemFind    = 8,
+    kEditItemShowAll = 9
 };
 
 enum {
@@ -262,7 +272,9 @@ static Boolean BuildMenuBar(void)
     if (editMenu == nil) {
         return false;
     }
-    AppendMenu(editMenu, "\pUndo/Z;(-;Cut/X;Copy/C;Paste/V;Clear");
+    AppendMenu(editMenu,
+               "\pUndo/Z;(-;Cut/X;Copy/C;Paste/V;Clear;(-;"
+               "Find\311/F;Show All Articles");
     InsertMenu(editMenu, 0);
 
     feedsMenu = NewMenu(kMenuFeeds, "\pFeeds");
@@ -473,6 +485,11 @@ static void HandleMenuChoice(long menuResult)
         case kMenuEdit:
             /* The text fields in the dialogs get the Edit menu's behaviour
                from the Dialog Manager; the reader pane is still to come. */
+            if (menuItem == kEditItemFind) {
+                HandleFind();
+            } else if (menuItem == kEditItemShowAll) {
+                HandleShowAll();
+            }
             break;
 
         case kMenuFeeds:
@@ -612,6 +629,24 @@ static void AdjustMenus(void)
             MacEnableMenuItem(feeds, kFeedsItemMarkAll);
         } else {
             DisableMenuItem(feeds, kFeedsItemMarkAll);
+        }
+    }
+
+    /* Find needs something to search; Show All needs a search to clear. */
+    {
+        MenuRef edit = GetMenuHandle(kMenuEdit);
+
+        if (edit != nil) {
+            if (GazetteFeedsTotalCount() > 0) {
+                MacEnableMenuItem(edit, kEditItemFind);
+            } else {
+                DisableMenuItem(edit, kEditItemFind);
+            }
+            if (GazetteFeedsFilter()[0] != '\0') {
+                MacEnableMenuItem(edit, kEditItemShowAll);
+            } else {
+                DisableMenuItem(edit, kEditItemShowAll);
+            }
         }
     }
 
@@ -898,6 +933,52 @@ static void HandleMarkAllRead(void)
     GazetteUIUpdate();
 }
 
+/*
+ * Search what is on screen. That is one feed, or — since a group is readable
+ * — every feed in a group, so searching a whole section of the sidebar is a
+ * matter of selecting it first. It is a filter over what is held rather than
+ * a search of the disk: reading a hundred cache files to answer a keystroke
+ * is not something these machines should be asked to do.
+ */
+static void HandleFind(void)
+{
+    char text[64];
+    char message[224];
+
+    snprintf(text, sizeof text, "%s", GazetteFeedsFilter());
+    if (!GazetteAskName("Find articles containing:", text, sizeof text)) {
+        return;
+    }
+
+    GazetteFeedsSetFilter(text);
+    GazetteUIArticlesChanged();
+
+    if (GazetteFeedsArticleCount() == 0) {
+        snprintf(message, sizeof message,
+                 "Nothing here contains \322%s\323.", text);
+    } else {
+        snprintf(message, sizeof message, "%d of %d articles contain "
+                 "\322%s\323.", GazetteFeedsArticleCount(),
+                 GazetteFeedsTotalCount(), text);
+    }
+    GazetteUISetStatus(message);
+}
+
+static void HandleShowAll(void)
+{
+    char message[224];
+
+    if (GazetteFeedsFilter()[0] == '\0') {
+        return;
+    }
+    GazetteFeedsSetFilter(NULL);
+    GazetteUIArticlesChanged();
+
+    snprintf(message, sizeof message, "%d articles.",
+             GazetteFeedsArticleCount());
+    GazetteUISetStatus(message);
+}
+
 static void HandleMoveToGroup(short item)
 {
     int kind  = 0;
@@ -958,6 +1039,11 @@ static void ShowFeed(int feedIndex)
        before the store is replaced. */
     GazetteFeedsFlush();
 
+    /* A search was about the articles that were on screen; these are not
+       them. Leaving it set would make a feed look empty for no visible
+       reason. */
+    GazetteFeedsSetFilter(NULL);
+
     GazetteUISelectFeed(feedIndex);
 
     if (GazetteFeedsLoadCache(feedIndex, GazetteCoreFeedURL(feedIndex),
@@ -969,8 +1055,18 @@ static void ShowFeed(int feedIndex)
         return;
     }
 
-    if (!gNetUp) {
+    /*
+     * Nothing cached for this feed. Whatever is still in the store belongs to
+     * another feed or to a group, and leaving it on screen under this feed's
+     * name would be a lie -- one that a group view makes obvious, since a
+     * merged list of ten feeds would sit under a single feed's heading.
+     */
+    if (GazetteFeedsCurrentFeed() != feedIndex) {
+        GazetteFeedsClear();
         GazetteUIArticlesChanged();
+    }
+
+    if (!gNetUp) {
         GazetteUISetStatus("Nothing cached, and no network - "
                            "check the TCP/IP control panel.");
         return;
@@ -1055,6 +1151,7 @@ static void ShowGroup(int groupIndex)
 
     /* The feed being left may have had something read in it. */
     GazetteFeedsFlush();
+    GazetteFeedsSetFilter(NULL);
 
     count = GazetteFeedsLoadGroup(groupIndex, PrefsMaxArticles());
     GazetteUIArticlesChanged();

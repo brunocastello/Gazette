@@ -150,6 +150,36 @@ static void TestPrefsText(void)
 /* gz_flatten_lines is gz_flatten_ws with one difference, and the difference
    is the whole point: a run of whitespace that contained a line break stays a
    line break. */
+/* The matcher behind Find. Case-insensitive over ASCII, and an empty needle
+   matches everything — which is what lets a cleared search field mean no
+   filter without the caller special-casing it. */
+static void TestContainsCI(void)
+{
+    static const char hay[] = "The Quick Brown Fox";
+
+    CheckTrue("a plain match", gz_contains_ci(hay, sizeof hay - 1, "quick"));
+    CheckTrue("case does not matter",
+              gz_contains_ci(hay, sizeof hay - 1, "QUICK"));
+    CheckTrue("at the very start", gz_contains_ci(hay, sizeof hay - 1, "the"));
+    CheckTrue("at the very end", gz_contains_ci(hay, sizeof hay - 1, "Fox"));
+    CheckTrue("a phrase across words",
+              gz_contains_ci(hay, sizeof hay - 1, "brown fox"));
+    CheckLong("a miss", gz_contains_ci(hay, sizeof hay - 1, "cat"), 0);
+
+    CheckTrue("an empty needle matches", gz_contains_ci(hay, sizeof hay - 1, ""));
+    CheckTrue("and so does a NULL one",
+              gz_contains_ci(hay, sizeof hay - 1, NULL));
+    CheckLong("nothing matches an empty haystack",
+              gz_contains_ci("", 0, "x"), 0);
+    CheckLong("a needle longer than the text cannot match",
+              gz_contains_ci("ab", 2, "abc"), 0);
+
+    /* The length is honoured, not the terminator: matching past it would
+       find text the caller did not offer. */
+    CheckLong("the length bounds the search",
+              gz_contains_ci("abcdef", 3, "def"), 0);
+}
+
 static void TestFlattenLines(void)
 {
     char buf[128];
@@ -2173,6 +2203,7 @@ int main(void)
     TestPrefsText();
     TestAsciiText();
     TestFlattenLines();
+    TestContainsCI();
     TestPrefsModel();
     TestPrefsParse();
     TestPrefsRoundTrip();

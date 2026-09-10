@@ -70,6 +70,30 @@ int GazetteFeedsCurrentFeed(void);
 void GazetteFeedsClear(void);
 
 /* ------------------------------------------------------------------ */
+/* Searching                                                           */
+/*                                                                     */
+/* A filter over what is held rather than a search of the disk. What   */
+/* is held is one feed, or — since a group is readable — every feed in */
+/* a group, which is what makes searching a whole section of the       */
+/* sidebar a matter of selecting it first.                             */
+/*                                                                     */
+/* Every index below the store's line is a filtered one while a filter */
+/* is set: the article list draws them, clicks arrive as them, and the */
+/* store maps them back. Nothing above this header has to know.        */
+/* ------------------------------------------------------------------ */
+
+/* Set the search text, or NULL or "" to show everything again. Matches the
+   title, the source and the body, case-insensitively. */
+void GazetteFeedsSetFilter(const char *text);
+
+/* What is being searched for, or "". */
+const char *GazetteFeedsFilter(void);
+
+/* How many are held in total, filter or no filter — the denominator when
+   saying "8 of 120". */
+int GazetteFeedsTotalCount(void);
+
+/* ------------------------------------------------------------------ */
 /* Read and unread                                                     */
 /*                                                                     */
 /* Opening an article marks it read. The state belongs to the feed and  */
