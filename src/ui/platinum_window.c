@@ -173,21 +173,31 @@ static int gSelectedGroup   = -1;
 static char gStatus[192];
 
 /*
- * Two fonts, and the rule is Apple's own.
+ * The fonts, taken from Outlook Express 5.0.6's own 'Txtr' resources rather
+ * than reasoned about. OE5 is a PowerPlant application and every piece of
+ * text in it names a text-traits resource; there are thirty-seven of them
+ * and they say this:
  *
- *   Charcoal, bold, for headings — the two pane titles. That is the system
- *   font, what menus and window titles are set in, and a heading belongs
- *   with them.
+ *   'Txtr' 500 "List font"          applFont  9  plain
+ *   'Txtr' 501 "Proportional font"  applFont 12  plain
+ *   'Txtr' 502 "Monospaced font"    Monaco    9  plain
+ *   'Txtr' 134 "App Bold 9"         applFont  9  bold
+ *   'Txtr' 128 "System 0"           systemFont, default size
  *
- *   Geneva for everything a view holds: both lists, the article, the byline
- *   and the status line. Its size is not ours to choose — it is whatever the
- *   Appearance control panel's views font size is set to, which is the size
- *   the user has told the machine they want lists at.
+ * So: the lists, the headings and the labels are the **application font at
+ * 9** — Geneva on a stock Mac OS 9 — with bold for emphasis, and the
+ * article is the same font at **12**, which is what OE calls its
+ * proportional font and sets message bodies in. systemFont (Charcoal) turns
+ * up in only a handful of centred captions and nowhere near a list.
+ *
+ * applFont rather than a hard-coded Geneva: font 1 is "whatever the user's
+ * application font is", which is what OE asks for and what GetAppFont
+ * answers.
  */
-static short gHeadFont = 0;             /* 0 is the system font */
-static short gHeadSize = 12;
-static short gViewFont = kFontIDGeneva;
-static short gViewSize = 10;
+static short gViewFont = kFontIDGeneva;   /* lists, headings, labels */
+static short gViewSize = 9;
+static short gReadFont = kFontIDGeneva;   /* the article */
+static short gReadSize = 12;
 
 static short gRowHeight    = kRowHeight;
 static short gRowBaseline  = kBaseline;
@@ -230,19 +240,11 @@ static void DrawHeaderTitle(const Rect *r, const char *text);
 /* Small helpers                                                       */
 /* ------------------------------------------------------------------ */
 
-/* Geneva at the views size: the lists, the article, the labels. */
+/* OE's list font: the two lists, both headings, the status line. */
 static void UseViewFont(void)
 {
     TextFont(gViewFont);
     TextSize(gViewSize);
-    TextFace(normal);
-}
-
-/* Charcoal: the two headings, and nothing else. */
-static void UseHeadFont(void)
-{
-    TextFont(gHeadFont);
-    TextSize(gHeadSize);
     TextFace(normal);
 }
 
@@ -272,82 +274,44 @@ static void FillHighlight(const Rect *box)
  * window's port current, so that nothing in the layout is a number chosen
  * to suit a font that might not be the one in use.
  */
-/* Ask a theme font its name and size; leave the fallback alone if the
-   Appearance Manager has nothing to say. */
-static void AskThemeFont(ThemeFontID which, short *font, short *size)
-{
-    Str255 name;
-    SInt16 points = 0;
-    Style  face   = 0;
-
-    if (GetThemeFont(which, smSystemScript, name, &points, &face) != noErr) {
-        return;
-    }
-    if (points > 0) {
-        *size = points;
-    }
-    if (name[0] != 0) {
-        short id = 0;
-
-        GetFNum(name, &id);
-        *font = id;                     /* 0 is the system font, and legal */
-    }
-}
-
 /*
- * The fonts, and every height that follows from them: the row height and
- * baselines from Geneva, the two chrome bars from Charcoal, and the headline
- * list's date column measured rather than guessed. Called once, with the
+ * The fonts and every height that follows from them. Called once, with the
  * window's port current.
  */
 static void MeasureFonts(void)
 {
     FontInfo info;
 
-    /* Geneva at the Appearance control panel's views size. GetFNum answers 0
-       for a name it does not know, and font 0 is the system font — Charcoal,
-       which is emphatically not what a list is set in — so Geneva is put
-       back if that happens. */
-    AskThemeFont(kThemeViewsFont, &gViewFont, &gViewSize);
-    if (gViewFont == 0) {
-        gViewFont = kFontIDGeneva;
-    }
-    if (gViewSize < 9 || gViewSize > 24) {
-        gViewSize = 10;
-    }
-
-    /* Charcoal, or whatever the theme calls its system font. */
-    AskThemeFont(kThemeSystemFont, &gHeadFont, &gHeadSize);
-    if (gHeadSize < 9 || gHeadSize > 24) {
-        gHeadSize = 12;
-    }
+    /* applFont — 'Txtr' 500 and 501 both ask for it; the sizes are OE's. */
+    gViewFont = GetAppFont();
+    gReadFont = gViewFont;
+    gViewSize = 9;
+    gReadSize = 12;
 
     UseViewFont();
     GetFontInfo(&info);
     gRowAscent  = info.ascent;
     gRowDescent = info.descent;
-    gRowHeight  = (short)(info.ascent + info.descent + info.leading + 3);
-    if (gRowHeight < kIconSize + 2) {
-        gRowHeight = kIconSize + 2;     /* a row has to hold its icon */
+
+    /* A row is as tall as the font needs or as tall as its icon, whichever
+       is more — OE's folder rows are the icon's height plus a pixel. */
+    gRowHeight = (short)(info.ascent + info.descent + info.leading + 2);
+    if (gRowHeight < kIconSize + 1) {
+        gRowHeight = kIconSize + 1;
     }
     gRowBaseline = (short)(info.ascent +
                            ((gRowHeight - info.ascent - info.descent) / 2));
     gDateColumn = (short)(TextWidth("Sep 00 00:00", 0, 12) + kTextInset * 2);
 
-    /* The status line is Geneva too — it is a label, not a heading — so its
-       bar is measured before the font changes. */
-    gStatusHeight = (short)(info.ascent + info.descent + info.leading + 7);
-    gStatusBase   = (short)(info.ascent +
-                            ((gStatusHeight - info.ascent - info.descent) / 2));
-
-    UseHeadFont();
-    GetFontInfo(&info);
+    /* Both chrome bars are set in the same font, so they measure alike. */
     gHeaderHeight = (short)(info.ascent + info.descent + info.leading + 6);
     if (gHeaderHeight < kHeaderHeight) {
         gHeaderHeight = kHeaderHeight;
     }
-    gHeaderBase = (short)(info.ascent +
-                          ((gHeaderHeight - info.ascent - info.descent) / 2));
+    gHeaderBase   = (short)(info.ascent +
+                            ((gHeaderHeight - info.ascent - info.descent) / 2));
+    gStatusHeight = gHeaderHeight;
+    gStatusBase   = gHeaderBase;
 }
 
 /*
@@ -846,9 +810,9 @@ static void ApplyRunStyle(long start, long end, short face)
     if (gReaderTE == NULL || end <= start) {
         return;
     }
-    style.tsFont = gViewFont;
+    style.tsFont = gReadFont;
     style.tsFace = face;
-    style.tsSize = gViewSize;
+    style.tsSize = gReadSize;
     style.tsColor.red   = 0;
     style.tsColor.green = 0;
     style.tsColor.blue  = 0;
@@ -1050,7 +1014,7 @@ static void DrawHeaderTitle(const Rect *r, const char *text)
 {
     Rect inner = *r;
 
-    UseHeadFont();
+    UseViewFont();
     TextFace(bold);
     SetThemeTextColor(kThemeTextColorWindowHeaderActive, 8, true);
 
@@ -2595,7 +2559,9 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
         Rect view;
 
         ReaderRects(&view);
-        UseViewFont();
+        TextFont(gReadFont);
+        TextSize(gReadSize);
+        TextFace(normal);
         gReaderTE = TEStyleNew(&view, &view);
     }
     if (gReaderTE == NULL) {
