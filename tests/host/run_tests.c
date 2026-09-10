@@ -15,6 +15,7 @@
 #include "portable/gazette_http.h"
 #include "portable/gazette_portable.h"
 #include "portable/gazette_url.h"
+#include "prefs/gazette_opml.h"
 #include "prefs/gazette_prefs.h"
 
 #include <stdio.h>
@@ -1997,6 +1998,31 @@ static void TestExtractTags(void)
     GazetteHtmlTagName("!doctype html", 13, name, sizeof name);
     CheckStr("a doctype is not an element", name, "");
 
+    {
+        /* The attribute reader, which OPML leans on as hard as the extractor
+           does — and OPML writes "xmlUrl" with a capital in the middle. */
+        const char *value;
+        size_t      valueLen;
+
+        CheckTrue("an attribute is found",
+                  GazetteHtmlAttr(" a href=\"x\"", 11, "href",
+                                  &value, &valueLen));
+        CheckLong("with its length", (long)valueLen, 1);
+
+        CheckTrue("the name matches in any case",
+                  GazetteHtmlAttr(" o XMLURL=\"u\"", 13, "xmlUrl",
+                                  &value, &valueLen));
+        CheckLong("a name must start at a word boundary",
+                  GazetteHtmlAttr(" o xmlUrl=\"u\"", 13, "url",
+                                  &value, &valueLen), 0);
+        CheckLong("an unquoted value is not read",
+                  GazetteHtmlAttr(" o href=x", 9, "href", &value, &valueLen),
+                  0);
+        CheckLong("an absent one is absent",
+                  GazetteHtmlAttr(" o href=\"x\"", 11, "src",
+                                  &value, &valueLen), 0);
+    }
+
     CheckTrue("p ends a paragraph", GazetteHtmlIsBlockTag("p"));
     CheckTrue("so does li", GazetteHtmlIsBlockTag("li"));
     CheckLong("span does not", GazetteHtmlIsBlockTag("span"), 0);
@@ -2196,6 +2222,129 @@ static void TestExtract(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* OPML                                                                */
+/* ------------------------------------------------------------------ */
+
+static void TestOPML(void)
+{
+    static char  text[kGazetteOPMLMax];
+    GazettePrefs p;
+    size_t       n;
+
+    memset(&p, 0, sizeof p);
+    GazettePrefsAddGroup(&p, "News & Views");
+    GazettePrefsAddFeed(&p, "https://e/loose", "Loose", -1);
+    GazettePrefsAddFeed(&p, "https://e/a?x=1&y=2", "A <b>", 0);
+
+    n = GazetteOPMLWrite(&p, text, sizeof text);
+    CheckTrue("an OPML document is written", n > 0);
+    CheckTrue("with the outlines in it",
+              strstr(text, "xmlUrl=\"https://e/loose\"") != NULL);
+
+    /* The one way an export fails silently is by writing a file other
+       readers refuse, and an unescaped ampersand is how that happens. */
+    CheckTrue("a group name is escaped",
+              strstr(text, "text=\"News &amp; Views\"") != NULL);
+    CheckTrue("and so is a URL",
+              strstr(text, "xmlUrl=\"https://e/a?x=1&amp;y=2\"") != NULL);
+    CheckTrue("and a title", strstr(text, "title=\"A &lt;b&gt;\"") != NULL);
+    CheckLong("nothing raw is left", (long)(strstr(text, "& ") != NULL), 0);
+
+    {
+        /* Round trip: what was written reads back as the same tree. */
+        GazettePrefs q;
+
+        memset(&q, 0, sizeof q);
+        CheckLong("both feeds come back",
+                  GazetteOPMLParse(text, strlen(text), &q), 2);
+        CheckLong("and the group", q.groupCount, 1);
+        CheckStr("with its name unescaped", q.groups[0].name, "News & Views");
+        CheckOrder("in sidebar order", &q, "Loose,A <b>");
+        CheckLong("the loose one stayed loose", q.feeds[0].group, -1);
+        CheckLong("and the grouped one grouped", q.feeds[1].group, 0);
+        CheckStr("the URL survived escaping",
+                 q.feeds[1].url, "https://e/a?x=1&y=2");
+
+        /* Importing is additive and idempotent: the same file twice is not
+           two copies of a subscription list. */
+        CheckLong("a second import adds nothing",
+                  GazetteOPMLParse(text, strlen(text), &q), 0);
+        CheckLong("the feed count holds", q.feedCount, 2);
+        CheckLong("and the group count", q.groupCount, 1);
+    }
+
+    {
+        /* A file from another reader: attributes in a different order, no
+           type attribute, folders written with a separate close tag. */
+        static const char foreign[] =
+            "<opml version=\"2.0\"><body>\n"
+            "  <outline text=\"Tech\">\n"
+            "    <outline xmlUrl=\"https://e/1\" text=\"One\"></outline>\n"
+            "    <outline title=\"Two\" xmlUrl=\"https://e/2\"/>\n"
+            "  </outline>\n"
+            "  <outline text=\"Solo\" xmlUrl=\"https://e/3\"/>\n"
+            "</body></opml>\n";
+        GazettePrefs q;
+
+        memset(&q, 0, sizeof q);
+        CheckLong("three feeds read",
+                  GazetteOPMLParse(foreign, sizeof foreign - 1, &q), 3);
+        CheckLong("one folder", q.groupCount, 1);
+        CheckStr("named", q.groups[0].name, "Tech");
+        CheckStr("title wins over text where both are given",
+                 q.feeds[GazettePrefsFindFeed(&q, "https://e/2")].title, "Two");
+
+        /* A feed after the folder closed belongs to no folder. */
+        CheckLong("the solo feed is top-level",
+                  q.feeds[GazettePrefsFindFeed(&q, "https://e/3")].group, -1);
+        CheckLong("the folder's two are in it",
+                  q.feeds[GazettePrefsFindFeed(&q, "https://e/1")].group, 0);
+    }
+
+    {
+        /* Gazette's model is one level deep. A deeper file must not lose
+           subscriptions to a shape the sidebar cannot draw. */
+        static const char nested[] =
+            "<opml><body>"
+            "<outline text=\"Outer\">"
+            "<outline text=\"Inner\">"
+            "<outline xmlUrl=\"https://e/deep\" text=\"Deep\"/>"
+            "</outline></outline></body></opml>";
+        GazettePrefs q;
+
+        memset(&q, 0, sizeof q);
+        CheckLong("the deep feed is kept",
+                  GazetteOPMLParse(nested, sizeof nested - 1, &q), 1);
+        CheckLong("only the outer folder is made", q.groupCount, 1);
+        CheckStr("and it is the outer one", q.groups[0].name, "Outer");
+        CheckLong("with the feed in it",
+                  q.feeds[GazettePrefsFindFeed(&q, "https://e/deep")].group, 0);
+    }
+
+    {
+        /* Rubbish in is not a crash: an unterminated tag ends the file, and
+           an outline with no xmlUrl and no children is not a feed. */
+        static const char broken[] = "<opml><body><outline text=\"x\"";
+        GazettePrefs q;
+
+        memset(&q, 0, sizeof q);
+        CheckLong("a truncated file yields nothing",
+                  GazetteOPMLParse(broken, sizeof broken - 1, &q), 0);
+        CheckLong("and adds no feeds", q.feedCount, 0);
+    }
+
+    {
+        /* A buffer that cannot hold the document reports failure rather than
+           writing half of one. */
+        char small[64];
+
+        CheckLong("a short buffer refuses",
+                  (long)GazetteOPMLWrite(&p, small, sizeof small), 0);
+        CheckStr("and leaves nothing behind", small, "");
+    }
+}
+
+/* ------------------------------------------------------------------ */
 
 int main(void)
 {
@@ -2211,6 +2360,7 @@ int main(void)
     TestGroups();
     TestSidebarRows();
     TestGroupParsing();
+    TestOPML();
     TestHeaderBlocks();
     TestURLSplit();
     TestURLResolve();

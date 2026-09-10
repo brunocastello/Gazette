@@ -51,6 +51,7 @@ set(GAZETTE_SOURCES
 
     # Preferences and feed list — portable, host-tested
     src/prefs/gazette_prefs.c
+    src/prefs/gazette_opml.c
 
     # Portable helpers — pure C, host-tested (tests/host)
     src/portable/gazette_portable.c

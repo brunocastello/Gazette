@@ -34,6 +34,7 @@
 #include <Events.h>
 #include <Appearance.h>
 #include <Sound.h>
+#include <MacMemory.h>
 #include <TextUtils.h>
 
 #include <stdio.h>
@@ -42,6 +43,8 @@
 #include "core/gazette_core.h"
 #include "feeds/gazette_feeds.h"
 #include "feeds/gazette_index.h"
+#include "prefs/gazette_opml.h"
+#include "store/gazette_store.h"
 #include "net/gazette_net.h"
 #include "ui/gazette_dialogs.h"
 #include "ui/platinum_window.h"
@@ -83,6 +86,8 @@ static void    HandleMarkRead(void);
 static void    HandleMarkAllRead(void);
 static void    HandleFind(void);
 static void    HandleShowAll(void);
+static void    HandleImportOPML(void);
+static void    HandleExportOPML(void);
 
 /* ------------------------------------------------------------------ */
 /* Application globals                                                 */
@@ -127,9 +132,12 @@ enum {
 enum {
     kFileItemRefresh = 1,
     /* 2 is a divider */
-    kFileItemClose   = 3,
-    /* 4 is a divider */
-    kFileItemQuit    = 5
+    kFileItemImport  = 3,
+    kFileItemExport  = 4,
+    /* 5 is a divider */
+    kFileItemClose   = 6,
+    /* 7 is a divider */
+    kFileItemQuit    = 8
 };
 
 /* Feeds menu items, in the order AppendMenu() adds them below. */
@@ -229,9 +237,10 @@ static Boolean InitGazette(void)
         return false;
     }
 
-    /* A modal dialog runs a loop of its own, and this is what keeps a fetch
-       moving inside it. See gazette_dialogs.h. */
+    /* A modal dialog and a Navigation Services dialog each run a loop of
+       their own, and this is what keeps a fetch moving inside them. */
     GazetteDialogsSetIdle(PumpRefresh);
+    GazetteStoreSetIdle(PumpRefresh);
 
     /* Show whatever the last run left cached, so the window has content
        before any network work happens — which on a machine with no
@@ -265,7 +274,10 @@ static Boolean BuildMenuBar(void)
     if (fileMenu == nil) {
         return false;
     }
-    AppendMenu(fileMenu, "\pRefresh/R;(-;Close/W;(-;Quit/Q");
+    AppendMenu(fileMenu,
+               "\pRefresh/R;(-;"
+               "Import Feeds\311;Export Feeds\311;(-;"
+               "Close/W;(-;Quit/Q");
     InsertMenu(fileMenu, 0);
 
     editMenu = NewMenu(kMenuEdit, "\pEdit");
@@ -476,6 +488,10 @@ static void HandleMenuChoice(long menuResult)
         case kMenuFile:
             if (menuItem == kFileItemRefresh) {
                 HandleRefresh();
+            } else if (menuItem == kFileItemImport) {
+                HandleImportOPML();
+            } else if (menuItem == kFileItemExport) {
+                HandleExportOPML();
             } else if (menuItem == kFileItemClose ||
                        menuItem == kFileItemQuit) {
                 HandleQuit();
@@ -977,6 +993,75 @@ static void HandleShowAll(void)
     snprintf(message, sizeof message, "%d articles.",
              GazetteFeedsArticleCount());
     GazetteUISetStatus(message);
+}
+
+/* ------------------------------------------------------------------ */
+/* OPML                                                                */
+/*                                                                     */
+/* The whole feed list, in the format every other reader speaks. The    */
+/* text is portable and host-tested (prefs/gazette_opml.h); choosing    */
+/* the file is Navigation Services, which is the only way to ask for    */
+/* one under Carbon.                                                    */
+/* ------------------------------------------------------------------ */
+
+static void HandleImportOPML(void)
+{
+    char     *text;
+    char      message[224];
+    long      len   = 0;
+    int       added = 0;
+
+    /* 96 KB is too much to put on this stack, and it is wanted for the
+       length of one import and no longer. */
+    text = (char *)NewPtrClear((Size)kGazetteOPMLMax);
+    if (text == nil) {
+        GazetteUISetStatus("Not enough memory to read a feed list.");
+        return;
+    }
+
+    if (GazetteStoreAskAndReadFile("Choose an OPML feed list to import:",
+                                   text, kGazetteOPMLMax, &len) && len > 0) {
+        added = GazetteCoreImportOPML(text, (size_t)len);
+    }
+    DisposePtr((Ptr)text);
+
+    if (added <= 0) {
+        /* Cancelling and importing a file whose feeds are all already
+           subscribed are the same outcome, and neither is a failure. */
+        GazetteUISetStatus("No new feeds were added.");
+        return;
+    }
+
+    GazetteCoreSavePrefs();
+    GazetteUIFeedsChanged();
+    snprintf(message, sizeof message, "%d feed%s added.", added,
+             (added == 1) ? "" : "s");
+    GazetteUISetStatus(message);
+}
+
+static void HandleExportOPML(void)
+{
+    char  *text;
+    size_t len;
+
+    text = (char *)NewPtrClear((Size)kGazetteOPMLMax);
+    if (text == nil) {
+        GazetteUISetStatus("Not enough memory to write a feed list.");
+        return;
+    }
+
+    len = GazetteOPMLWrite(GazetteCoreGetPrefs(), text, kGazetteOPMLMax);
+    if (len == 0) {
+        DisposePtr((Ptr)text);
+        GazetteUISetStatus("The feed list could not be written.");
+        return;
+    }
+
+    if (GazetteStoreAskAndWriteFile("Save the feed list as:",
+                                    "Gazette Feeds.opml", text, (long)len)) {
+        GazetteUISetStatus("Feed list exported.");
+    }
+    DisposePtr((Ptr)text);
 }
 
 static void HandleMoveToGroup(short item)

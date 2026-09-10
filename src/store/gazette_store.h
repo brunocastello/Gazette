@@ -87,6 +87,39 @@ void GazetteStoreCacheDelete(const char *feedURL);
 GazetteStoreFile *GazetteStoreDataCreate(const char *name);
 GazetteStoreFile *GazetteStoreDataOpen(const char *name);
 
+/* ------------------------------------------------------------------ */
+/* Files the user chooses                                              */
+/*                                                                     */
+/* Import and export put up a real Navigation Services dialog. Nav is  */
+/* the only way to ask for a file under Carbon — StandardGetFile is    */
+/* CALL_NOT_IN_CARBON — and it lives here because every FSSpec in      */
+/* Gazette does.                                                       */
+/* ------------------------------------------------------------------ */
+
+/*
+ * A Nav dialog runs its own event loop, the same way ModalDialog does, so it
+ * is the second place Gazette's cooperative loop is not running. Register
+ * what to do with the idle time and a fetch keeps moving while a file is
+ * being chosen.
+ */
+typedef void (*GazetteStoreIdle)(void);
+void GazetteStoreSetIdle(GazetteStoreIdle idle);
+
+/*
+ * Ask for a file and read it. Returns 1 and fills buf and *outLen when one
+ * was chosen and read, 0 when the user cancelled or it could not be read.
+ * Anything past cap - 1 bytes is dropped.
+ */
+int GazetteStoreAskAndReadFile(const char *prompt, char *buf, long cap,
+                               long *outLen);
+
+/*
+ * Ask where to put a file and write text to it. defaultName is what the save
+ * dialog offers. Returns 1 when it was written.
+ */
+int GazetteStoreAskAndWriteFile(const char *prompt, const char *defaultName,
+                                const char *text, long len);
+
 #ifdef __cplusplus
 }
 #endif

@@ -9,6 +9,8 @@
 
 #include "gazette_core.h"
 
+#include "prefs/gazette_opml.h"
+
 #include "store/gazette_store.h"
 
 #include <string.h>
@@ -207,6 +209,20 @@ void GazetteCoreSetFullText(Boolean on)
     }
     gPrefs.fullText = on ? 1 : 0;
     gPrefsDirty     = true;
+}
+
+int GazetteCoreImportOPML(const char *text, size_t len)
+{
+    int added;
+
+    if (!gInited) {
+        return 0;
+    }
+    added = GazetteOPMLParse(text, len, &gPrefs);
+    if (added > 0) {
+        gPrefsDirty = true;
+    }
+    return added;
 }
 
 int GazetteCoreMoveFeed(int from, int to, int group)

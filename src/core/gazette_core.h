@@ -14,6 +14,8 @@
    Boolean/true/false mean the same thing on both sides. */
 #include <MacTypes.h>
 
+#include <stddef.h>
+
 #include "prefs/gazette_prefs.h"
 
 #ifdef __cplusplus
@@ -86,6 +88,13 @@ Boolean GazetteCoreSetFeedURL(int index, const char *url);
 /* Fetch and show each article's own page, rather than the summary the feed
    carries. The Feeds menu's check mark. */
 void GazetteCoreSetFullText(Boolean on);
+
+/*
+ * Merge an OPML document into the feed list, adding what is not already
+ * there. Returns how many feeds were added. See prefs/gazette_opml.h for why
+ * an import adds rather than replaces.
+ */
+int GazetteCoreImportOPML(const char *text, size_t len);
 
 /* Move a feed to a position and into a group. Returns its new index, or -1.
    This is what a drag in the sidebar lands on. */

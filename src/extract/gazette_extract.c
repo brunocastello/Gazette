@@ -168,17 +168,10 @@ static int IsContainerTag(const char *name)
                   sizeof kContainerTags / sizeof kContainerTags[0]);
 }
 
-/*
- * The value of one attribute out of a tag's raw text. Returns 1 and points
- * *value at it, or 0 when the tag does not carry it.
- *
- * Deliberately small-minded about HTML: the name has to be preceded by
- * whitespace so "data-track" does not match inside "x-data-track", the value
- * has to be quoted, and anything else is treated as absent. Every page that
- * matters writes attributes that way, and being wrong here means missing an
- * unwanted block, not eating a wanted one.
- */
-static int FindAttr(const char *tag, size_t len, const char *name,
+/* See gazette_extract.h. Being wrong here means missing an unwanted block
+   rather than eating a wanted one, which is why it can afford to be strict
+   about quoting and about the whitespace before the name. */
+int GazetteHtmlAttr(const char *tag, size_t len, const char *name,
                     const char **value, size_t *valueLen)
 {
     size_t nameLen = strlen(name);
@@ -192,8 +185,10 @@ static int FindAttr(const char *tag, size_t len, const char *name,
             tag[i - 1] != '\r') {
             continue;
         }
+        /* Both sides lowered: HTML attribute names arrive in any case, and
+           an OPML file writes "xmlUrl" with a capital in the middle of it. */
         for (at = 0; at < nameLen; at++) {
-            if (Lower(tag[i + at]) != name[at]) {
+            if (Lower(tag[i + at]) != Lower(name[at])) {
                 break;
             }
         }
@@ -270,7 +265,7 @@ static int TagIsUnwanted(const char *tag, size_t len, const char *name)
     }
 
     for (i = 0; i < sizeof kNamed / sizeof kNamed[0]; i++) {
-        if (FindAttr(tag, len, kNamed[i], &value, &valueLen) &&
+        if (GazetteHtmlAttr(tag, len, kNamed[i], &value, &valueLen) &&
             ValueHasAny(value, valueLen, kUnwantedMarkers,
                         sizeof kUnwantedMarkers /
                         sizeof kUnwantedMarkers[0])) {
@@ -278,7 +273,7 @@ static int TagIsUnwanted(const char *tag, size_t len, const char *name)
         }
     }
 
-    if (FindAttr(tag, len, "role", &value, &valueLen) &&
+    if (GazetteHtmlAttr(tag, len, "role", &value, &valueLen) &&
         ValueHasAny(value, valueLen, kUnwantedRoles,
                     sizeof kUnwantedRoles / sizeof kUnwantedRoles[0])) {
         return 1;

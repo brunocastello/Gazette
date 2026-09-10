@@ -49,6 +49,20 @@ void GazetteHtmlTagName(const char *tag, size_t len, char *out, size_t cap);
    rest of the block-level list a page or a feed summary actually uses. */
 int GazetteHtmlIsBlockTag(const char *name);
 
+/*
+ * The value of one attribute out of a tag's raw inner text. Returns 1 and
+ * points *value into the tag, with *valueLen its length; 0 when the tag does
+ * not carry it.
+ *
+ * The name is matched without regard to case — HTML writes attributes in any
+ * case and OPML writes "xmlUrl" with a capital in the middle of it. Otherwise
+ * deliberately small-minded: the name must be preceded by whitespace, so
+ * "url" does not match inside "xmlUrl", and the value must be quoted. Every
+ * generator that matters writes attributes that way.
+ */
+int GazetteHtmlAttr(const char *tag, size_t len, const char *name,
+                    const char **value, size_t *valueLen);
+
 /* ------------------------------------------------------------------ */
 /* The extractor                                                       */
 /* ------------------------------------------------------------------ */

@@ -16,6 +16,8 @@
 #include <Folders.h>
 #include <MacMemory.h>   /* NewPtrClear, DisposePtr, BlockMoveData */
 #include <Script.h>      /* smSystemScript */
+#include <Navigation.h>  /* NavGetFile / NavPutFile — the only Carbon way */
+#include <AppleEvents.h> /* AEGetNthPtr, to read Nav's reply */
 
 #include <string.h>      /* strlen */
 
@@ -624,4 +626,222 @@ void GazetteStoreClose(GazetteStoreFile *f)
     }
     FSClose(f->refNum);
     DisposePtr((Ptr)f);
+}
+
+/* ------------------------------------------------------------------ */
+/* Files the user chooses                                              */
+/* ------------------------------------------------------------------ */
+
+static GazetteStoreIdle gIdle;
+
+void GazetteStoreSetIdle(GazetteStoreIdle idle)
+{
+    gIdle = idle;
+}
+
+/*
+ * Nav runs its own event loop and hands the application every event it does
+ * not want itself. Null events are the ones that matter: they are the idle
+ * time, and pumping the fetch from here is what keeps a refresh alive while a
+ * file is being chosen. See GazetteStoreSetIdle.
+ */
+static pascal void GazetteNavEvent(NavEventCallbackMessage selector,
+                                   NavCBRecPtr parms, void *context)
+{
+    (void)context;
+
+    if (selector != kNavCBEvent || parms == NULL) {
+        return;
+    }
+    if (parms->eventData.eventDataParms.event == NULL) {
+        return;
+    }
+    if (parms->eventData.eventDataParms.event->what == nullEvent &&
+        gIdle != NULL) {
+        gIdle();
+    }
+}
+
+/* The first item of a Nav reply, as an FSSpec. Nav answers with an Apple
+   Event descriptor list because it can return several; every dialog here asks
+   for one file, so the first is the answer. */
+static OSErr FirstReplySpec(const NavReplyRecord *reply, FSSpec *spec)
+{
+    AEKeyword keyword;
+    DescType  type;
+    Size      actual;
+
+    return AEGetNthPtr(&reply->selection, 1, typeFSS, &keyword, &type,
+                       spec, (Size)sizeof(FSSpec), &actual);
+}
+
+static void SetPrompt(NavDialogOptions *options, const char *prompt)
+{
+    size_t len;
+
+    if (prompt == NULL) {
+        return;
+    }
+    len = strlen(prompt);
+    if (len > 255) {
+        len = 255;
+    }
+    options->message[0] = (unsigned char)len;
+    memcpy(options->message + 1, prompt, len);
+}
+
+int GazetteStoreAskAndReadFile(const char *prompt, char *buf, long cap,
+                               long *outLen)
+{
+    NavDialogOptions options;
+    NavReplyRecord   reply;
+    NavEventUPP      eventUPP;
+    FSSpec           spec;
+    OSErr            err;
+    short            refNum;
+    long             count;
+
+    if (outLen != NULL) {
+        *outLen = 0;
+    }
+    if (buf == NULL || cap <= 0) {
+        return 0;
+    }
+    buf[0] = '\0';
+
+    if (!NavServicesAvailable()) {
+        return 0;
+    }
+    if (NavGetDefaultDialogOptions(&options) != noErr) {
+        return 0;
+    }
+    SetPrompt(&options, prompt);
+
+    eventUPP = NewNavEventUPP(GazetteNavEvent);
+
+    /* No type list: an OPML file is 'TEXT' from one editor and something else
+       from another, and refusing to show a file the user is pointing at is
+       worse than opening one that turns out not to parse. */
+    err = NavGetFile(NULL, &reply, &options, eventUPP, NULL, NULL, NULL, NULL);
+
+    if (eventUPP != NULL) {
+        DisposeNavEventUPP(eventUPP);
+    }
+    if (err != noErr || !reply.validRecord) {
+        if (err == noErr) {
+            NavDisposeReply(&reply);
+        }
+        return 0;                   /* cancelled */
+    }
+
+    err = FirstReplySpec(&reply, &spec);
+    NavDisposeReply(&reply);
+    if (err != noErr) {
+        return 0;
+    }
+
+    if (FSpOpenDF(&spec, fsRdPerm, &refNum) != noErr) {
+        return 0;
+    }
+    if (GetEOF(refNum, &count) != noErr) {
+        FSClose(refNum);
+        return 0;
+    }
+    if (count > cap - 1) {
+        count = cap - 1;
+    }
+    err = FSRead(refNum, &count, buf);
+    FSClose(refNum);
+
+    if (err != noErr && err != eofErr) {
+        return 0;
+    }
+    buf[count] = '\0';
+    if (outLen != NULL) {
+        *outLen = count;
+    }
+    return 1;
+}
+
+int GazetteStoreAskAndWriteFile(const char *prompt, const char *defaultName,
+                                const char *text, long len)
+{
+    NavDialogOptions options;
+    NavReplyRecord   reply;
+    NavEventUPP      eventUPP;
+    FSSpec           spec;
+    OSErr            err;
+    short            refNum;
+    long             count;
+
+    if (text == NULL || len < 0) {
+        return 0;
+    }
+    if (!NavServicesAvailable()) {
+        return 0;
+    }
+    if (NavGetDefaultDialogOptions(&options) != noErr) {
+        return 0;
+    }
+    SetPrompt(&options, prompt);
+
+    if (defaultName != NULL) {
+        size_t nameLen = strlen(defaultName);
+
+        if (nameLen > 63) {
+            nameLen = 63;
+        }
+        options.savedFileName[0] = (unsigned char)nameLen;
+        memcpy(options.savedFileName + 1, defaultName, nameLen);
+    }
+
+    eventUPP = NewNavEventUPP(GazetteNavEvent);
+
+    err = NavPutFile(NULL, &reply, &options, eventUPP, kTextFileType,
+                     kGazetteCreator, NULL);
+
+    if (eventUPP != NULL) {
+        DisposeNavEventUPP(eventUPP);
+    }
+    if (err != noErr || !reply.validRecord) {
+        if (err == noErr) {
+            NavDisposeReply(&reply);
+        }
+        return 0;                   /* cancelled */
+    }
+
+    err = FirstReplySpec(&reply, &spec);
+    if (err != noErr) {
+        NavDisposeReply(&reply);
+        return 0;
+    }
+
+    /* replacing is Nav's answer to "the user picked an existing file and
+       agreed to replace it"; without the delete, the old contents past the
+       new length would survive the write. */
+    if (reply.replacing) {
+        (void)FSpDelete(&spec);
+    }
+    err = FSpCreate(&spec, kGazetteCreator, kTextFileType, smSystemScript);
+    if (err != noErr && err != dupFNErr) {
+        NavDisposeReply(&reply);
+        return 0;
+    }
+
+    if (FSpOpenDF(&spec, fsWrPerm, &refNum) != noErr) {
+        NavDisposeReply(&reply);
+        return 0;
+    }
+    (void)SetEOF(refNum, 0);
+
+    count = len;
+    err   = FSWrite(refNum, &count, text);
+    FSClose(refNum);
+
+    /* Tells Nav the save is finished, which is what lets it hide a file name
+       extension and clean up any translation it set up. */
+    NavCompleteSave(&reply, kNavTranslateInPlace);
+    NavDisposeReply(&reply);
+
+    return (err == noErr) ? 1 : 0;
 }
