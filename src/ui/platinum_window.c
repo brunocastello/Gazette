@@ -71,8 +71,18 @@ enum {
     kRowHeight     = 14,        /* a list cell, until the theme's font is
                                    measured — see gRowHeight                 */
     kReaderLead    = 13,        /* what one arrow scrolls the article by      */
-    kDividerWidth  = 5,         /* the draggable gap between panes: two of
-                                   grey, the rule, two more                  */
+    /*
+     * The draggable border between two panes, measured off Outlook Express.
+     * It is not a gap with a line in it — it is a Platinum groove, and the
+     * two directions are built differently because of what they abut.
+     *
+     * Down the side, where it meets the sidebar's scroll bar (whose own
+     * edge is the first black line):  white, four grey, black, two grey.
+     * Across, where it meets list rows:  two grey, black, white, four grey,
+     * black, white.
+     */
+    kVDividerWidth = 8,
+    kHDividerWidth = 10,
     kTextInset     = 4,
     kDateColumn    = 46,        /* likewise, until gDateColumn is measured     */
     kBaseline      = 10,        /* likewise, until gRowBaseline is worked out */
@@ -727,24 +737,26 @@ static void Layout(void)
      * vRule and hRule are those columns and rows, worked out once.
      */
     {
-        short vRule = (short)(bounds.left + gSidebarWidth + kDividerWidth / 2);
+        short split   = (short)(bounds.left + gSidebarWidth);
         short headTop = (short)(bounds.top - 1);
         short headBot = (short)(bounds.top + gHeaderHeight);
-        short hRule;
+
+        /* The divider's own black line, and the column the header seam has
+           to fall on so the vertical line runs unbroken. */
+        short vLine = (short)(split + 5);
 
         SetRect(&gSidebarHeader, (short)(bounds.left - 1), headTop,
-                (short)(vRule + 1), headBot);
-        SetRect(&gListHeader, vRule, headTop,
+                (short)(vLine + 1), headBot);
+        SetRect(&gListHeader, vLine, headTop,
                 (short)(bounds.right + 1), headBot);
 
-        SetRect(&gVDivider, (short)(bounds.left + gSidebarWidth), headBot,
-                (short)(bounds.left + gSidebarWidth + kDividerWidth),
-                contentBottom);
+        SetRect(&gVDivider, split, headBot,
+                (short)(split + kVDividerWidth), contentBottom);
 
-        /* Glued to the header above, to the rule on the right, and to the
-           status strip's rule below. */
-        SetRect(&gSidebarPane, bounds.left, headBot,
-                (short)(vRule + 1), (short)(contentBottom + 1));
+        /* Flush to the divider on the right — the sidebar's scroll bar edge
+           is the groove's first black line — and to the status rule below. */
+        SetRect(&gSidebarPane, bounds.left, headBot, split,
+                (short)(contentBottom + 1));
 
         rightLeft = gVDivider.right;
 
@@ -754,22 +766,19 @@ static void Layout(void)
         if (listBottom < headBot + kMinListHeight) {
             listBottom = (short)(headBot + kMinListHeight);
         }
-        if (listBottom > contentBottom - kMinReader - kDividerWidth) {
-            listBottom = (short)(contentBottom - kMinReader - kDividerWidth);
+        if (listBottom > contentBottom - kMinReader - kHDividerWidth) {
+            listBottom = (short)(contentBottom - kMinReader - kHDividerWidth);
         }
-        hRule = (short)(listBottom + kDividerWidth / 2);
 
         SetRect(&gListPane, rightLeft, headBot,
-                (short)(bounds.right + 1), (short)(hRule + 1));
+                (short)(bounds.right + 1), listBottom);
 
-        SetRect(&gHDivider, rightLeft, listBottom, bounds.right,
-                (short)(listBottom + kDividerWidth));
+        SetRect(&gHDivider, rightLeft, listBottom, (short)(bounds.right + 1),
+                (short)(listBottom + kHDividerWidth));
 
-        /* The article's header starts on the same rule the list above ends
-           on, so the two borders are one line. */
-        SetRect(&gReaderHeader, rightLeft, hRule,
+        SetRect(&gReaderHeader, rightLeft, gHDivider.bottom,
                 (short)(bounds.right + 1),
-                (short)(hRule + gReaderHeaderHeight));
+                (short)(gHDivider.bottom + gReaderHeaderHeight));
 
         SetRect(&gReaderPane, rightLeft, gReaderHeader.bottom,
                 (short)(bounds.right + 1), (short)(contentBottom + 1));
@@ -1832,21 +1841,90 @@ static void DrawReader(void)
     Draw1Control(gReaderCtl);
 }
 
-/* The dotted grab handle in a splitter: five pairs of pixels, centred. */
-static void DrawGrabHandle(const Rect *divider)
+/* One line of a groove, in the grey given. */
+static void GreyPen(short grey)
 {
-    short mid = (short)((divider->top + divider->bottom) / 2);
-    short at  = (short)((divider->left + divider->right) / 2 - 14);
+    RGBColor c;
+
+    c.red = c.green = c.blue = (unsigned short)(grey * 257);
+    RGBForeColor(&c);
+}
+
+/*
+ * The border between two panes, measured off Outlook Express pixel by
+ * pixel. It is a Platinum groove, not a gap with a line down it.
+ *
+ * Down the side it abuts the sidebar's scroll bar, whose own black edge
+ * serves as the groove's first line, so it draws: white, four of grey,
+ * black, two of grey.
+ *
+ * Across, it abuts list rows and has to supply both lines itself: two of
+ * grey, black, white, four of grey, black, white.
+ */
+static void DrawVDivider(const Rect *r)
+{
+    EraseWith(r, kThemeBrushDialogBackgroundActive);
+
+    GreyPen(255);
+    MoveTo(r->left, r->top);
+    LineTo(r->left, (short)(r->bottom - 1));
+
+    GreyPen(0);
+    MoveTo((short)(r->left + 5), r->top);
+    LineTo((short)(r->left + 5), (short)(r->bottom - 1));
+
+    ForeColor(blackColor);
+}
+
+static void DrawHDivider(const Rect *r)
+{
     short i;
 
-    if (divider->bottom - divider->top < 3) {
-        return;
+    EraseWith(r, kThemeBrushDialogBackgroundActive);
+
+    for (i = 0; i < 2; i++) {
+        short y = (short)(r->top + (i ? 8 : 2));
+
+        GreyPen(0);
+        MoveTo(r->left, y);
+        LineTo((short)(r->right - 1), y);
+
+        GreyPen(255);
+        MoveTo(r->left, (short)(y + 1));
+        LineTo((short)(r->right - 1), (short)(y + 1));
     }
+    ForeColor(blackColor);
+}
+
+/*
+ * The dotted grab handle that says a border can be dragged. OE puts one in
+ * the middle of each of its splitters, and it is the only thing telling a
+ * user the border is a control at all.
+ */
+static void DrawGrabHandle(const Rect *divider, Boolean vertical)
+{
+    short i;
+
     SetThemeTextColor(kThemeTextColorDialogActive, 8, true);
-    for (i = 0; i < 5; i++) {
-        MoveTo(at, mid);
-        LineTo((short)(at + 1), mid);
-        at = (short)(at + 6);
+
+    if (vertical) {
+        short mid = (short)((divider->left + divider->right) / 2);
+        short at  = (short)((divider->top + divider->bottom) / 2 - 14);
+
+        for (i = 0; i < 5; i++) {
+            MoveTo((short)(mid - 1), at);
+            LineTo((short)(mid - 1), (short)(at + 1));
+            at = (short)(at + 6);
+        }
+    } else {
+        short mid = (short)((divider->top + divider->bottom) / 2);
+        short at  = (short)((divider->left + divider->right) / 2 - 14);
+
+        for (i = 0; i < 5; i++) {
+            MoveTo(at, mid);
+            LineTo((short)(at + 1), mid);
+            at = (short)(at + 6);
+        }
     }
     ForeColor(blackColor);
 }
@@ -1904,16 +1982,16 @@ static void DrawStatusText(void)
     }
     SetPortWindowPort(gWindow);
 
-    /* Flat, on the window's background, with one rule along the top — the
-       line between the panes and the strip, and the only edge it has. */
+    /*
+     * Flat, with a black line along the top. It was an etched separator,
+     * which is a lighter grey than the sidebar's own border carrying on
+     * past it — two different lines meeting, and the join showed. One black
+     * rule, end to end, is also the line every scroll bar above it ends on.
+     */
     EraseWith(&gStatusRect, kThemeBrushDialogBackgroundActive);
-    {
-        Rect rule;
-
-        SetRect(&rule, gStatusRect.left, gStatusRect.top,
-                gStatusRect.right, (short)(gStatusRect.top + 1));
-        DrawThemeSeparator(&rule, kThemeStateActive);
-    }
+    ForeColor(blackColor);
+    MoveTo(gStatusRect.left, gStatusRect.top);
+    LineTo((short)(gStatusRect.right - 1), gStatusRect.top);
 
     UseViewFont();
     TextSize(gLabelSize);
@@ -1981,25 +2059,10 @@ void GazetteUIUpdate(void)
        track the theme rather than being two hard-coded greys, and the
        horizontal one carries the row of dots Outlook Express puts in a
        splitter to say that it can be dragged. */
-    /*
-     * A separator is a line, so it is given a one-pixel rectangle down the
-     * middle of the divider rather than the whole four-pixel gap — handed
-     * the gap it fills it, and the border between the panes came out four
-     * times thicker than OE's.
-     */
-    {
-        Rect rule;
-        short mid;
-
-        mid = (short)((gVDivider.left + gVDivider.right) / 2);
-        SetRect(&rule, mid, gVDivider.top, (short)(mid + 1), gVDivider.bottom);
-        DrawThemeSeparator(&rule, kThemeStateActive);
-
-        mid = (short)((gHDivider.top + gHDivider.bottom) / 2);
-        SetRect(&rule, gHDivider.left, mid, gHDivider.right, (short)(mid + 1));
-        DrawThemeSeparator(&rule, kThemeStateActive);
-    }
-    DrawGrabHandle(&gHDivider);
+    DrawVDivider(&gVDivider);
+    DrawHDivider(&gHDivider);
+    DrawGrabHandle(&gVDivider, true);
+    DrawGrabHandle(&gHDivider, false);
 
     /* The whole control hierarchy in one call — the two lists with their
        frames, scroll bars and focus rings, the two window headers, the
