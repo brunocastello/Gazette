@@ -213,15 +213,33 @@ Single cooperative event loop. Network fetches and parsing progress via poll fun
   refinement is *not* finished — see below.
 
 **Phase 5 – Native Toolbox controls** ✅
-- Sidebar and headline list as List Manager lists. ✅ `CreateCustomList` with
-  a `ListDefSpec` of `kListDefUserProcType`, so the list definition function
-  is a callback in `platinum_window.c` and not an `LDEF` code resource, which
-  Carbon does not allow. The cells carry no data: each list is a view onto
-  something the engine already holds in order, so a cell's row number *is*
-  its index into it. What went with them is the two hand-driven scroll bars,
-  the scroll arithmetic and the hand-plotted disclosure triangle, which is
-  now `DrawThemeButton` with `kThemeDisclosureButton`.
-- The article as a styled TextEdit record. ✅ `TEStyleNew`; the pane's three
+- The window is a control hierarchy. ✅ A root control, and every pane a real
+  control embedded in it. Sidebar and headline list are **List Box controls**
+  (CDEF 22, `CreateListBoxControl`) taking a `ListDefSpec` of
+  `kListDefUserProcType` directly, so the list definition function is a
+  callback in `platinum_window.c` — not an `LDEF` code resource, which Carbon
+  does not allow, and not `RegisterListDefinition`, which would cost
+  CarbonLib 1.5. The cells carry no data: each list is a view onto something
+  the engine already holds in order, so a cell's row number *is* its index
+  into it. What went with them is the hand-driven scroll bars, the scroll
+  arithmetic, the hit testing and the hand-plotted disclosure triangle, now
+  `DrawThemeButton` with `kThemeDisclosureButton`.
+- Chrome as controls. ✅ A window header control (CDEF 21, list-view variant)
+  over each list and a placard along the bottom, rather than a placard drawn
+  in the wrong place and an erased rectangle. `DrawGrowIcon`, which nothing
+  was calling, so the corner was blank.
+- Keyboard focus is the Control Manager's. ✅ `SetKeyboardFocus` moves it and
+  the CDEFs draw the rings; Tab is `AdvanceKeyboardFocus`.
+- The theme's fonts and colours. ✅ `GetThemeFont` for `kThemeViewsFont` and
+  `kThemeSmallSystemFont` rather than a hard-coded Geneva 9, with the row
+  height and baselines derived from the font. `kThemeBrushDocumentWindowBackground`
+  for a document window, `kThemeBrushListViewBackground` for the lists, and
+  `LMSetHiliteMode` so a selection inverts with the user's highlight colour
+  rather than with black. `TruncText` for truncation.
+- The article as a styled TextEdit record in a **user pane control**. ✅ The
+  control has drawing, tracking and focus procedures, so the pane draws
+  through the hierarchy, gets its own clicks, has a real `DrawThemeFocusRect`
+  ring and sits in the Tab order. `TEStyleNew`; the pane's three
   weights are three style runs. Styled text has no one line height to count
   in, so its scroll bar is measured in pixels where the lists' are measured
   in rows. `TEAutoView` is off and the offset is tracked in the window, so a

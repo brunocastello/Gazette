@@ -298,13 +298,37 @@ it: the sidebar's rows come from `GazetteCoreSidebarRowAt`, the headlines from
 `GazetteFeedsArticleAt`. A copy in the cells would only be a second thing to
 get out of date.
 
+The strip over each list is a **window header control** — CDEF 21's list-view
+variant, which is what Platinum puts above a list; the status line along the
+bottom is a real **placard**, which is what a placard is for. Neither carries a
+title of its own, so the text is drawn on top of them.
+
+The reader is a **user pane control** with drawing, tracking and focus
+procedures, holding a styled TextEdit record. Being a control means it draws
+when the Control Manager says to, gets its own clicks, has a real
+`DrawThemeFocusRect` ring, and sits in the Tab order — so **Tab** is
+`AdvanceKeyboardFocus` and **Shift-Tab** `ReverseKeyboardFocus` across all
+three panes rather than a switch statement in the application.
+
+Every font is the theme's, asked for once at startup: `GetThemeFont` for
+`kThemeViewsFont` in the lists and the article, `kThemeSmallSystemFont` for the
+headers, the status line and the byline. Both are Geneva on a stock Platinum
+system, but the Appearance control panel can change them, and the **row height
+and baselines follow from the font** rather than the other way round. Text is
+truncated with `TruncText`, the Script Manager's own, which knows where a
+character ends.
+
 A selected row inverts with the **highlight colour** the user chose in the
 Appearance control panel, not with black: `LMSetHiliteMode` clears the hilite
 bit immediately before the `InvertRect` that wants it. The disclosure triangles
-are `DrawThemeButton` with `kThemeDisclosureButton`, the pane backgrounds are
+are `DrawThemeButton` with `kThemeDisclosureButton`, the window background is
 `kThemeBrushDocumentWindowBackground` (a document window, not a dialog) and the
 list backgrounds `kThemeBrushListViewBackground`. The grow box is drawn with
 `DrawGrowIcon`, and the status line stops short of it.
+
+What is still drawn by hand is only what a list definition function and a user
+pane drawing procedure must draw: the text inside a cell, and the background
+behind it. There are no hand-drawn widgets left.
 
 The article's three weights — the title bold at 9, the byline plain at 9, the
 body at 10 — are three TextEdit style runs, applied to ranges that are already
