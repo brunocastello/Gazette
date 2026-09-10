@@ -91,6 +91,15 @@ enum {
     kMinReader     = 3 * kReaderLead,
     kReaderMargin  = 2,         /* above the first line and below the last */
 
+    /*
+     * Measured off a screenshot of Outlook Express 5.0.6 rather than
+     * guessed at. Every content area in it — both lists and the message
+     * pane — sits two pixels in from the window's edges and from each
+     * divider, on the window's own grey, and has no frame of any kind. The
+     * two pixels of grey *are* the separation.
+     */
+    kPaneInset     = 2,
+
     /* Which pane the keyboard is driving. The reader's scroll bar carries
        kRefReader as its control reference, so its action procedure and the
        focus are named the same way. */
@@ -623,11 +632,10 @@ static void Layout(void)
     SetRect(&gSidebarHeader, bounds.left, bounds.top,
             (short)(bounds.left + gSidebarWidth),
             (short)(bounds.top + gHeaderHeight));
-    /* One pixel up, so the list's own top frame line lands on the header's
-       bottom edge instead of drawing a second line just below it. */
-    SetRect(&gSidebarPane, bounds.left,
-            (short)(bounds.top + gHeaderHeight - 1),
-            (short)(bounds.left + gSidebarWidth), contentBottom);
+    SetRect(&gSidebarPane, (short)(bounds.left + kPaneInset),
+            (short)(bounds.top + gHeaderHeight + kPaneInset),
+            (short)(bounds.left + gSidebarWidth - kPaneInset),
+            (short)(contentBottom - kPaneInset));
 
     SetRect(&gVDivider, (short)(bounds.left + gSidebarWidth), bounds.top,
             (short)(bounds.left + gSidebarWidth + kDividerWidth),
@@ -647,20 +655,20 @@ static void Layout(void)
 
     SetRect(&gListHeader, rightLeft, bounds.top,
             bounds.right, (short)(bounds.top + gHeaderHeight));
-    SetRect(&gListPane, rightLeft, (short)(bounds.top + gHeaderHeight - 1),
-            bounds.right, listBottom);
+    SetRect(&gListPane, (short)(rightLeft + kPaneInset),
+            (short)(bounds.top + gHeaderHeight + kPaneInset),
+            (short)(bounds.right - kPaneInset),
+            (short)(listBottom - kPaneInset));
 
     SetRect(&gHDivider, rightLeft, listBottom,
             bounds.right, (short)(listBottom + kDividerWidth));
 
-    /* The same shape as a list box: one framed box holding the text and the
-       scroll bar, rather than a framed box with a bar bolted to its side. */
-    SetRect(&gReaderPane, rightLeft, (short)(listBottom + kDividerWidth),
-            bounds.right, contentBottom);
-    SetRect(&gReaderRect, (short)(gReaderPane.left + 1),
-            (short)(gReaderPane.top + 1),
-            (short)(gReaderPane.right - kScrollWidth),
-            (short)(gReaderPane.bottom - 1));
+    SetRect(&gReaderPane, (short)(rightLeft + kPaneInset),
+            (short)(listBottom + kDividerWidth + kPaneInset),
+            (short)(bounds.right - kPaneInset),
+            (short)(contentBottom - kPaneInset));
+    SetRect(&gReaderRect, gReaderPane.left, gReaderPane.top,
+            (short)(gReaderPane.right - kScrollWidth), gReaderPane.bottom);
 
     /* End to end, and flush with the panes above: the placard's own top
        edge is the line between them, so there is nothing to leave a gap
@@ -1133,9 +1141,9 @@ static void DrawDisclosure(const Rect *cell, short left, Boolean open)
     info.adornment = kThemeAdornmentNone;
 
     /* DrawThemeButton erases its own bounds with the current background, so
-       the sidebar's grey has to be current or the triangle arrives sitting
+       the list's own grey has to be current or the triangle arrives sitting
        in a white square. */
-    SetThemeBackground(kThemeBrushDialogBackgroundActive, 8, true);
+    SetThemeBackground(kThemeBrushListViewBackground, 8, true);
     (void)DrawThemeButton(&box, kThemeDisclosureButton, &info, NULL,
                           NULL, NULL, 0);
     SetThemeBackground(kThemeBrushDocumentWindowBackground, 8, true);
@@ -1303,10 +1311,18 @@ static short BuildRowLabel(const char *name, int unread, short maxWidth,
 /* ------------------------------------------------------------------ */
 
 /*
- * The two lists do not share a background. The sidebar is Platinum grey —
- * it is a place to choose from, like the Finder's or Newsstand's own
- * sidebar, and grey is what says so. The headline list and the article are
- * white, because they hold the thing being read.
+ * The backgrounds, measured off Outlook Express rather than reasoned about:
+ *
+ *   its folder list   (235,235,235)   kThemeBrushListViewBackground
+ *   its message list  (235,235,235)   the same
+ *   its message pane  (255,255,255)   white
+ *   its chrome        (216,216,216)   the window's own grey
+ *
+ * So both lists are the theme's list-view background — which is a light
+ * grey in Platinum and not white — and only the article, which is text
+ * rather than a list, is white. This file had the sidebar on the *dialog*
+ * background (216, too dark) and the headline list on white (too light),
+ * which is two mistakes in opposite directions.
  */
 static void EraseWith(const Rect *r, ThemeBrush brush)
 {
@@ -1332,7 +1348,7 @@ static void DrawSidebarCell(const Rect *cell, short row, Boolean selected)
     short             width;
     Boolean           enabled = true;
 
-    EraseWith(cell, kThemeBrushDialogBackgroundActive);
+    EraseWith(cell, kThemeBrushListViewBackground);
     if (!GazetteCoreSidebarRowAt(row, &r)) {
         return;
     }
@@ -1429,7 +1445,7 @@ static void DrawArticleCell(const Rect *cell, short row, Boolean selected)
     char                  when[16];
     short                 baseline;
 
-    EraseWith(cell, kThemeBrushWhite);
+    EraseWith(cell, kThemeBrushListViewBackground);
     if (a == NULL) {
         return;
     }
@@ -1585,10 +1601,10 @@ static pascal void PaneDraw(ControlRef control, SInt16 part)
 
     if (control == gSidebarCtl) {
         DrawListPane(control, gSidebarList, GazetteCoreSidebarRowCount(),
-                     kThemeBrushDialogBackgroundActive);
+                     kThemeBrushListViewBackground);
     } else if (control == gArticleCtl) {
         DrawListPane(control, gArticleList, GazetteFeedsArticleCount(),
-                     kThemeBrushWhite);
+                     kThemeBrushListViewBackground);
     }
 }
 
