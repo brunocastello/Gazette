@@ -612,7 +612,7 @@ static size_t AppendBody(size_t used, const char *body)
    is already in the record. Setting a style on an insertion point and
    trusting the next TEInsert to pick it up is documented but delicate;
    styling text that is already there cannot be misread. */
-static void StyleRun(long start, long end, short size, short face)
+static void ApplyRunStyle(long start, long end, short size, short face)
 {
     TextStyle style;
 
@@ -662,7 +662,7 @@ static void SetReaderText(void)
 
         used = AppendText(0, kNothing, sizeof kNothing - 1);
         TESetText(gReaderText, (long)used, gReaderTE);
-        StyleRun(0, (long)used, 10, normal);
+        ApplyRunStyle(0, (long)used, 10, normal);
     } else {
         used     = AppendText(0, a->title, strlen(a->title));
         titleEnd = (long)used;
@@ -725,9 +725,9 @@ static void SetReaderText(void)
 
         TESetText(gReaderText, (long)used, gReaderTE);
 
-        StyleRun(0, titleEnd, 9, bold);
-        StyleRun(titleEnd, bylineEnd, 9, normal);
-        StyleRun(bylineEnd, (long)used, 10, normal);
+        ApplyRunStyle(0, titleEnd, 9, bold);
+        ApplyRunStyle(titleEnd, bylineEnd, 9, normal);
+        ApplyRunStyle(bylineEnd, (long)used, 10, normal);
     }
 
     TESetSelect(0, 0, gReaderTE);
