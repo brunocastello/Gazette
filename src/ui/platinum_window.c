@@ -364,8 +364,14 @@ static void MeasureFonts(void)
     }
     gHeaderBase   = (short)(info.ascent +
                             ((gHeaderHeight - info.ascent - info.descent) / 2));
-    gStatusHeight = gHeaderHeight;
-    gStatusBase   = gHeaderBase;
+    /*
+     * The status strip is sized from the font it is set in rather than
+     * borrowed from the header's height, and its baseline leaves the whole
+     * descent inside the strip — the text was landing on the window's
+     * bottom edge and being cut through.
+     */
+    gStatusHeight = (short)(info.ascent + info.descent + 8);
+    gStatusBase   = (short)(info.ascent + 4);
 
     /* The article's header holds two lines: the headline, and the byline a
        size down under it. */
@@ -436,11 +442,16 @@ static long UnixNow(void)
  */
 static void ListViewIn(const Rect *pane, Rect *view)
 {
-    /* Two pixels of the window's grey between the rows and the bar, which is
-       what OE leaves and what stops the two reading as one sunken box. */
+    /*
+     * The bar goes flush against the pane's right edge, because that is
+     * where the reader's is and the two have to line up. Insetting the list
+     * by a further two pixels for a gap put its bar two pixels left of the
+     * reader's — measured at x616..631 against x618..633 — and two scroll
+     * bars stacked two pixels out of true is the misalignment you cannot
+     * stop looking at.
+     */
     SetRect(view, pane->left, (short)(pane->top + 1),
-            (short)(pane->right - kScrollWidth - kPaneInset),
-            (short)(pane->bottom - 1));
+            (short)(pane->right - kScrollWidth), (short)(pane->bottom - 1));
 }
 
 /* Where a list's rows actually are. */
@@ -1976,10 +1987,31 @@ void GazetteUIUpdate(void)
     DrawReaderHeaderText();
     DrawStatusText();
 
-    /* The grow box lives in the content region, so it is the application
-       that draws it. Without this the bottom right corner is simply blank,
-       which is the one part of a Platinum window a user looks for. */
-    DrawGrowIcon(gWindow);
+    /*
+     * The grow box lives in the content region, so the application draws it.
+     * Clipped to its own corner, though: DrawGrowIcon's older duty is to
+     * delimit a window's scroll bar gutters, so left to itself it rules a
+     * line all the way along the bottom of the content region and up the
+     * right hand side. Gazette's scroll bars are inside its panes and it
+     * wants neither line — that stray rule across the status strip was this.
+     */
+    {
+        RgnHandle save = NewRgn();
+        Rect      corner;
+
+        if (save != NULL) {
+            GetClip(save);
+        }
+        SetRect(&corner, (short)(bounds.right - kScrollWidth),
+                (short)(bounds.bottom - kScrollWidth),
+                bounds.right, bounds.bottom);
+        ClipRect(&corner);
+        DrawGrowIcon(gWindow);
+        if (save != NULL) {
+            SetClip(save);
+            DisposeRgn(save);
+        }
+    }
 
     /* An empty headline list has no cell to say so in. */
     if (GazetteFeedsArticleCount() == 0) {
