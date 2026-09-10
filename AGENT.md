@@ -230,7 +230,26 @@ Single cooperative event loop. Network fetches and parsing progress via poll fun
   was calling, so the corner was blank.
 - Keyboard focus is the Control Manager's. ✅ `SetKeyboardFocus` moves it and
   the CDEFs draw the rings; Tab is `AdvanceKeyboardFocus`.
-- The system's fonts and colours. ✅ `kThemeSystemFont` for the chrome
+- **The font rule, which is Apple's and not ours** (settled 2026-09-10 after
+  getting it wrong twice — first three fonts at three sizes, then one font
+  for everything). **Charcoal**, bold, for headings: the two pane titles,
+  and nothing else. **Geneva** for every view — both lists, the article, the
+  byline, the status line — at the size the **Appearance control panel's
+  views font** is set to, because that is the size the user has told the
+  machine they want lists at. Do not set the chrome in the small system
+  font, and do not set a list in Charcoal: a list set in the system font
+  reads as a dialog.
+- **The colour rule.** The sidebar is Platinum grey
+  (`kThemeBrushDialogBackgroundActive`) because it is a place to choose
+  from; the headline list and the article view are white because they hold
+  the thing being read. A selection is **painted** with the Appearance
+  control panel's highlight colour (`LMGetHiliteRGB`) and the text drawn on
+  top of it — never inverted with the hilite bit, which depends on a
+  low-memory flag the next drawing call resets and which left selections
+  with no background at all. A headline's selection spans the row; a
+  sidebar row's is a box around its name, outlined instead of filled when
+  the list is not the focused one.
+- The rest of the fonts and colours. ✅ `kThemeSystemFont` for the chrome
   (Charcoal 12 on a stock Mac OS 9), `kThemeViewsFont` for the lists
   (Geneva 10), the application font at `GetDefFontSize()` for the article.
   Nothing is sized around them by hand: the bars, the row height, the
