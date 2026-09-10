@@ -71,7 +71,8 @@ enum {
     kRowHeight     = 14,        /* a list cell, until the theme's font is
                                    measured — see gRowHeight                 */
     kReaderLead    = 13,        /* what one arrow scrolls the article by      */
-    kDividerWidth  = 4,         /* the draggable gap between panes            */
+    kDividerWidth  = 5,         /* the draggable gap between panes: two of
+                                   grey, the rule, two more                  */
     kTextInset     = 4,
     kDateColumn    = 46,        /* likewise, until gDateColumn is measured     */
     kBaseline      = 10,        /* likewise, until gRowBaseline is worked out */
@@ -365,13 +366,21 @@ static void MeasureFonts(void)
     gHeaderBase   = (short)(info.ascent +
                             ((gHeaderHeight - info.ascent - info.descent) / 2));
     /*
-     * The status strip is sized from the font it is set in rather than
-     * borrowed from the header's height, and its baseline leaves the whole
-     * descent inside the strip — the text was landing on the window's
-     * bottom edge and being cut through.
+     * The status strip is set in the *label* size, not the views size — it
+     * is a quiet line about what is on screen, and at the views size it made
+     * the strip taller than OE's whole one. Measured against OE: theirs is
+     * fifteen pixels, and this comes out about the same.
      */
-    gStatusHeight = (short)(info.ascent + info.descent + 8);
-    gStatusBase   = (short)(info.ascent + 4);
+    {
+        FontInfo small;
+
+        TextSize(gLabelSize);
+        GetFontInfo(&small);
+        TextSize(gViewSize);
+
+        gStatusHeight = (short)(small.ascent + small.descent + 6);
+        gStatusBase   = (short)(small.ascent + 3);
+    }
 
     /* The article's header holds two lines: the headline, and the byline a
        size down under it. */
@@ -697,26 +706,41 @@ static void Layout(void)
     }
 
     /*
-     * A pixel above the content region, so the header's own top line falls
-     * outside it and gets clipped away. Without that it lands right under
-     * the title bar's bottom line and the two read as one thick black
-     * border — which is what they did.
+     * Both headers start a pixel above the content region, so their own top
+     * lines fall outside it and get clipped away — otherwise each lands
+     * right under the title bar's bottom line and the two read as one thick
+     * black border.
+     *
+     * The two headers touch. They used to have the whole vertical divider
+     * between them, which put two black edges and a separator rule in the
+     * seam — seven pixels of chrome where there should be a join. The list
+     * header overlaps the sidebar header's right edge by a pixel so the two
+     * edge lines land on top of each other and read as one, and the divider
+     * now starts *below* both of them.
      */
     SetRect(&gSidebarHeader, bounds.left, (short)(bounds.top - 1),
             (short)(bounds.left + gSidebarWidth),
             (short)(bounds.top + gHeaderHeight));
-    /* The list's own view sits one pixel inside its pane, so the pane goes
-       one pixel under the header to leave exactly two of grey showing. */
-    SetRect(&gSidebarPane, (short)(bounds.left + kPaneInset),
-            (short)(bounds.top + gHeaderHeight + kPaneInset - 1),
-            (short)(bounds.left + gSidebarWidth - kPaneInset),
-            (short)(contentBottom - kPaneInset));
+    SetRect(&gListHeader, (short)(bounds.left + gSidebarWidth - 1),
+            (short)(bounds.top - 1), bounds.right,
+            (short)(bounds.top + gHeaderHeight));
 
-    SetRect(&gVDivider, (short)(bounds.left + gSidebarWidth), bounds.top,
+    SetRect(&gVDivider, (short)(bounds.left + gSidebarWidth),
+            (short)(bounds.top + gHeaderHeight),
             (short)(bounds.left + gSidebarWidth + kDividerWidth),
             contentBottom);
 
-    rightLeft = (short)(gVDivider.right);
+    rightLeft = gVDivider.right;
+
+    /*
+     * Every pane runs flush to the divider beside it: the divider's own five
+     * pixels are the whole of the space between two panes. There used to be
+     * two pixels of pane inset on each side as well, which made the gap
+     * half again as wide as it looked in OE.
+     */
+    SetRect(&gSidebarPane, (short)(bounds.left + kPaneInset),
+            (short)(bounds.top + gHeaderHeight + kPaneInset - 1),
+            gVDivider.left, (short)(contentBottom - kPaneInset));
 
     listBottom = (short)(bounds.top + gHeaderHeight +
                          (long)(contentBottom - bounds.top - gHeaderHeight) *
@@ -728,33 +752,28 @@ static void Layout(void)
         listBottom = (short)(contentBottom - kMinReader - kDividerWidth);
     }
 
-    SetRect(&gListHeader, rightLeft, (short)(bounds.top - 1),
-            bounds.right, (short)(bounds.top + gHeaderHeight));
-    SetRect(&gListPane, (short)(rightLeft + kPaneInset),
+    SetRect(&gListPane, rightLeft,
             (short)(bounds.top + gHeaderHeight + kPaneInset - 1),
-            (short)(bounds.right - kPaneInset),
-            (short)(listBottom - kPaneInset));
+            (short)(bounds.right - kPaneInset), listBottom);
 
     SetRect(&gHDivider, rightLeft, listBottom,
             bounds.right, (short)(listBottom + kDividerWidth));
 
     /* The article's header spans the pane; its body starts below, with the
        same two-pixel margin every other content area gets. */
-    SetRect(&gReaderHeader, rightLeft,
-            (short)(listBottom + kDividerWidth),
-            bounds.right,
-            (short)(listBottom + kDividerWidth + gReaderHeaderHeight));
+    SetRect(&gReaderHeader, rightLeft, gHDivider.bottom, bounds.right,
+            (short)(gHDivider.bottom + gReaderHeaderHeight));
 
-    SetRect(&gReaderPane, (short)(rightLeft + kPaneInset),
-            (short)(gReaderHeader.bottom + kPaneInset),
+    SetRect(&gReaderPane, rightLeft,
+            (short)(gReaderHeader.bottom + kPaneInset - 1),
             (short)(bounds.right - kPaneInset),
             (short)(contentBottom - kPaneInset));
     SetRect(&gReaderRect, gReaderPane.left, gReaderPane.top,
             (short)(gReaderPane.right - kScrollWidth), gReaderPane.bottom);
 
-    /* End to end, and flush with the panes above: the placard's own top
-       edge is the line between them, so there is nothing to leave a gap
-       for. The grow box is drawn on top of its right hand corner. */
+    /* End to end, and flush with the panes above: the strip's own rule is
+       the line between them, so there is nothing to leave a gap for. The
+       grow box is drawn over its right hand corner. */
     SetRect(&gStatusRect, bounds.left, contentBottom,
             bounds.right, bounds.bottom);
 
@@ -1891,6 +1910,7 @@ static void DrawStatusText(void)
     }
 
     UseViewFont();
+    TextSize(gLabelSize);
     SetThemeTextColor(kThemeTextColorDialogActive, 8, true);
     MoveTo((short)(gStatusRect.left + kTextInset + 4),
            (short)(gStatusRect.top + gStatusBase));
