@@ -149,11 +149,38 @@ Single cooperative event loop. Network fetches and parsing progress via poll fun
 - Article body display with transliteration. ✅ The feed's own summary; the
   full article page is Phase 4's full-text option.
 
-**Phase 4 – Polish and extras**
-- Custom feed management UI.
-- Full-text fetch option with HTML stripping.
-- Search, read/unread state, OPML import/export if still lightweight.
-- Keyboard shortcuts and final Platinum visual refinement.
+**Phase 4 – Polish and extras** ✅
+- Custom feed management UI. ✅ A Feeds menu over Dialog Manager dialogs:
+  add, edit, rename, remove, enable/disable, groups, and Move to Group as a
+  hierarchical submenu. Groups are the user's own tree, ordered by hand.
+- Full-text fetch option with HTML stripping. ✅ Fetched lazily when an
+  article is opened, never during a refresh. `extract/` drops the elements
+  that are never prose and the blocks a page wraps around its article
+  (comments, related rails, newsletter boxes), matched on class / id /
+  data-track / ARIA role.
+- Search, read/unread state, OPML import/export. ✅ Search filters what is on
+  screen — one feed, or a whole group. Read state lives in "Gazette Index",
+  keyed by article link rather than by cache file, which is what lets a feed
+  view and a group view agree; the same file carries per-feed unread counts
+  so the sidebar can show them without opening every cache. OPML goes through
+  Navigation Services and imports additively.
+- Keyboard shortcuts and final Platinum visual refinement. ✅ Tab moves the
+  focus between the three panes and the arrows drive whichever has it; the
+  focused pane inverts its selection and an unfocused one outlines it. Visual
+  refinement is *not* finished — see below.
+
+**Beyond Phase 4 — known and deliberate**
+- A group is a place to read from: selecting one merges every enabled feed in
+  it, newest first, and Command-R refreshes them in turn.
+- **The three lists are drawn by hand.** The sidebar's rows and disclosure
+  triangles, the headline list and the reader pane are QuickDraw, not List
+  Manager lists or CDEF 4 controls. This is known debt, deliberately taken to
+  get the engine working first, and the next substantial piece of work.
+- **Google News article links are not resolved.** A `news.google.com/rss/articles/…`
+  link is a redirector that resolves with JavaScript rather than an HTTP
+  redirect, so full text cannot reach the publisher for those feeds. It fails
+  the way it should — the interstitial extracts to nothing and the feed's own
+  summary stands. Decoding those URLs is the NewsProxy technique above.
 
 Never begin heavy visual polish or extra features before Phase 2 produces real live headlines on SheepShaver or real hardware.
 

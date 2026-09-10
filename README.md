@@ -353,21 +353,24 @@ started by hand from the Actions tab (`workflow_dispatch`).
 │   ├── core/               # Thin C seam (MacTypes.h only) — owns the live prefs
 │   │   └── gazette_core.h/.c
 │   ├── ui/                 # The Platinum window — every Toolbox UI call
-│   │   └── platinum_window.h/.c
+│   │   ├── platinum_window.h/.c
+│   │   └── gazette_dialogs.h/.c      # DLOG/DITL modal dialogs
 │   ├── net/                # Stream over Certainly's OT client; HTTP fetch
 │   │   ├── gazette_net.h/.c
 │   │   └── gazette_fetch.h/.c
 │   ├── feeds/              # Feed engine (parsing is portable, host-tested)
-│   │   ├── gazette_feeds.h/.c        # article store, refresh state machine
+│   │   ├── gazette_feeds.h/.c        # article store, refresh, full text, search
+│   │   ├── gazette_index.h/.c        # read articles + per-feed unread counts
 │   │   ├── gazette_feed_parse.h/.c   # incremental RSS/Atom, auto-discovery
 │   │   ├── gazette_googlenews.h/.c   # country map, URL building
 │   │   └── gazette_gnews_topics.c    # generated — see tools/
-│   ├── extract/            # HTML stripping, full-text (Phase 3)
-│   │   └── gazette_extract.h/.c
+│   ├── extract/            # HTML to readable text — portable, host-tested
+│   │   └── gazette_extract.h/.c   # article-page extractor + tag knowledge
 │   ├── store/              # The only File Manager calls in the application
 │   │   └── gazette_store.h/.c        # preferences + the per-feed cache
 │   ├── prefs/              # Settings + feed list, portable and host-tested
-│   │   └── gazette_prefs.h/.c
+│   │   ├── gazette_prefs.h/.c
+│   │   └── gazette_opml.h/.c         # OPML import/export text
 │   └── portable/           # Pure C, host-tested
 │       ├── gazette_portable.h/.c   # strings, prefs grammar, ASCII transliteration
 │       ├── gazette_url.h/.c        # URI splitting, redirect resolution
@@ -390,7 +393,24 @@ started by hand from the Actions tab (`workflow_dispatch`).
 | 1 | **Done** | Networking: Certainly/BearSSL vendored and building under Carbon, non-blocking stream, HTTPS GET with redirects driven from the event loop |
 | 2 | **Done** | Feed engine: incremental RSS 2.0 / Atom parser, Google News country and topic maps, feed auto-discovery, headline list |
 | 3 | **Done** | Platinum UI: sidebar + headline list + reader pane, scroll bars, draggable dividers, on-disk cache, auto-refresh |
-| 4 | TODO | Polish: custom feed management, full-text fetch, search, read/unread, OPML import/export |
+| 4 | **Done** | Polish: feed and group management, full-text fetch with block-aware extraction, search, read/unread with per-feed unread counts, readable groups, OPML import/export, keyboard navigation |
+
+## Known limitations
+
+Two things are deliberately unfinished, and both are written down rather than
+left to be rediscovered.
+
+**The three lists are drawn by hand.** The sidebar's rows and disclosure
+triangles, the headline list and the reader pane are QuickDraw rather than
+List Manager lists or real CDEFs. That is debt taken on purpose — the engine
+came first — and it is the next substantial piece of work.
+
+**Google News article links are not resolved.** A `news.google.com/rss/articles/…`
+link is a redirector that resolves with JavaScript rather than with an HTTP
+redirect, so the full-text option cannot reach the publisher for those feeds.
+It fails the way it should: the interstitial extracts to nothing, the page is
+judged to hold no article, and the feed's own summary stays on screen.
+Decoding those URLs is the NewsProxy technique noted in `AGENT.md`.
 
 ## Carbon on Mac OS 9 — what changes
 
@@ -403,6 +423,8 @@ into Mac OS X, plus some newer replacements. Practical consequences for this cod
 | Windows | `NewCWindow`, or `GetNewCWindow` from a `WIND` | `CreateNewWindow()` with a window class and attributes |
 | Menus | `GetNewMBar` from `MBAR` / `MENU` resources | `NewMenu` + `AppendMenu`, built programmatically |
 | Events | `WaitNextEvent` + `EventRecord` | Same — CarbonLib supports it, and it keeps one cooperative loop for network polling |
+| Apple Events | Optional for many apps | Required suite handled (`quit`, `oapp`, `rapp`), so a dock or the Finder can quit Gazette |
+| File dialogs | `StandardGetFile` / `StandardPutFile` | `CALL_NOT_IN_CARBON`; OPML uses Navigation Services (`NavGetFile` / `NavPutFile`) |
 | Ports | `SetPort((GrafPtr)window)` | `SetPortWindowPort()`; `WindowRef` is opaque |
 | Closing | `CloseWindow` | `DisposeWindow` — `CloseWindow` is not in Carbon |
 | Memory | SIZE resource | Still required on OS 9, and CarbonLib needs more headroom |
