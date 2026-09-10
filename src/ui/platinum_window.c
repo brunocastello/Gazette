@@ -59,12 +59,13 @@ enum {
     kScrollWidth   = 16,        /* Platinum's scroll bar, including its frame */
     kHeaderHeight  = 17,        /* the placard over each list                 */
     kStatusHeight  = 20,
-    kRowHeight     = 14,        /* a list cell: Geneva 9 plus leading         */
+    kRowHeight     = 14,        /* a list cell, until the theme's font is
+                                   measured — see gRowHeight                 */
     kReaderLead    = 13,        /* what one arrow scrolls the article by      */
     kDividerWidth  = 4,         /* the draggable gap between panes            */
     kTextInset     = 4,
     kDateColumn    = 46,        /* headline text starts here, after the time  */
-    kBaseline      = 10,        /* the text baseline inside a cell            */
+    kBaseline      = 10,        /* likewise, until gRowBaseline is worked out */
 
     /* The sidebar is an outline: a column for the disclosure triangle, then
        one indent for a group's feeds. A top-level feed is a group's sibling,
@@ -84,7 +85,11 @@ enum {
        focus are named the same way. */
     kRefSidebar = 1,
     kRefList    = 2,
-    kRefReader  = 3
+    kRefReader  = 3,
+
+    /* A user pane has no parts of its own, so its focus procedure has to
+       name one. Any non-zero part will do; this one says what it is for. */
+    kControlReaderFocusPart = 1
 };
 
 /* Seconds between the Macintosh epoch (1904) and the Unix one (1970). */
@@ -113,8 +118,23 @@ static ListHandle gArticleList;
 static ListDefUPP gSidebarLDEF;
 static ListDefUPP gArticleLDEF;
 
+/* The chrome. A window header over each list — CDEF 21's list-view variant,
+   which is what Platinum puts above a list — and a placard along the bottom
+   for the status line. Both are controls; only their text is drawn here. */
+static ControlRef gSidebarHeaderCtl;
+static ControlRef gListHeaderCtl;
+static ControlRef gStatusCtl;
+
+/* The reader is a user pane control, so that it draws through the hierarchy,
+   takes the keyboard focus like the two lists and gets a real focus ring
+   rather than being a rectangle this file happens to paint. */
+static ControlRef gReaderCtl;
 static ControlRef gReaderScroll;
-static ControlActionUPP gScrollUPP;
+
+static ControlActionUPP        gScrollUPP;
+static ControlUserPaneDrawUPP  gReaderDrawUPP;
+static ControlUserPaneFocusUPP gReaderFocusUPP;
+static ControlUserPaneTrackingUPP gReaderTrackUPP;
 
 /* Pane rectangles, recomputed by Layout() and by nothing else. A list's
    pane is its control's bounds: the frame and the scroll bar are the CDEF's
@@ -147,6 +167,24 @@ static int gSelectedGroup   = -1;
 static char gStatus[192];
 
 /*
+ * The theme's fonts, asked for once rather than assumed. kThemeViewsFont is
+ * what a list view is written in and kThemeSmallSystemFont what its chrome
+ * is; both are Geneva on a stock Platinum system, which is what this file
+ * used to hard-code — but the Appearance control panel can change them, and
+ * an application that ignores that is drawing its own idea of a list rather
+ * than the machine's.
+ *
+ * The row height follows from the font rather than the other way round.
+ */
+static short gListFont     = kFontIDGeneva;
+static short gListSize     = 10;
+static short gChromeFont   = kFontIDGeneva;
+static short gChromeSize   = 9;
+static short gRowHeight    = kRowHeight;
+static short gRowBaseline  = kBaseline;
+static short gChromeBase   = 12;
+
+/*
  * The article, staged here and then handed to TextEdit, which keeps its own
  * copy. Room for twice the extractor's output because a paragraph break
  * becomes two carriage returns on the way in, plus the title and the byline.
@@ -165,6 +203,8 @@ static void DrawSidebarPane(void);
 static void DrawArticlePane(void);
 static void DrawReader(void);
 static void DrawStatus(void);
+static void DrawStatusText(void);
+static void DrawHeaderTitle(const Rect *r, const char *text);
 
 /* ------------------------------------------------------------------ */
 /* Small helpers                                                       */
@@ -173,6 +213,62 @@ static void DrawStatus(void);
 static short WidthOfN(const char *text, short len)
 {
     return (len <= 0) ? 0 : TextWidth(text, 0, len);
+}
+
+/* The font a list's rows are written in, and the one its chrome is. */
+static void UseListFont(void)
+{
+    TextFont(gListFont);
+    TextSize(gListSize);
+    TextFace(normal);
+}
+
+static void UseChromeFont(void)
+{
+    TextFont(gChromeFont);
+    TextSize(gChromeSize);
+    TextFace(normal);
+}
+
+/* Ask the Appearance Manager what its fonts are, and take the row height and
+   the baselines from them. Called once, with the window's port current. */
+static void MeasureThemeFonts(void)
+{
+    Str255   name;
+    SInt16   size  = 0;
+    Style    face  = 0;
+    FontInfo info;
+
+    if (GetThemeFont(kThemeViewsFont, smSystemScript, name, &size, &face)
+            == noErr && name[0] != 0) {
+        short id = 0;
+
+        GetFNum(name, &id);
+        gListFont = id;                 /* 0 is the system font, which is legal */
+        gListSize = size;
+    }
+    if (GetThemeFont(kThemeSmallSystemFont, smSystemScript, name, &size, &face)
+            == noErr && name[0] != 0) {
+        short id = 0;
+
+        GetFNum(name, &id);
+        gChromeFont = id;
+        gChromeSize = size;
+    }
+
+    UseListFont();
+    GetFontInfo(&info);
+    gRowHeight = (short)(info.ascent + info.descent + info.leading);
+    if (gRowHeight < 12) {
+        gRowHeight = 12;                /* a row has to be clickable */
+    }
+    gRowBaseline = (short)(info.ascent + ((gRowHeight - info.ascent -
+                                           info.descent) / 2));
+
+    UseChromeFont();
+    GetFontInfo(&info);
+    gChromeBase = (short)(info.ascent +
+                          ((kHeaderHeight - info.ascent - info.descent) / 2));
 }
 
 /*
@@ -227,10 +323,7 @@ static void ListView(ListHandle list, Rect *view)
     }
 }
 
-/*
- * Which pane the Control Manager says the keyboard is talking to. The reader
- * is not a control, so it is what is left when neither list has the focus.
- */
+/* Which pane the Control Manager says the keyboard is talking to. */
 static short FocusedPane(void)
 {
     ControlRef focus = NULL;
@@ -392,7 +485,7 @@ static void SizeListBox(ControlRef control, ListHandle list, const Rect *bounds)
     }
     LSetDrawingMode(false, list);
     ListView(list, &view);
-    cell.v = kRowHeight;
+    cell.v = gRowHeight;
     cell.h = (short)(view.right - view.left);
     if (cell.h > 0) {
         LCellSize(cell, list);
@@ -464,6 +557,19 @@ static void Layout(void)
 
     SizeListBox(gSidebarCtl, gSidebarList, &gSidebarPane);
     SizeListBox(gArticleCtl, gArticleList, &gListPane);
+
+    if (gSidebarHeaderCtl != NULL) {
+        SetControlBounds(gSidebarHeaderCtl, &gSidebarHeader);
+    }
+    if (gListHeaderCtl != NULL) {
+        SetControlBounds(gListHeaderCtl, &gListHeader);
+    }
+    if (gStatusCtl != NULL) {
+        SetControlBounds(gStatusCtl, &gStatusRect);
+    }
+    if (gReaderCtl != NULL) {
+        SetControlBounds(gReaderCtl, &gReaderRect);
+    }
 
     /* The reader's bar sits in the gutter the pane leaves for it, overlapping
        the pane frame by a pixel the way Platinum does. */
@@ -642,16 +748,16 @@ static size_t AppendBody(size_t used, const char *body)
    is already in the record. Setting a style on an insertion point and
    trusting the next TEInsert to pick it up is documented but delicate;
    styling text that is already there cannot be misread. */
-static void ApplyRunStyle(long start, long end, short size, short face)
+static void ApplyRunStyle(long start, long end, Boolean chrome, short face)
 {
     TextStyle style;
 
     if (gReaderTE == NULL || end <= start) {
         return;
     }
-    style.tsFont = kFontIDGeneva;
+    style.tsFont = chrome ? gChromeFont : gListFont;
     style.tsFace = face;
-    style.tsSize = size;
+    style.tsSize = chrome ? gChromeSize : gListSize;
     style.tsColor.red   = 0;
     style.tsColor.green = 0;
     style.tsColor.blue  = 0;
@@ -692,7 +798,7 @@ static void SetReaderText(void)
 
         used = AppendText(0, kNothing, sizeof kNothing - 1);
         TESetText(gReaderText, (long)used, gReaderTE);
-        ApplyRunStyle(0, (long)used, 10, normal);
+        ApplyRunStyle(0, (long)used, false, normal);
     } else {
         used     = AppendText(0, a->title, strlen(a->title));
         titleEnd = (long)used;
@@ -755,9 +861,11 @@ static void SetReaderText(void)
 
         TESetText(gReaderText, (long)used, gReaderTE);
 
-        ApplyRunStyle(0, titleEnd, 9, bold);
-        ApplyRunStyle(titleEnd, bylineEnd, 9, normal);
-        ApplyRunStyle(bylineEnd, (long)used, 10, normal);
+        /* The headline in the views font bolded, the byline in the small
+           system font the chrome uses, the body in the views font plain. */
+        ApplyRunStyle(0, titleEnd, false, bold);
+        ApplyRunStyle(titleEnd, bylineEnd, true, normal);
+        ApplyRunStyle(bylineEnd, (long)used, false, normal);
     }
 
     TESetSelect(0, 0, gReaderTE);
@@ -841,22 +949,27 @@ static pascal void ScrollAction(ControlRef control, ControlPartCode part)
 /* Drawing                                                             */
 /* ------------------------------------------------------------------ */
 
-static void DrawHeader(const Rect *r, const char *text)
+/*
+ * The title over a pane. The bar itself is a window header control — CDEF
+ * 21, the list-view variant, which is the widget Platinum puts above a list
+ * and not the placard this used to draw. The control has no title of its
+ * own, so the text goes on top of it in the theme's small system font.
+ */
+static void DrawHeaderTitle(const Rect *r, const char *text)
 {
     Rect inner = *r;
 
-    DrawThemePlacard(r, kThemeStateActive);
-
-    TextFont(kFontIDGeneva);
-    TextSize(9);
+    UseChromeFont();
     TextFace(bold);
+    SetThemeTextColor(kThemeTextColorWindowHeaderActive, 8, true);
 
     inner.left  = (short)(inner.left + kTextInset + 2);
     inner.right = (short)(inner.right - kTextInset);
-    MoveTo(inner.left, (short)(r->top + 12));
+    MoveTo(inner.left, (short)(r->top + gChromeBase));
     DrawTruncated(text, (short)(inner.right - inner.left));
 
     TextFace(normal);
+    ForeColor(blackColor);
 }
 
 /*
@@ -1026,10 +1139,8 @@ static void DrawSidebarCell(const Rect *cell, short row, Boolean selected)
         return;
     }
 
-    TextFont(kFontIDGeneva);
-    TextSize(9);
-    TextFace(normal);
-    baseline = (short)(cell->top + kBaseline);
+    UseListFont();
+    baseline = (short)(cell->top + gRowBaseline);
     textLeft = (short)(cell->left + kTextInset + kTriangleColumn);
 
     if (r.kind == kGazetteRowGroup) {
@@ -1099,10 +1210,8 @@ static void DrawArticleCell(const Rect *cell, short row, Boolean selected)
         return;
     }
 
-    TextFont(kFontIDGeneva);
-    TextSize(9);
-    TextFace(normal);
-    baseline = (short)(cell->top + kBaseline);
+    UseListFont();
+    baseline = (short)(cell->top + gRowBaseline);
 
     /* The date sits in a fixed column so the headlines line up; an article
        with no date simply leaves it blank rather than shifting. */
@@ -1185,11 +1294,10 @@ static void DrawArticlePane(void)
     }
     ClipRect(&view);
 
-    TextFont(kFontIDGeneva);
-    TextSize(9);
-    TextFace(normal);
+    UseListFont();
     SetThemeTextColor(kThemeTextColorListView, 8, true);
-    MoveTo((short)(view.left + kTextInset), (short)(view.top + kBaseline + 1));
+    MoveTo((short)(view.left + kTextInset),
+           (short)(view.top + gRowBaseline + 1));
     if (GazetteFeedsFilter()[0] != '\0') {
         DrawString("\pNothing here matches - Edit menu, Show All.");
     } else {
@@ -1203,9 +1311,18 @@ static void DrawArticlePane(void)
     }
 }
 
-static void DrawReader(void)
+/*
+ * The reader's contents. This is the user pane control's drawing procedure,
+ * so the Control Manager calls it — from DrawControls, from Draw1Control and
+ * whenever the focus ring has to change — and the pane is drawn through the
+ * hierarchy like everything else rather than painted over the top of it.
+ */
+static pascal void ReaderDraw(ControlRef control, SInt16 part)
 {
     RgnHandle clip = NULL;
+
+    (void)control;
+    (void)part;
 
     if (gWindow == NULL) {
         return;
@@ -1220,27 +1337,53 @@ static void DrawReader(void)
         TEUpdate(&view, gReaderTE);
     }
     EndListArea(clip);
+
+    /* The ring the two lists get from their CDEF, drawn by hand here because
+       a user pane has no idea what it contains. It is still the Appearance
+       Manager's ring, not a rectangle of our own devising. */
+    (void)DrawThemeFocusRect(&gReaderRect,
+                             (Boolean)(gReaderCtl != NULL &&
+                                       GetControlValue(gReaderCtl) != 0));
 }
 
-static void DrawStatus(void)
+static void DrawReader(void)
+{
+    if (gWindow == NULL || gReaderCtl == NULL) {
+        return;
+    }
+    SetPortWindowPort(gWindow);
+    Draw1Control(gReaderCtl);
+}
+
+/* Just the text. The placard under it is a control and draws itself. */
+static void DrawStatusText(void)
 {
     if (gWindow == NULL) {
         return;
     }
     SetPortWindowPort(gWindow);
 
-    SetThemeBackground(kThemeBrushDocumentWindowBackground, 8, true);
-    EraseRect(&gStatusRect);
-
-    TextFont(kFontIDGeneva);
-    TextSize(9);
-    TextFace(normal);
-
+    UseChromeFont();
+    SetThemeTextColor(kThemeTextColorPlacardActive, 8, true);
     MoveTo((short)(gStatusRect.left + kTextInset + 4),
-           (short)(gStatusRect.top + 13));
+           (short)(gStatusRect.top + gChromeBase + 2));
     DrawTruncated(gStatus,
                   (short)(gStatusRect.right - gStatusRect.left -
                           2 * kTextInset - 8));
+    ForeColor(blackColor);
+}
+
+/* The placard and its text, for when only the status line has changed. */
+static void DrawStatus(void)
+{
+    if (gWindow == NULL) {
+        return;
+    }
+    SetPortWindowPort(gWindow);
+    if (gStatusCtl != NULL) {
+        Draw1Control(gStatusCtl);
+    }
+    DrawStatusText();
 }
 
 void GazetteUIUpdate(void)
@@ -1259,7 +1402,6 @@ void GazetteUIUpdate(void)
     SetThemeBackground(kThemeBrushDocumentWindowBackground, 8, true);
     EraseRect(&bounds);
 
-    DrawHeader(&gSidebarHeader, "Feeds");
 
     if (GazetteFeedsTotalCount() > 0) {
         const char *title  = GazetteFeedsTitle();
@@ -1288,19 +1430,22 @@ void GazetteUIUpdate(void)
         snprintf(header, sizeof header, "%s",
                  GazetteCoreFeedTitle(gSelectedFeed));
     }
-    DrawHeader(&gListHeader, header);
 
     /* The dividers, drawn as the Appearance Manager's own separators so they
        track the theme rather than being two hard-coded greys. */
     DrawThemeSeparator(&gVDivider, kThemeStateActive);
     DrawThemeSeparator(&gHDivider, kThemeStateActive);
 
-    DrawReader();
-    DrawStatus();
-
-    /* The whole control hierarchy in one call — both lists, their frames,
-       their scroll bars, their focus rings, and the reader's bar. */
+    /* The whole control hierarchy in one call — the two lists with their
+       frames, scroll bars and focus rings, the two window headers, the
+       reader and its bar, and the status placard. */
     DrawControls(gWindow);
+
+    /* Their titles go on top of them: a window header control and a placard
+       have no text of their own. */
+    DrawHeaderTitle(&gSidebarHeader, "Feeds");
+    DrawHeaderTitle(&gListHeader, header);
+    DrawStatusText();
 
     /* The grow box lives in the content region, so it is the application
        that draws it. Without this the bottom right corner is simply blank,
@@ -1529,6 +1674,46 @@ static void ReaderClick(Point where, EventModifiers modifiers)
     }
 }
 
+/* The user pane's tracking procedure: a click that HandleControlClick has
+   routed to the reader. */
+static pascal ControlPartCode ReaderTrack(ControlRef control, Point startPt,
+                                          ControlActionUPP actionProc)
+{
+    (void)control;
+    (void)actionProc;
+
+    ReaderClick(startPt, 0);
+    return kControlNoPart;
+}
+
+/*
+ * The user pane's focus procedure. A user pane has no parts, so the control's
+ * value is used to remember whether it has the focus — that is what
+ * ReaderDraw asks when it decides whether to draw the ring.
+ */
+static pascal ControlPartCode ReaderFocus(ControlRef control,
+                                          ControlFocusPart action)
+{
+    if (control == NULL) {
+        return kControlFocusNoPart;
+    }
+
+    if (action == kControlFocusNoPart) {
+        SetControlValue(control, 0);
+        if (gReaderTE != NULL) {
+            SetPortWindowPort(gWindow);
+            TEDeactivate(gReaderTE);
+            TESetSelect(0, 0, gReaderTE);
+        }
+        Draw1Control(control);
+        return kControlFocusNoPart;
+    }
+
+    SetControlValue(control, 1);
+    Draw1Control(control);
+    return kControlReaderFocusPart;
+}
+
 void GazetteUIClick(Point where, EventModifiers modifiers)
 {
     ControlRef      control = NULL;
@@ -1563,6 +1748,12 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
         return;
     }
 
+    if (control != NULL && control == gReaderCtl) {
+        SetFocus(kRefReader);
+        (void)HandleControlClick(gReaderCtl, where, modifiers, NULL);
+        return;
+    }
+
     if (control != NULL && control == gReaderScroll && part != 0) {
         SetFocus(kRefReader);
         if (part == kControlIndicatorPart) {
@@ -1585,11 +1776,6 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
         return;
     }
 
-    if (PtInRect(where, &gReaderRect)) {
-        SetFocus(kRefReader);
-        ReaderClick(where, modifiers);
-        return;
-    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1735,37 +1921,27 @@ static Boolean ReaderKey(short key)
 }
 
 /*
- * Hand the keyboard to a pane. The two lists are controls, so this is the
- * Control Manager's own SetKeyboardFocus and the CDEF draws the focus ring;
- * the reader is not a control yet, so "focused on the reader" is the state
- * where no control has the focus.
+ * Hand the keyboard to a pane. All three are controls, so this is the
+ * Control Manager's own SetKeyboardFocus throughout: the lists' CDEF draws
+ * their rings and the reader's focus procedure draws its own. Dropping the
+ * old pane's selection is that procedure's business too, which is why there
+ * is nothing about TextEdit left here.
  */
 static void SetFocus(short pane)
 {
-    short was = FocusedPane();
+    ControlRef want;
 
-    if (gWindow == NULL || was == pane) {
+    if (gWindow == NULL || FocusedPane() == pane) {
         return;
     }
 
-    /* A selection left behind in a pane that no longer has the focus is a
-       highlight with nothing driving it. */
-    if (was == kRefReader && gReaderTE != NULL) {
-        SetPortWindowPort(gWindow);
-        TEDeactivate(gReaderTE);
-        TESetSelect(0, 0, gReaderTE);
-    }
-
     switch (pane) {
-        case kRefSidebar:
-            (void)SetKeyboardFocus(gWindow, gSidebarCtl, kControlFocusNextPart);
-            break;
-        case kRefList:
-            (void)SetKeyboardFocus(gWindow, gArticleCtl, kControlFocusNextPart);
-            break;
-        default:
-            (void)ClearKeyboardFocus(gWindow);
-            break;
+        case kRefSidebar: want = gSidebarCtl; break;
+        case kRefList:    want = gArticleCtl; break;
+        default:          want = gReaderCtl;  break;
+    }
+    if (want != NULL) {
+        (void)SetKeyboardFocus(gWindow, want, kControlFocusNextPart);
     }
 }
 
@@ -1776,12 +1952,12 @@ Boolean GazetteUIKey(short key, EventModifiers modifiers)
     }
 
     if (key == '\t') {
-        /* Round the three panes rather than through AdvanceKeyboardFocus:
-           that walks the controls, and the reader is not one of them. */
-        switch (FocusedPane()) {
-            case kRefSidebar: SetFocus(kRefList);    break;
-            case kRefList:    SetFocus(kRefReader);  break;
-            default:          SetFocus(kRefSidebar); break;
+        /* All three panes are controls, so Tab is the Control Manager's own
+           walk of the hierarchy rather than a switch statement here. */
+        if ((modifiers & shiftKey) != 0) {
+            (void)ReverseKeyboardFocus(gWindow);
+        } else {
+            (void)AdvanceKeyboardFocus(gWindow);
         }
         return true;
     }
@@ -2038,7 +2214,7 @@ static Boolean MakeListBox(ListDefUPP defProc, const Rect *bounds,
                              false,             /* not auto-sizing        */
                              0, 1,              /* no rows yet, one column */
                              false, true,       /* vertical bar only      */
-                             kRowHeight,
+                             gRowHeight,
                              (short)(bounds->right - bounds->left -
                                      kScrollWidth),
                              false,             /* no grow box corner     */
@@ -2115,9 +2291,16 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
         return false;
     }
 
-    gScrollUPP    = NewControlActionUPP(ScrollAction);
-    gSidebarLDEF  = NewListDefUPP(SidebarLDEF);
-    gArticleLDEF  = NewListDefUPP(ArticleLDEF);
+    gScrollUPP      = NewControlActionUPP(ScrollAction);
+    gSidebarLDEF    = NewListDefUPP(SidebarLDEF);
+    gArticleLDEF    = NewListDefUPP(ArticleLDEF);
+    gReaderDrawUPP  = NewControlUserPaneDrawUPP(ReaderDraw);
+    gReaderFocusUPP = NewControlUserPaneFocusUPP(ReaderFocus);
+    gReaderTrackUPP = NewControlUserPaneTrackingUPP(ReaderTrack);
+
+    /* Before anything is laid out: the row height comes from the theme's
+       views font, and the layout is in rows. */
+    MeasureThemeFonts();
 
     /* Lay the rectangles out before the lists, so each one is born the size
        it will be drawn at; Layout() then keeps them there. */
@@ -2126,11 +2309,41 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
     gSelectedGroup   = -1;
     Layout();
 
+    /* The headers first, so that they are behind the lists in the hierarchy
+       and a list's frame wins where the two meet by a pixel. */
+    (void)CreateWindowHeaderControl(gWindow, &gSidebarHeader, true,
+                                    &gSidebarHeaderCtl);
+    (void)CreateWindowHeaderControl(gWindow, &gListHeader, true,
+                                    &gListHeaderCtl);
+    (void)CreatePlacardControl(gWindow, &gStatusRect, &gStatusCtl);
+
     if (!MakeListBox(gSidebarLDEF, &gSidebarPane, &gSidebarCtl, &gSidebarList) ||
         !MakeListBox(gArticleLDEF, &gListPane, &gArticleCtl, &gArticleList)) {
         GazetteUIClose();
         return false;
     }
+
+    /*
+     * The reader. kControlSupportsFocus puts it in the Tab order and
+     * kControlHandlesTracking sends it its own clicks; without the first,
+     * AdvanceKeyboardFocus would skip straight past the pane a reader spends
+     * all their time in.
+     */
+    if (CreateUserPaneControl(gWindow, &gReaderRect,
+                              kControlSupportsFocus | kControlHandlesTracking,
+                              &gReaderCtl) != noErr || gReaderCtl == NULL) {
+        GazetteUIClose();
+        return false;
+    }
+    (void)SetControlData(gReaderCtl, kControlEntireControl,
+                         kControlUserPaneDrawProcTag,
+                         sizeof gReaderDrawUPP, (Ptr)&gReaderDrawUPP);
+    (void)SetControlData(gReaderCtl, kControlEntireControl,
+                         kControlUserPaneFocusProcTag,
+                         sizeof gReaderFocusUPP, (Ptr)&gReaderFocusUPP);
+    (void)SetControlData(gReaderCtl, kControlEntireControl,
+                         kControlUserPaneTrackingProcTag,
+                         sizeof gReaderTrackUPP, (Ptr)&gReaderTrackUPP);
 
     gReaderScroll = MakeScroll(kRefReader);
 
@@ -2175,11 +2388,15 @@ void GazetteUIClose(void)
 
     /* The List Box controls own their lists; disposing the window disposes
        the controls, and each one takes its ListHandle with it. */
-    gSidebarList = NULL;
-    gArticleList = NULL;
-    gSidebarCtl  = NULL;
-    gArticleCtl  = NULL;
-    gRootControl = NULL;
+    gSidebarList       = NULL;
+    gArticleList       = NULL;
+    gSidebarCtl        = NULL;
+    gArticleCtl        = NULL;
+    gSidebarHeaderCtl  = NULL;
+    gListHeaderCtl     = NULL;
+    gStatusCtl         = NULL;
+    gReaderCtl         = NULL;
+    gRootControl       = NULL;
 
     if (gReaderTE != NULL) {
         TEDispose(gReaderTE);
@@ -2203,6 +2420,18 @@ void GazetteUIClose(void)
     if (gArticleLDEF != NULL) {
         DisposeListDefUPP(gArticleLDEF);
         gArticleLDEF = NULL;
+    }
+    if (gReaderDrawUPP != NULL) {
+        DisposeControlUserPaneDrawUPP(gReaderDrawUPP);
+        gReaderDrawUPP = NULL;
+    }
+    if (gReaderFocusUPP != NULL) {
+        DisposeControlUserPaneFocusUPP(gReaderFocusUPP);
+        gReaderFocusUPP = NULL;
+    }
+    if (gReaderTrackUPP != NULL) {
+        DisposeControlUserPaneTrackingUPP(gReaderTrackUPP);
+        gReaderTrackUPP = NULL;
     }
 }
 
