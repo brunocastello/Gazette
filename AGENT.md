@@ -255,6 +255,26 @@ Single cooperative event loop. Network fetches and parsing progress via poll fun
   whole of OE5 and nowhere near a list. Bruno's call on 2026-09-10 was to
   follow OE rather than the HIG line about headings, so **headings are
   Geneva 9 bold, not Charcoal**. Do not change this back without asking.
+- **The measured layout.** Taken off a screenshot of Outlook Express 5.0.6
+  pixel by pixel on 2026-09-10, not reasoned about. Reproduce the
+  measurement with PIL rather than by eye:
+
+  | thing | value |
+  |---|---|
+  | folder list background | `(235,235,235)` = `kThemeBrushListViewBackground` |
+  | message list background | `(235,235,235)` — the same |
+  | message pane background | `(255,255,255)` — white; it is text, not a list |
+  | chrome (headers, status) | `(216,216,216)` — the window's own grey |
+  | sorted column background | `(216,216,216)` = `kThemeBrushListViewSortColumnBackground` |
+  | folder row pitch | 17px |
+  | header bar | ~20px tall, grey, with a 1px bottom rule |
+  | margin round every content area | **2px of window grey, and no frame at all** |
+  | status strip | 1px rule, then ~14px of grey |
+
+  A list is **235, not white and not 216**. Getting this wrong in either
+  direction is what made the sidebar read as chrome and the headline list as
+  a document.
+
 - **The colour rule.** The sidebar is Platinum grey
   (`kThemeBrushDialogBackgroundActive`) — Bruno's call on 2026-09-10, and
   deliberately *not* OE5's, whose folder list is white; Newsstand's sidebar
