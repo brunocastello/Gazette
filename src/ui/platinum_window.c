@@ -123,12 +123,16 @@ static ListDefUPP gSidebarLDEF;
 static ListDefUPP gArticleLDEF;
 
 /* A window header over each list — CDEF 21's list-view variant, which is
-   what Platinum puts above a list — and a placard along the bottom for the
-   status line, which is the Platinum widget for exactly that. None of the
-   three carries a title of its own, so only their text is drawn here. */
+   what Platinum puts above a list. Neither carries a title of its own, so
+   only their text is drawn here.
+
+   The status strip along the bottom is deliberately *not* a control. Outlook
+   Express leaves it flat on the window's own background with a single rule
+   above it, and a placard's bevel there is a box drawn round something that
+   is not a button. This was a placard for two rounds and it was wrong both
+   times. */
 static ControlRef gSidebarHeaderCtl;
 static ControlRef gListHeaderCtl;
-static ControlRef gStatusCtl;
 
 /* The reader is a user pane control, so that it draws through the hierarchy,
    takes the keyboard focus like the two lists and gets a real focus ring
@@ -624,9 +628,6 @@ static void Layout(void)
     }
     if (gListHeaderCtl != NULL) {
         SetControlBounds(gListHeaderCtl, &gListHeader);
-    }
-    if (gStatusCtl != NULL) {
-        SetControlBounds(gStatusCtl, &gStatusRect);
     }
     if (gReaderCtl != NULL) {
         SetControlBounds(gReaderCtl, &gReaderPane);
@@ -1598,7 +1599,26 @@ static void DrawReader(void)
     Draw1Control(gReaderCtl);
 }
 
-/* Just the text. The placard under it is a control and draws itself. */
+/* The dotted grab handle in a splitter: five pairs of pixels, centred. */
+static void DrawGrabHandle(const Rect *divider)
+{
+    short mid = (short)((divider->top + divider->bottom) / 2);
+    short at  = (short)((divider->left + divider->right) / 2 - 14);
+    short i;
+
+    if (divider->bottom - divider->top < 3) {
+        return;
+    }
+    SetThemeTextColor(kThemeTextColorDialogActive, 8, true);
+    for (i = 0; i < 5; i++) {
+        MoveTo(at, mid);
+        LineTo((short)(at + 1), mid);
+        at = (short)(at + 6);
+    }
+    ForeColor(blackColor);
+}
+
+/* Just the text. The strip under it is the window's own background. */
 static void DrawStatusText(void)
 {
     if (gWindow == NULL) {
@@ -1606,8 +1626,19 @@ static void DrawStatusText(void)
     }
     SetPortWindowPort(gWindow);
 
+    /* Flat, on the window's background, with one rule along the top — the
+       line between the panes and the strip, and the only edge it has. */
+    EraseWith(&gStatusRect, kThemeBrushDocumentWindowBackground);
+    {
+        Rect rule;
+
+        SetRect(&rule, gStatusRect.left, gStatusRect.top,
+                gStatusRect.right, (short)(gStatusRect.top + 1));
+        DrawThemeSeparator(&rule, kThemeStateActive);
+    }
+
     UseViewFont();
-    SetThemeTextColor(kThemeTextColorPlacardActive, 8, true);
+    SetThemeTextColor(kThemeTextColorDialogActive, 8, true);
     MoveTo((short)(gStatusRect.left + kTextInset + 4),
            (short)(gStatusRect.top + gStatusBase));
     DrawTruncated(gStatus,
@@ -1616,16 +1647,9 @@ static void DrawStatusText(void)
     ForeColor(blackColor);
 }
 
-/* The placard and its text, for when only the status line has changed. */
+/* For when only the status line has changed. */
 static void DrawStatus(void)
 {
-    if (gWindow == NULL) {
-        return;
-    }
-    SetPortWindowPort(gWindow);
-    if (gStatusCtl != NULL) {
-        Draw1Control(gStatusCtl);
-    }
     DrawStatusText();
 }
 
@@ -1675,9 +1699,12 @@ void GazetteUIUpdate(void)
     }
 
     /* The dividers, drawn as the Appearance Manager's own separators so they
-       track the theme rather than being two hard-coded greys. */
+       track the theme rather than being two hard-coded greys, and the
+       horizontal one carries the row of dots Outlook Express puts in a
+       splitter to say that it can be dragged. */
     DrawThemeSeparator(&gVDivider, kThemeStateActive);
     DrawThemeSeparator(&gHDivider, kThemeStateActive);
+    DrawGrabHandle(&gHDivider);
 
     /* The whole control hierarchy in one call — the two lists with their
        frames, scroll bars and focus rings, the two window headers, the
@@ -2593,7 +2620,6 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
                                     kControlWindowListViewHeaderProc, 0);
     gListHeaderCtl    = MakeControl(&gListHeader,
                                     kControlWindowListViewHeaderProc, 0);
-    gStatusCtl        = MakeControl(&gStatusRect, kControlPlacardProc, 0);
 
     if (!MakeListBox(gSidebarLDEF, &gSidebarPane, &gSidebarCtl, &gSidebarList) ||
         !MakeListBox(gArticleLDEF, &gListPane, &gArticleCtl, &gArticleList)) {
@@ -2673,7 +2699,6 @@ void GazetteUIClose(void)
     gArticleCtl        = NULL;
     gSidebarHeaderCtl  = NULL;
     gListHeaderCtl     = NULL;
-    gStatusCtl         = NULL;
     gReaderCtl         = NULL;
     gRootControl       = NULL;
 
