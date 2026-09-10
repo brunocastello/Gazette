@@ -366,10 +366,15 @@ static void MeasureFonts(void)
     gHeaderBase   = (short)(info.ascent +
                             ((gHeaderHeight - info.ascent - info.descent) / 2));
     /*
-     * The status strip is set in the *label* size, not the views size — it
-     * is a quiet line about what is on screen, and at the views size it made
-     * the strip taller than OE's whole one. Measured against OE: theirs is
-     * fifteen pixels, and this comes out about the same.
+     * The status strip is exactly as tall as the grow box, because the grow
+     * box sits in it: measured, the box is sixteen pixels and the strip was
+     * fourteen, so the box's top edge stood above the strip and cut into the
+     * article above. A scroll bar's width is what a grow box is square to,
+     * so that is the number.
+     *
+     * The text is set in the label size rather than the views size — it is a
+     * quiet line about what is on screen, and at twelve point it needed a
+     * strip taller than OE's whole one — and centred in the strip.
      */
     {
         FontInfo small;
@@ -378,8 +383,10 @@ static void MeasureFonts(void)
         GetFontInfo(&small);
         TextSize(gViewSize);
 
-        gStatusHeight = (short)(small.ascent + small.descent + 4);
-        gStatusBase   = (short)(small.ascent + 2);
+        gStatusHeight = kScrollWidth;
+        gStatusBase   = (short)(small.ascent +
+                                (gStatusHeight - small.ascent -
+                                 small.descent) / 2);
     }
 
     /* The article's header holds two lines: the headline, and the byline a
@@ -718,11 +725,20 @@ static void Layout(void)
      * edge lines land on top of each other and read as one, and the divider
      * now starts *below* both of them.
      */
+    /*
+     * The seam between the two headers has to land on the same column as
+     * the divider's rule below it, or the vertical line steps sideways
+     * where the headers end — measured at three pixels out. The rule is
+     * drawn down the middle of the divider, so both headers put an edge
+     * there: the sidebar's right edge and the headline header's left edge
+     * fall on the same pixel and read as one continuous line.
+     */
     SetRect(&gSidebarHeader, (short)(bounds.left - 1),
             (short)(bounds.top - 1),
-            (short)(bounds.left + gSidebarWidth),
+            (short)(bounds.left + gSidebarWidth + kDividerWidth / 2 + 1),
             (short)(bounds.top + gHeaderHeight));
-    SetRect(&gListHeader, (short)(bounds.left + gSidebarWidth - 1),
+    SetRect(&gListHeader,
+            (short)(bounds.left + gSidebarWidth + kDividerWidth / 2),
             (short)(bounds.top - 1), (short)(bounds.right + 1),
             (short)(bounds.top + gHeaderHeight));
 
@@ -762,7 +778,7 @@ static void Layout(void)
 
     SetRect(&gListPane, rightLeft,
             (short)(bounds.top + gHeaderHeight + kPaneInset - 1),
-            bounds.right, listBottom);
+            (short)(bounds.right + 1), listBottom);
 
     SetRect(&gHDivider, rightLeft, listBottom,
             bounds.right, (short)(listBottom + kDividerWidth));
@@ -773,9 +789,16 @@ static void Layout(void)
             (short)(bounds.right + 1),
             (short)(gHDivider.bottom + gReaderHeaderHeight));
 
+    /*
+     * A pixel past the content region on the right, so the scroll bar's own
+     * right edge falls on the window's border rather than beside it. The
+     * Finder's list ends, its bar runs, and the next pixel is the window
+     * edge — one black line. Ours had the bar's edge and then the window's,
+     * two abreast.
+     */
     SetRect(&gReaderPane, rightLeft,
             (short)(gReaderHeader.bottom + kPaneInset - 1),
-            bounds.right, contentBottom);
+            (short)(bounds.right + 1), contentBottom);
     SetRect(&gReaderRect, gReaderPane.left, gReaderPane.top,
             (short)(gReaderPane.right - kScrollWidth), gReaderPane.bottom);
 
