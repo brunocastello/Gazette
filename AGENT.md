@@ -230,17 +230,35 @@ Single cooperative event loop. Network fetches and parsing progress via poll fun
   was calling, so the corner was blank.
 - Keyboard focus is the Control Manager's. ✅ `SetKeyboardFocus` moves it and
   the CDEFs draw the rings; Tab is `AdvanceKeyboardFocus`.
-- **The font rule, which is Apple's and not ours** (settled 2026-09-10 after
-  getting it wrong twice — first three fonts at three sizes, then one font
-  for everything). **Charcoal**, bold, for headings: the two pane titles,
-  and nothing else. **Geneva** for every view — both lists, the article, the
-  byline, the status line — at the size the **Appearance control panel's
-  views font** is set to, because that is the size the user has told the
-  machine they want lists at. Do not set the chrome in the small system
-  font, and do not set a list in Charcoal: a list set in the system font
-  reads as a dialog.
+- **The font rule, taken from Outlook Express 5.0.6's own resources**
+  (settled 2026-09-10, after three wrong guesses). OE5 is a PowerPlant
+  application and names a `'Txtr'` text-traits resource for every piece of
+  text; its resource fork is readable at
+  `~/Virtual Machines.localized/UTM/Shared/Outlook Express.rdump`, already
+  DeRez'd. What it says:
+
+  | `'Txtr'` | font | size | style |
+  |---|---|---|---|
+  | 500 "List font" | applFont | 9 | plain |
+  | 501 "Proportional font" | applFont | 12 | plain |
+  | 502 "Monospaced font" | Monaco | 9 | plain |
+  | 134 "App Bold 9" | applFont | 9 | bold |
+  | 128 "System 0" | systemFont | default | plain |
+
+  So: **the two lists, both headings and the status line are the
+  application font at 9** (`GetAppFont()` — Geneva on a stock Mac OS 9),
+  headings and unread rows **bold**; **the article is the same font at 12**.
+  `applFont`, not a hard-coded Geneva — font 1 means "the user's application
+  font", which is what OE asks for.
+
+  Charcoal (systemFont) appears in a handful of centred captions in the
+  whole of OE5 and nowhere near a list. Bruno's call on 2026-09-10 was to
+  follow OE rather than the HIG line about headings, so **headings are
+  Geneva 9 bold, not Charcoal**. Do not change this back without asking.
 - **The colour rule.** The sidebar is Platinum grey
-  (`kThemeBrushDialogBackgroundActive`) because it is a place to choose
+  (`kThemeBrushDialogBackgroundActive`) — Bruno's call on 2026-09-10, and
+  deliberately *not* OE5's, whose folder list is white; Newsstand's sidebar
+  is grey and that is the one being followed here. It is a place to choose
   from; the headline list and the article view are white because they hold
   the thing being read. A selection is **painted** with the Appearance
   control panel's highlight colour (`LMGetHiliteRGB`) and the text drawn on
