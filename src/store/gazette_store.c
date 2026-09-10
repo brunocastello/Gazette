@@ -19,6 +19,7 @@
 #include <Navigation.h>  /* NavGetFile / NavPutFile — the only Carbon way */
 #include <AppleEvents.h> /* AEGetNthPtr, to read Nav's reply */
 
+#include <stdio.h>       /* snprintf, for the error text */
 #include <string.h>      /* strlen */
 
 /* Pascal strings, so they can go straight to FSMakeFSSpec. */
@@ -634,6 +635,54 @@ void GazetteStoreClose(GazetteStoreFile *f)
 
 static GazetteStoreIdle gIdle;
 
+/*
+ * Why the last chooser failed. Every one of these paths used to return the
+ * same 0 the user's Cancel returns, so a real failure looked exactly like
+ * changing your mind -- which is how a broken export presented as a menu item
+ * that "doesn't seem to do anything".
+ */
+static char gError[128];
+
+const char *GazetteStoreErrorText(void)
+{
+    return gError;
+}
+
+static int Failed(const char *what, OSErr err)
+{
+    if (err != noErr) {
+        snprintf(gError, sizeof gError, "%s (error %d)", what, (int)err);
+    } else {
+        snprintf(gError, sizeof gError, "%s", what);
+    }
+    return kGazetteFileFailed;
+}
+
+/*
+ * Whether Navigation Services can be called.
+ *
+ * Not NavServicesAvailable(), which is the wrong test for this application.
+ * That macro branches on TARGET_RT_MAC_CFM -- the *binary format* -- and
+ * Gazette is a Carbon application in CFM form, which is exactly what a
+ * CarbonLib application on Mac OS 9 is. So it takes the classic branch and
+ * weak-links NavLibraryVersion out of NavigationLib, a library a Carbon
+ * application does not link against; the symbol is unresolved and the answer
+ * is a confident "no". Which is how import and export came to do nothing at
+ * all, silently, on a machine where Navigation Services was right there.
+ *
+ * The Availability blocks on NavGetFile and NavPutFile are the authority
+ * here, and they both say CarbonLib 1.0 and later. Under Carbon there is
+ * nothing to test.
+ */
+static Boolean GazetteNavAvailable(void)
+{
+#if TARGET_API_MAC_CARBON
+    return true;
+#else
+    return NavServicesAvailable();
+#endif
+}
+
 void GazetteStoreSetIdle(GazetteStoreIdle idle)
 {
     gIdle = idle;
@@ -709,11 +758,14 @@ int GazetteStoreAskAndReadFile(const char *prompt, char *buf, long cap,
     }
     buf[0] = '\0';
 
-    if (!NavServicesAvailable()) {
-        return 0;
+    gError[0] = '\0';
+
+    if (!GazetteNavAvailable()) {
+        return Failed("This system has no Navigation Services.", noErr);
     }
-    if (NavGetDefaultDialogOptions(&options) != noErr) {
-        return 0;
+    err = NavGetDefaultDialogOptions(&options);
+    if (err != noErr) {
+        return Failed("The Open dialog could not be set up.", err);
     }
     SetPrompt(&options, prompt);
 
@@ -727,25 +779,28 @@ int GazetteStoreAskAndReadFile(const char *prompt, char *buf, long cap,
     if (eventUPP != NULL) {
         DisposeNavEventUPP(eventUPP);
     }
-    if (err != noErr || !reply.validRecord) {
-        if (err == noErr) {
-            NavDisposeReply(&reply);
-        }
-        return 0;                   /* cancelled */
+    if (err != noErr) {
+        return Failed("The Open dialog could not be shown.", err);
+    }
+    if (!reply.validRecord) {
+        NavDisposeReply(&reply);
+        return kGazetteFileCancelled;
     }
 
     err = FirstReplySpec(&reply, &spec);
     NavDisposeReply(&reply);
     if (err != noErr) {
-        return 0;
+        return Failed("That file could not be identified.", err);
     }
 
-    if (FSpOpenDF(&spec, fsRdPerm, &refNum) != noErr) {
-        return 0;
+    err = FSpOpenDF(&spec, fsRdPerm, &refNum);
+    if (err != noErr) {
+        return Failed("That file could not be opened.", err);
     }
-    if (GetEOF(refNum, &count) != noErr) {
+    err = GetEOF(refNum, &count);
+    if (err != noErr) {
         FSClose(refNum);
-        return 0;
+        return Failed("That file could not be measured.", err);
     }
     if (count > cap - 1) {
         count = cap - 1;
@@ -754,13 +809,13 @@ int GazetteStoreAskAndReadFile(const char *prompt, char *buf, long cap,
     FSClose(refNum);
 
     if (err != noErr && err != eofErr) {
-        return 0;
+        return Failed("That file could not be read.", err);
     }
     buf[count] = '\0';
     if (outLen != NULL) {
         *outLen = count;
     }
-    return 1;
+    return kGazetteFileDone;
 }
 
 int GazetteStoreAskAndWriteFile(const char *prompt, const char *defaultName,
@@ -774,14 +829,17 @@ int GazetteStoreAskAndWriteFile(const char *prompt, const char *defaultName,
     short            refNum;
     long             count;
 
+    gError[0] = '\0';
+
     if (text == NULL || len < 0) {
-        return 0;
+        return Failed("There was nothing to write.", noErr);
     }
-    if (!NavServicesAvailable()) {
-        return 0;
+    if (!GazetteNavAvailable()) {
+        return Failed("This system has no Navigation Services.", noErr);
     }
-    if (NavGetDefaultDialogOptions(&options) != noErr) {
-        return 0;
+    err = NavGetDefaultDialogOptions(&options);
+    if (err != noErr) {
+        return Failed("The Save dialog could not be set up.", err);
     }
     SetPrompt(&options, prompt);
 
@@ -803,17 +861,18 @@ int GazetteStoreAskAndWriteFile(const char *prompt, const char *defaultName,
     if (eventUPP != NULL) {
         DisposeNavEventUPP(eventUPP);
     }
-    if (err != noErr || !reply.validRecord) {
-        if (err == noErr) {
-            NavDisposeReply(&reply);
-        }
-        return 0;                   /* cancelled */
+    if (err != noErr) {
+        return Failed("The Save dialog could not be shown.", err);
+    }
+    if (!reply.validRecord) {
+        NavDisposeReply(&reply);
+        return kGazetteFileCancelled;
     }
 
     err = FirstReplySpec(&reply, &spec);
     if (err != noErr) {
         NavDisposeReply(&reply);
-        return 0;
+        return Failed("That location could not be identified.", err);
     }
 
     /* replacing is Nav's answer to "the user picked an existing file and
@@ -825,12 +884,13 @@ int GazetteStoreAskAndWriteFile(const char *prompt, const char *defaultName,
     err = FSpCreate(&spec, kGazetteCreator, kTextFileType, smSystemScript);
     if (err != noErr && err != dupFNErr) {
         NavDisposeReply(&reply);
-        return 0;
+        return Failed("The file could not be created.", err);
     }
 
-    if (FSpOpenDF(&spec, fsWrPerm, &refNum) != noErr) {
+    err = FSpOpenDF(&spec, fsWrPerm, &refNum);
+    if (err != noErr) {
         NavDisposeReply(&reply);
-        return 0;
+        return Failed("The file could not be opened for writing.", err);
     }
     (void)SetEOF(refNum, 0);
 
@@ -843,5 +903,8 @@ int GazetteStoreAskAndWriteFile(const char *prompt, const char *defaultName,
     NavCompleteSave(&reply, kNavTranslateInPlace);
     NavDisposeReply(&reply);
 
-    return (err == noErr) ? 1 : 0;
+    if (err != noErr) {
+        return Failed("The file could not be written.", err);
+    }
+    return kGazetteFileDone;
 }

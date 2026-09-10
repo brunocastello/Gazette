@@ -34,6 +34,8 @@
 #include <Events.h>
 #include <Appearance.h>
 #include <Sound.h>
+#include <AppleEvents.h>
+#include <AERegistry.h>
 #include <MacMemory.h>
 #include <TextUtils.h>
 
@@ -55,6 +57,7 @@
 
 static Boolean InitGazette(void);
 static Boolean BuildMenuBar(void);
+static void    InstallAppleEventHandlers(void);
 static void    RunGazette(void);
 static void    DoExitGazette(void);
 
@@ -233,6 +236,8 @@ static Boolean InitGazette(void)
         return false;
     }
 
+    InstallAppleEventHandlers();
+
     if (!GazetteUIOpen(ShowFeed, ShowArticle, ShowGroup)) {
         return false;
     }
@@ -325,6 +330,76 @@ static Boolean BuildMenuBar(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* Apple Events                                                        */
+/*                                                                     */
+/* The four of the required suite, which every Mac OS application is   */
+/* expected to answer whether or not it does anything with them. The   */
+/* SIZE resource has said isHighLevelEventAware since Phase 0, so the  */
+/* system was entitled to send these all along.                        */
+/* ------------------------------------------------------------------ */
+
+static pascal OSErr AEQuit(const AppleEvent *event, AppleEvent *reply,
+                           SInt32 refCon)
+{
+    (void)event; (void)reply; (void)refCon;
+
+    /* Not an immediate exit: the loop ends after this pass and the ordinary
+       shutdown runs, which is what writes the preferences and the index. */
+    gDone = true;
+    return noErr;
+}
+
+/* Launched, or clicked when already running. There is one window and it is
+   already open, so both mean "bring it forward". */
+static pascal OSErr AEOpenApp(const AppleEvent *event, AppleEvent *reply,
+                              SInt32 refCon)
+{
+    (void)event; (void)reply; (void)refCon;
+
+    if (GazetteUIWindow() != nil) {
+        SelectWindow(GazetteUIWindow());
+    }
+    return noErr;
+}
+
+/* Gazette opens no documents. Answering errAEEventNotHandled is what tells
+   the Finder so, rather than leaving it waiting on a reply. */
+static pascal OSErr AENotHandled(const AppleEvent *event, AppleEvent *reply,
+                                 SInt32 refCon)
+{
+    (void)event; (void)reply; (void)refCon;
+
+    return errAEEventNotHandled;
+}
+
+static void InstallAppleEventHandlers(void)
+{
+    /* The UPPs outlive this function and are never disposed: they live as
+       long as the application does, and the application ending is what
+       releases them. */
+    AEEventHandlerUPP quitUPP    = NewAEEventHandlerUPP(AEQuit);
+    AEEventHandlerUPP openUPP    = NewAEEventHandlerUPP(AEOpenApp);
+    AEEventHandlerUPP ignoredUPP = NewAEEventHandlerUPP(AENotHandled);
+
+    if (quitUPP != nil) {
+        (void)AEInstallEventHandler(kCoreEventClass, kAEQuitApplication,
+                                    quitUPP, 0, false);
+    }
+    if (openUPP != nil) {
+        (void)AEInstallEventHandler(kCoreEventClass, kAEOpenApplication,
+                                    openUPP, 0, false);
+        (void)AEInstallEventHandler(kCoreEventClass, kAEReopenApplication,
+                                    openUPP, 0, false);
+    }
+    if (ignoredUPP != nil) {
+        (void)AEInstallEventHandler(kCoreEventClass, kAEOpenDocuments,
+                                    ignoredUPP, 0, false);
+        (void)AEInstallEventHandler(kCoreEventClass, kAEPrintDocuments,
+                                    ignoredUPP, 0, false);
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* Main event loop — one cooperative WaitNextEvent loop                 */
 /* ------------------------------------------------------------------ */
 
@@ -386,6 +461,16 @@ static void HandleEvent(const EventRecord *event)
             EndUpdate(window);
             break;
         }
+
+        case kHighLevelEvent:
+            /*
+             * The required suite arrives this way and nowhere else. Without
+             * this branch the events were simply dropped, so anything that
+             * asks Gazette to quit rather than clicking its close box — a
+             * dock, the Finder at shutdown, an AppleScript — was ignored.
+             */
+            (void)AEProcessAppleEvent(event);
+            break;
 
         case activateEvt:
             if ((WindowRef)event->message == GazetteUIWindow()) {
@@ -1009,8 +1094,9 @@ static void HandleImportOPML(void)
 {
     char     *text;
     char      message[224];
-    long      len   = 0;
-    int       added = 0;
+    long      len     = 0;
+    int       added   = 0;
+    int       outcome;
 
     /* 96 KB is too much to put on this stack, and it is wanted for the
        length of one import and no longer. */
@@ -1020,15 +1106,23 @@ static void HandleImportOPML(void)
         return;
     }
 
-    if (GazetteStoreAskAndReadFile("Choose an OPML feed list to import:",
-                                   text, kGazetteOPMLMax, &len) && len > 0) {
+    outcome = GazetteStoreAskAndReadFile("Choose an OPML feed list to import:",
+                                        text, kGazetteOPMLMax, &len);
+    if (outcome == kGazetteFileDone && len > 0) {
         added = GazetteCoreImportOPML(text, (size_t)len);
     }
     DisposePtr((Ptr)text);
 
+    if (outcome == kGazetteFileFailed) {
+        GazetteUISetStatus(GazetteStoreErrorText());
+        return;
+    }
+    if (outcome == kGazetteFileCancelled) {
+        return;                     /* changing your mind needs no report */
+    }
     if (added <= 0) {
-        /* Cancelling and importing a file whose feeds are all already
-           subscribed are the same outcome, and neither is a failure. */
+        /* A file whose feeds are all subscribed already is not a failure;
+           saying nothing happened is the whole of the news. */
         GazetteUISetStatus("No new feeds were added.");
         return;
     }
@@ -1043,6 +1137,7 @@ static void HandleImportOPML(void)
 static void HandleExportOPML(void)
 {
     char  *text;
+    char   message[224];
     size_t len;
 
     text = (char *)NewPtrClear((Size)kGazetteOPMLMax);
@@ -1058,9 +1153,19 @@ static void HandleExportOPML(void)
         return;
     }
 
-    if (GazetteStoreAskAndWriteFile("Save the feed list as:",
-                                    "Gazette Feeds.opml", text, (long)len)) {
-        GazetteUISetStatus("Feed list exported.");
+    switch (GazetteStoreAskAndWriteFile("Save the feed list as:",
+                                        "Gazette Feeds.opml", text,
+                                        (long)len)) {
+        case kGazetteFileDone:
+            snprintf(message, sizeof message, "%d feeds exported.",
+                     GazetteCoreFeedCount());
+            GazetteUISetStatus(message);
+            break;
+        case kGazetteFileFailed:
+            GazetteUISetStatus(GazetteStoreErrorText());
+            break;
+        default:
+            break;                  /* cancelled */
     }
     DisposePtr((Ptr)text);
 }

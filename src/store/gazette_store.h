@@ -106,19 +106,29 @@ typedef void (*GazetteStoreIdle)(void);
 void GazetteStoreSetIdle(GazetteStoreIdle idle);
 
 /*
- * Ask for a file and read it. Returns 1 and fills buf and *outLen when one
- * was chosen and read, 0 when the user cancelled or it could not be read.
- * Anything past cap - 1 bytes is dropped.
+ * Both return 1 on success, 0 when the user cancelled, and -1 on a failure —
+ * three outcomes, because cancelling and failing want different things said
+ * about them and a caller that cannot tell them apart says nothing at all.
+ * GazetteStoreErrorText explains a -1.
  */
+enum {
+    kGazetteFileFailed    = -1,
+    kGazetteFileCancelled = 0,
+    kGazetteFileDone      = 1
+};
+
+/* Ask for a file and read it into buf. Anything past cap - 1 bytes is
+   dropped. */
 int GazetteStoreAskAndReadFile(const char *prompt, char *buf, long cap,
                                long *outLen);
 
-/*
- * Ask where to put a file and write text to it. defaultName is what the save
- * dialog offers. Returns 1 when it was written.
- */
+/* Ask where to put a file and write text to it. defaultName is what the save
+   dialog offers. */
 int GazetteStoreAskAndWriteFile(const char *prompt, const char *defaultName,
                                 const char *text, long len);
+
+/* Why the last one returned -1, with the OSErr in it. "" if none has. */
+const char *GazetteStoreErrorText(void);
 
 #ifdef __cplusplus
 }
