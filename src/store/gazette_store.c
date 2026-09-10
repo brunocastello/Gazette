@@ -277,15 +277,14 @@ static OSErr ResolveFolderDirID(const FSSpec *folder, long *dirID)
  * the first successful refresh, and there is nothing for the user to have
  * created in advance.
  */
-static OSErr MakeCacheSpec(const char *feedURL, Boolean createFolder,
-                           FSSpec *spec, Boolean *existed)
+static OSErr MakeCacheSpecNamed(ConstStr255Param name, Boolean createFolder,
+                                FSSpec *spec, Boolean *existed)
 {
     OSErr  err;
     short  vRefNum;
     long   prefsDir;
     long   cacheDir;
     FSSpec folder;
-    Str255 name;
 
     *existed = false;
 
@@ -325,14 +324,47 @@ static OSErr MakeCacheSpec(const char *feedURL, Boolean createFolder,
         return err;
     }
 
-    CacheFileName(feedURL, name);
-
     err = FSMakeFSSpec(vRefNum, cacheDir, name, spec);
     if (err == noErr) {
         *existed = true;
         return noErr;
     }
     return (err == fnfErr) ? noErr : err;
+}
+
+/* The same, for the file a feed's articles live in. */
+static OSErr MakeCacheSpec(const char *feedURL, Boolean createFolder,
+                           FSSpec *spec, Boolean *existed)
+{
+    Str255 name;
+
+    CacheFileName(feedURL, name);
+    return MakeCacheSpecNamed(name, createFolder, spec, existed);
+}
+
+/*
+ * And for a file in that folder with a name of its own rather than a hashed
+ * one — what Gazette remembers that does not belong to any single feed. The
+ * name is given as a C string and converted here, so no caller outside this
+ * file has to know a Pascal string from a C one.
+ */
+static OSErr MakeDataSpec(const char *name, Boolean createFolder,
+                          FSSpec *spec, Boolean *existed)
+{
+    Str255 pascalName;
+    size_t len;
+
+    if (name == NULL || name[0] == '\0') {
+        return paramErr;
+    }
+    len = strlen(name);
+    if (len > 31) {
+        return paramErr;            /* the HFS limit; no caller is near it */
+    }
+    pascalName[0] = (unsigned char)len;
+    memcpy(pascalName + 1, name, len);
+
+    return MakeCacheSpecNamed(pascalName, createFolder, spec, existed);
 }
 
 static GazetteStoreFile *NewStoreFile(short refNum, int writing)
@@ -394,6 +426,49 @@ GazetteStoreFile *GazetteStoreCacheOpen(const char *feedURL)
         return NULL;
     }
     if (MakeCacheSpec(feedURL, false, &spec, &existed) != noErr || !existed) {
+        return NULL;
+    }
+    if (FSpOpenDF(&spec, fsRdPerm, &refNum) != noErr) {
+        return NULL;
+    }
+    return NewStoreFile(refNum, 0);
+}
+
+GazetteStoreFile *GazetteStoreDataCreate(const char *name)
+{
+    FSSpec  spec;
+    Boolean existed;
+    OSErr   err;
+    short   refNum;
+
+    err = MakeDataSpec(name, true, &spec, &existed);
+    if (err != noErr) {
+        return NULL;
+    }
+    if (!existed) {
+        err = FSpCreate(&spec, kGazetteCreator, kTextFileType, smSystemScript);
+        if (err != noErr && err != dupFNErr) {
+            return NULL;
+        }
+    }
+    err = FSpOpenDF(&spec, fsWrPerm, &refNum);
+    if (err != noErr) {
+        return NULL;
+    }
+    if (SetEOF(refNum, 0) != noErr) {
+        FSClose(refNum);
+        return NULL;
+    }
+    return NewStoreFile(refNum, 1);
+}
+
+GazetteStoreFile *GazetteStoreDataOpen(const char *name)
+{
+    FSSpec  spec;
+    Boolean existed;
+    short   refNum;
+
+    if (MakeDataSpec(name, false, &spec, &existed) != noErr || !existed) {
         return NULL;
     }
     if (FSpOpenDF(&spec, fsRdPerm, &refNum) != noErr) {

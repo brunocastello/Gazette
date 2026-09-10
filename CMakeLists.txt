@@ -38,6 +38,7 @@ set(GAZETTE_SOURCES
 
     # Feed engine — RSS/Atom parser, Google News maps, article store
     src/feeds/gazette_feeds.c
+    src/feeds/gazette_index.c
     src/feeds/gazette_feed_parse.c
     src/feeds/gazette_googlenews.c
     src/feeds/gazette_gnews_topics.c

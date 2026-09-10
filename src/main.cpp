@@ -41,6 +41,7 @@
 
 #include "core/gazette_core.h"
 #include "feeds/gazette_feeds.h"
+#include "feeds/gazette_index.h"
 #include "net/gazette_net.h"
 #include "ui/gazette_dialogs.h"
 #include "ui/platinum_window.h"
@@ -187,6 +188,10 @@ static Boolean InitGazette(void)
     /* Preferences before anything is drawn: the window's first update event
        already wants the feed list. */
     (void)GazetteCoreInit();
+
+    /* And the index before that, because the first thing drawn is a sidebar
+       with unread counts in it. */
+    GazetteIndexLoad();
 
     /* Open Transport before the window, because InitOpenTransport can put up
        a dialog of its own if TCP/IP needs loading and should not do that over
@@ -715,9 +720,10 @@ static void HandleEditFeed(void)
             GazetteUISetStatus("Another feed already has that address.");
             return;
         }
-        /* The old address's cache is keyed by an address nothing points at
-           any more. */
+        /* The old address's cache and counts are keyed by an address nothing
+           points at any more. */
         GazetteFeedsForgetCache(wasURL);
+        GazetteIndexForgetFeed(wasURL);
     }
     GazetteCoreRenameFeed(index, title);
 
@@ -799,6 +805,7 @@ static void HandleRemove(void)
            looking for it again -- it would just sit in the Gazette Cache
            folder for good. */
         GazetteFeedsForgetCache(url);
+        GazetteIndexForgetFeed(url);
         GazetteCoreRemoveFeed(url);
 
         /* The feed that shuffled up into the gap is the one to show — the
@@ -1153,6 +1160,7 @@ static void DoExitGazette(void)
 
     /* And what was read in the feed still on screen. */
     GazetteFeedsFlush();
+    GazetteIndexSave();
 
     GazetteUIClose();
 

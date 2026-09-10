@@ -8,6 +8,7 @@
 #include "feeds/gazette_feeds.h"
 
 #include "extract/gazette_extract.h"
+#include "feeds/gazette_index.h"
 #include "net/gazette_fetch.h"
 #include "portable/gazette_portable.h"
 #include "store/gazette_store.h"
@@ -38,63 +39,6 @@ static int                gCleared;       /* store emptied for this refresh */
 static char               gError[192];
 static long               gFetchedAt;
 
-/* The read state has moved since the cache was loaded or written. */
-static int                gReadDirty;
-
-/*
- * Which articles were read, carried across a refresh. A refresh replaces the
- * store, and nearly every article in the new one was in the old one — so
- * without this, refreshing would mark a whole feed unread again and the
- * unread count would only ever mean "since the last refresh".
- *
- * Hashes of the links rather than the links themselves: 150 links is 150 KB
- * and 150 hashes is 600 bytes. A collision marks one unread article read,
- * which is the harmless direction for a mistake to go.
- */
-static unsigned long      gReadHashes[kGazetteMaxArticles];
-static int                gReadHashCount;
-
-/* FNV-1a. Nothing here needs a good hash, only a cheap and well-mixed one. */
-static unsigned long LinkHash(const char *link)
-{
-    unsigned long h = 2166136261UL;
-
-    while (*link != '\0') {
-        h ^= (unsigned long)(unsigned char)*link++;
-        h *= 16777619UL;
-        h &= 0xFFFFFFFFUL;
-    }
-    return h;
-}
-
-static void SnapshotRead(void)
-{
-    int i;
-
-    gReadHashCount = 0;
-    for (i = 0; i < gArticleCount; i++) {
-        if (gArticles[i].read && gArticles[i].link[0] != '\0') {
-            gReadHashes[gReadHashCount++] = LinkHash(gArticles[i].link);
-        }
-    }
-}
-
-static int WasRead(const char *link)
-{
-    unsigned long h;
-    int           i;
-
-    if (link == NULL || link[0] == '\0') {
-        return 0;
-    }
-    h = LinkHash(link);
-    for (i = 0; i < gReadHashCount; i++) {
-        if (gReadHashes[i] == h) {
-            return 1;
-        }
-    }
-    return 0;
-}
 
 /* The URL the running refresh is for, kept so the cache can be written under
    the same name it will later be read under. */
@@ -141,11 +85,14 @@ enum { kMacToUnixEpoch = 2082844800L };
  * its text -- a body is written as one 'B' line per paragraph now, because a
  * line-oriented format cannot hold a newline inside a field.
  *
- * 4: an article carries whether it has been read. A version 3 file has no
- * 'R' line and every article in it would come back unread, which is a worse
- * first impression than refetching once.
+ * 4: an article carried whether it had been read.
+ *
+ * 5: and no longer does. Read state moved to "Gazette Index", because it is a
+ * property of an article rather than of the file an article happens to be
+ * cached in -- an article opened in a group view belongs to a feed whose
+ * cache is not the one being written. See gazette_index.h.
  */
-static const char kCacheMagic[] = "GAZETTE-CACHE 4";
+static const char kCacheMagic[] = "GAZETTE-CACHE 5";
 
 static void SaveCache(const char *url, long fetchedAt);
 
@@ -218,6 +165,16 @@ int GazetteFeedsUnreadCount(void)
     return n;
 }
 
+/* Tell the index how much of this feed is left to read, so the sidebar can
+   say so without the articles being in hand. */
+static void PublishCounts(void)
+{
+    if (gCurrentURL[0] != '\0') {
+        GazetteIndexSetFeedCounts(gCurrentURL, gArticleCount,
+                                  GazetteFeedsUnreadCount());
+    }
+}
+
 void GazetteFeedsMarkRead(int index, int read)
 {
     if (index < 0 || index >= gArticleCount) {
@@ -227,7 +184,8 @@ void GazetteFeedsMarkRead(int index, int read)
         return;
     }
     gArticles[index].read = read ? 1 : 0;
-    gReadDirty            = 1;
+    GazetteIndexSetRead(gArticles[index].link, read);
+    PublishCounts();
 }
 
 void GazetteFeedsMarkAllRead(void)
@@ -237,9 +195,10 @@ void GazetteFeedsMarkAllRead(void)
     for (i = 0; i < gArticleCount; i++) {
         if (!gArticles[i].read) {
             gArticles[i].read = 1;
-            gReadDirty        = 1;
+            GazetteIndexSetRead(gArticles[i].link, 1);
         }
     }
+    PublishCounts();
 }
 
 /* ------------------------------------------------------------------ */
@@ -259,9 +218,6 @@ static int ArticleSink(const GazetteArticle *article, void *context)
        handshake should leave the previous feed on screen, not an empty
        window. */
     if (!gCleared) {
-        /* Before the store goes: which of these the user had already read is
-           the only place that is written down. */
-        SnapshotRead();
         GazetteFeedsClear();
         gCurrentFeed = gPendingFeed;
         gCleared     = 1;
@@ -273,7 +229,9 @@ static int ArticleSink(const GazetteArticle *article, void *context)
     }
 
     gArticles[gArticleCount] = *article;
-    gArticles[gArticleCount].read = WasRead(article->link);
+    /* The index knows, and knows across a refresh: an article that was read
+       before this fetch replaced the store is still read. */
+    gArticles[gArticleCount].read = GazetteIndexIsRead(article->link);
     gArticleCount++;
     return 1;
 }
@@ -316,9 +274,8 @@ int GazetteFeedsRefreshStart(int feedIndex, const char *url, long maxArticles)
     GazetteFeedsFullTextCancel();
 
     ReleaseRefresh();
-    gError[0]      = '\0';
-    gCleared       = 0;
-    gReadHashCount = 0;
+    gError[0] = '\0';
+    gCleared  = 0;
     gMaxArticles = maxArticles;
     gPendingFeed = feedIndex;
     gz_copy_n(gCurrentURL, sizeof gCurrentURL, url ? url : "",
@@ -400,6 +357,7 @@ GazetteRefreshState GazetteFeedsRefreshPump(void)
      */
     gFetchedAt = UnixNow();
     SaveCache(gCurrentURL, gFetchedAt);
+    PublishCounts();
 
     gState = kGazetteRefreshDone;
     return gState;
@@ -645,24 +603,18 @@ static void SaveCache(const char *url, long fetchedAt)
         WriteTextLine(f, 'L', a->link);
         WriteTextLine(f, 'S', a->source);
         WriteLongLine(f, 'D', a->date);
-        if (a->read) {
-            /* Written only when it is set: unread is the common case, and the
-               absent line reads as one. */
-            WriteLongLine(f, 'R', 1);
-        }
         WriteBodyLines(f, a->body);
     }
 
     GazetteStoreClose(f);
-    gReadDirty = 0;
 }
 
 void GazetteFeedsFlush(void)
 {
-    if (!gReadDirty || gArticleCount == 0 || gCurrentURL[0] == '\0') {
-        return;
-    }
-    SaveCache(gCurrentURL, gFetchedAt);
+    /* The cache holds articles and the index holds what has been read, so
+       there is nothing here to write but the index -- and it writes only when
+       something in it actually moved. */
+    GazetteIndexSave();
 }
 
 /* The other half of WriteBodyLines: each 'B' line is a paragraph, joined back
@@ -750,8 +702,6 @@ int GazetteFeedsLoadCache(int feedIndex, const char *url, long maxArticles)
                                 rest, strlen(rest)); break;
             case 'B': AppendBodyLine(&article, rest); break;
             case 'D': article.date = gz_parse_dec(rest, strlen(rest), 0); break;
-            case 'R': article.read = (int)gz_parse_dec(rest, strlen(rest), 0);
-                      break;
             default:  break;                /* an unknown tag is skipped */
         }
     }
@@ -775,13 +725,20 @@ int GazetteFeedsLoadCache(int feedIndex, const char *url, long maxArticles)
     gArticleCount = count;
     gCurrentFeed  = feedIndex;
     gFetchedAt    = fetchedAt;
-    gReadDirty    = 0;
 
     /* Where a later Flush writes the read state back to. A refresh sets this
        too; loading has to as well, or opening an article in a cached feed
        would have nowhere to record it. */
     gz_copy_n(gCurrentURL, sizeof gCurrentURL, url, strlen(url));
     gz_copy_n(gFeedTitle, sizeof gFeedTitle, title, strlen(title));
+
+    /* The cache says what the articles are; the index says which of them have
+       been read. Applied here rather than stored in the cache so a group view
+       and a feed view agree about the same article. */
+    for (count = 0; count < gArticleCount; count++) {
+        gArticles[count].read = GazetteIndexIsRead(gArticles[count].link);
+    }
+    PublishCounts();
     return 1;
 }
 

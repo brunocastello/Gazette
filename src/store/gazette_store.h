@@ -58,7 +58,8 @@ GazetteStoreFile *GazetteStoreCacheOpen(const char *feedURL);
 /* Append text. Returns 1 on success. */
 int GazetteStoreWrite(GazetteStoreFile *f, const char *text, long len);
 
-/* Append "<text>". Returns 1 on success. */
+/* Append "<text>
+". Returns 1 on success. */
 int GazetteStoreWriteLine(GazetteStoreFile *f, const char *text);
 
 /*
@@ -73,6 +74,18 @@ void GazetteStoreClose(GazetteStoreFile *f);
 
 /* Delete a feed's cache file. Used when a feed is removed. */
 void GazetteStoreCacheDelete(const char *feedURL);
+
+/* ------------------------------------------------------------------ */
+/* Named files in the same folder                                      */
+/*                                                                     */
+/* For what Gazette remembers that belongs to no single feed — which   */
+/* articles have been read, and how many of each feed are unread. Same */
+/* folder, same streaming, a name of its own rather than a hashed one  */
+/* so it is recognisable in the Finder.                                */
+/* ------------------------------------------------------------------ */
+
+GazetteStoreFile *GazetteStoreDataCreate(const char *name);
+GazetteStoreFile *GazetteStoreDataOpen(const char *name);
 
 #ifdef __cplusplus
 }

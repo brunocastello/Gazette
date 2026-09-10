@@ -11,6 +11,7 @@
 #include "core/gazette_core.h"
 #include "extract/gazette_extract.h"
 #include "feeds/gazette_feeds.h"
+#include "feeds/gazette_index.h"
 #include "portable/gazette_portable.h"
 
 #include <Appearance.h>
@@ -627,6 +628,60 @@ static void DrawTriangle(short left, short baseline, Boolean open)
     }
 }
 
+/*
+ * How many of a feed are unread. The store holds one feed at a time, so for
+ * every other row this comes from the index rather than from the articles —
+ * and for the feed on screen it comes from the articles, which are the ones
+ * that just changed.
+ */
+static int FeedUnread(int feed)
+{
+    if (feed == GazetteFeedsCurrentFeed()) {
+        return GazetteFeedsUnreadCount();
+    }
+    return GazetteIndexFeedUnread(GazetteCoreFeedURL(feed));
+}
+
+static int GroupUnread(int group)
+{
+    int total = 0;
+    int i;
+
+    for (i = 0; i < GazetteCoreFeedCount(); i++) {
+        if (GazetteCoreFeedGroup(i) == group && GazetteCoreFeedEnabled(i)) {
+            total += FeedUnread(i);
+        }
+    }
+    return total;
+}
+
+/* "Name (12)", with the count only when there is one. Drawn as one string so
+   the truncation takes the name and never the number — the count is the part
+   that has to stay legible in a narrow sidebar. */
+static void DrawRowLabel(const char *name, int unread, short left,
+                         short right, short baseline)
+{
+    char  text[kGazetteTitleLen + 16];
+    short width = (short)(right - left);
+
+    if (unread > 0) {
+        char count[16];
+        short countWidth;
+
+        snprintf(count, sizeof count, " (%d)", unread);
+        countWidth = (short)TextWidth(count, 0, (short)strlen(count));
+
+        MoveTo(left, baseline);
+        DrawTruncated(name, (short)(width - countWidth));
+        DrawText(count, 0, (short)strlen(count));
+        return;
+    }
+
+    snprintf(text, sizeof text, "%s", name);
+    MoveTo(left, baseline);
+    DrawTruncated(text, width);
+}
+
 static void DrawSidebar(void)
 {
     RgnHandle clip = NULL;
@@ -654,6 +709,7 @@ static void DrawSidebar(void)
     for (i = top; i < count && i < top + rows; i++) {
         GazetteSidebarRow row;
         short             textLeft;
+        int               unread   = 0;
         Boolean           selected = false;
 
         if (!GazetteCoreSidebarRowAt(i, &row)) {
@@ -670,9 +726,9 @@ static void DrawSidebar(void)
             textLeft = (short)(gSidebarRect.left + kTextInset +
                                kTriangleColumn);
             TextFace(bold);
-            MoveTo(textLeft, line);
-            DrawTruncated(GazetteCoreGroupName(row.index),
-                          (short)(gSidebarRect.right - textLeft - kTextInset));
+            DrawRowLabel(GazetteCoreGroupName(row.index),
+                         GroupUnread(row.index), textLeft,
+                         (short)(gSidebarRect.right - kTextInset), line);
             TextFace(normal);
 
             selected = (row.index == gSelectedGroup);
@@ -690,9 +746,17 @@ static void DrawSidebar(void)
                                   ? kThemeTextColorListView
                                   : kThemeTextColorDialogInactive,
                               8, true);
-            MoveTo(textLeft, line);
-            DrawTruncated(GazetteCoreFeedTitle(row.index),
-                          (short)(gSidebarRect.right - textLeft - kTextInset));
+
+            /* A feed with something unread is bold, the same signal the
+               headline list uses for an unread article. A feed switched off
+               shows no count: it is not being fetched, so whatever number was
+               last recorded is not news. */
+            unread = GazetteCoreFeedEnabled(row.index)
+                         ? FeedUnread(row.index) : 0;
+            TextFace((unread > 0) ? bold : normal);
+            DrawRowLabel(GazetteCoreFeedTitle(row.index), unread, textLeft,
+                         (short)(gSidebarRect.right - kTextInset), line);
+            TextFace(normal);
 
             selected = (gSelectedGroup < 0 && row.index == gSelectedFeed);
         }
