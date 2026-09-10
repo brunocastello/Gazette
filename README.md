@@ -17,7 +17,7 @@ A native, Carbon-based RSS and Atom feed reader for **Mac OS 9.x** on **PowerPC*
 Gazette is cross-compiled with [Retro68](https://github.com/autc04/Retro68) into a
 **PowerPC CFM (PEF) application with a real resource fork**, linked against CarbonLib.
 
-- **Runs on:** Mac OS 9.x, PowerPC, with CarbonLib 1.0 or later installed
+- **Runs on:** Mac OS 9.x, PowerPC, with CarbonLib 1.1 or later installed
 - **Does not run on:** any Intel or Apple Silicon macOS — this is a CFM binary, not Mach-O
 - **68K:** not supported, and not planned (Carbon is PowerPC-only)
 
@@ -281,19 +281,30 @@ connections and a policy for partial failure, which is Phase 4's problem.
 
 ### What draws it
 
-Nothing in the window is drawn by hand. The sidebar and the headline list are
-**List Manager** lists, the article is a styled **TextEdit** record, and the
-placards, separators, list-box frames and disclosure triangles are the
-**Appearance Manager**'s.
+The window is a **control hierarchy**, not a set of rectangles the application
+draws into. There is a root control, and the sidebar and the headline list are
+real **List Box controls** — CDEF 22, through `CreateListBoxControl`. Each one
+draws its own Platinum frame and focus ring, carries its own scroll bar, tracks
+its own clicks and moves its own selection; `SetKeyboardFocus` decides which of
+them the keyboard is talking to, and the CDEF shows it.
 
-The lists are *custom* lists: `CreateCustomList` with a `ListDefSpec` of
-`kListDefUserProcType`, so the list definition function is a callback in
-`platinum_window.c` rather than an `LDEF` code resource — which Carbon does not
-allow anyway. Their cells carry no data. Each list is a view onto something the
-engine already holds in order, so a cell's row number *is* its index into it:
-the sidebar's rows come from `GazetteCoreSidebarRowAt`, the headlines from
+Only what goes *inside a cell* is Gazette's, through a list definition function
+handed to `CreateListBoxControl` as a `ListDefSpec` of `kListDefUserProcType` —
+a callback in `platinum_window.c` rather than an `LDEF` code resource, which
+Carbon does not allow anyway, and without `RegisterListDefinition`, which would
+cost CarbonLib 1.5. The cells carry no data. Each list is a view onto something
+the engine already holds in order, so a cell's row number *is* its index into
+it: the sidebar's rows come from `GazetteCoreSidebarRowAt`, the headlines from
 `GazetteFeedsArticleAt`. A copy in the cells would only be a second thing to
 get out of date.
+
+A selected row inverts with the **highlight colour** the user chose in the
+Appearance control panel, not with black: `LMSetHiliteMode` clears the hilite
+bit immediately before the `InvertRect` that wants it. The disclosure triangles
+are `DrawThemeButton` with `kThemeDisclosureButton`, the pane backgrounds are
+`kThemeBrushDocumentWindowBackground` (a document window, not a dialog) and the
+list backgrounds `kThemeBrushListViewBackground`. The grow box is drawn with
+`DrawGrowIcon`, and the status line stops short of it.
 
 The article's three weights — the title bold at 9, the byline plain at 9, the
 body at 10 — are three TextEdit style runs, applied to ranges that are already
@@ -307,14 +318,15 @@ in a pane that cannot be typed into is a lie about what the pane is.
 
 ### Two Carbon details
 
-`CreateScrollBarControl` is *"in CarbonLib 1.1 and later"* and Gazette targets
-1.0, so the reader's scroll bar is built with `NewControl` and
-`kControlScrollBarProc`. Its action procedure is a real UPP —
+The reader's scroll bar is built with `NewControl` and
+`kControlScrollBarProc` rather than `CreateScrollBarControl`, which is the
+older spelling and does the same thing. Its action procedure is a real UPP —
 `OPAQUE_UPP_TYPES` again — made with `NewControlActionUPP`. It scrolls the
 pane directly rather than invalidating, because it runs inside
 `TrackControl`'s own loop where an update event would not be seen until that
-returned. The two lists bring their own bars and `LClick` tracks them, which
-is why the panes are hit-tested before `FindControl` ever gets a look.
+returned. Each list's bar is inside its List Box control and the CDEF tracks
+it, so clicks are routed with `FindControlUnderMouse` and `HandleControlClick`
+and the lists never need hit-testing by hand.
 
 Styled text has no one line height to count in, so the reader's bar is
 measured in **pixels** where the lists' are measured in rows.
@@ -424,7 +436,7 @@ started by hand from the Actions tab (`workflow_dispatch`).
 | 2 | **Done** | Feed engine: incremental RSS 2.0 / Atom parser, Google News country and topic maps, feed auto-discovery, headline list |
 | 3 | **Done** | Platinum UI: sidebar + headline list + reader pane, scroll bars, draggable dividers, on-disk cache, auto-refresh |
 | 4 | **Done** | Polish: feed and group management with auto-discovery, full-text fetch with block-aware extraction, search, read/unread with per-feed unread counts, readable groups, OPML import/export, keyboard navigation |
-| 5 | **Done** | Native controls: the sidebar and headline list become List Manager custom lists, the article becomes a styled TextEdit record with selection and Copy, the disclosure triangles become Appearance Manager artwork |
+| 5 | **Done** | Native controls: a root control with real List Box controls for the sidebar and headline list, a styled TextEdit record for the article with selection and Copy, Appearance Manager disclosure triangles, theme highlight colour, real keyboard focus |
 
 ## Known limitations
 
