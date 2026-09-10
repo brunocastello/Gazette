@@ -42,6 +42,7 @@
 #include <ControlDefinitions.h>
 #include <DateTimeUtils.h>
 #include <Fonts.h>
+#include <Icons.h>
 #include <Lists.h>
 #include <Quickdraw.h>
 #include <QuickdrawText.h>
@@ -57,14 +58,14 @@
 
 enum {
     kScrollWidth   = 16,        /* Platinum's scroll bar, including its frame */
-    kHeaderHeight  = 17,        /* the placard over each list                 */
-    kStatusHeight  = 20,
+    kHeaderHeight  = 17,        /* floor for the header bar; see gHeaderHeight */
+    kStatusHeight  = 20,        /* likewise, until the chrome font is measured */
     kRowHeight     = 14,        /* a list cell, until the theme's font is
                                    measured — see gRowHeight                 */
     kReaderLead    = 13,        /* what one arrow scrolls the article by      */
     kDividerWidth  = 4,         /* the draggable gap between panes            */
     kTextInset     = 4,
-    kDateColumn    = 46,        /* headline text starts here, after the time  */
+    kDateColumn    = 46,        /* likewise, until gDateColumn is measured     */
     kBaseline      = 10,        /* likewise, until gRowBaseline is worked out */
 
     /* The sidebar is an outline: a column for the disclosure triangle, then
@@ -72,7 +73,9 @@ enum {
        so it starts where a group's name does. */
     kTriangleSize   = 12,       /* what the Appearance Manager draws into */
     kTriangleColumn = 14,       /* the triangle's own column, with its gap */
-    kGroupIndent    = 12,
+    kGroupIndent    = 16,
+    kIconSize       = 16,       /* the small icon beside a row's name */
+    kIconGap        = 3,
 
     kMinSidebar    = 96,
     kMaxSidebarPad = 160,       /* how much room the right side must keep     */
@@ -118,12 +121,15 @@ static ListHandle gArticleList;
 static ListDefUPP gSidebarLDEF;
 static ListDefUPP gArticleLDEF;
 
-/* The chrome. A window header over each list — CDEF 21's list-view variant,
-   which is what Platinum puts above a list — and a placard along the bottom
-   for the status line. Both are controls; only their text is drawn here. */
+/* A window header over each list — CDEF 21's list-view variant, which is
+   what Platinum puts above a list. Only their text is drawn here.
+
+   The status line along the bottom is deliberately *not* a control. Outlook
+   Express leaves that strip flat, on the window's own background, and a
+   placard's bevel there would be a box around something that is not a
+   button. */
 static ControlRef gSidebarHeaderCtl;
 static ControlRef gListHeaderCtl;
-static ControlRef gStatusCtl;
 
 /* The reader is a user pane control, so that it draws through the hierarchy,
    takes the keyboard focus like the two lists and gets a real focus ring
@@ -179,10 +185,23 @@ static char gStatus[192];
 static short gListFont     = kFontIDGeneva;
 static short gListSize     = 10;
 static short gChromeFont   = kFontIDGeneva;
-static short gChromeSize   = 9;
+static short gChromeSize   = 12;
+static short gReadFont     = kFontIDGeneva;
+static short gReadSize     = 12;
+
 static short gRowHeight    = kRowHeight;
 static short gRowBaseline  = kBaseline;
+static short gRowAscent    = 9;
+static short gRowDescent   = 3;
+
+/* The chrome's bars are as tall as the chrome's font needs, not 17 and 20
+   because Geneva 9 once fitted in them. */
+static short gHeaderHeight = kHeaderHeight;
+static short gStatusHeight = kStatusHeight;
 static short gChromeBase   = 12;
+
+/* Wide enough for "Sep 00 00:00", measured rather than guessed at 46. */
+static short gDateColumn   = kDateColumn;
 
 /*
  * The article, staged here and then handed to TextEdit, which keeps its own
@@ -204,13 +223,14 @@ static void DrawArticlePane(void);
 static void DrawReader(void);
 static void DrawStatus(void);
 static void DrawStatusText(void);
-static void DrawHeaderTitle(const Rect *r, const char *text);
+static void DrawHeaderTitle(const Rect *r, const char *text, Boolean centre);
 
 /* ------------------------------------------------------------------ */
 /* Small helpers                                                       */
 /* ------------------------------------------------------------------ */
 
-/* The font a list's rows are written in, and the one its chrome is. */
+/* The font a list's rows are written in, the one its chrome is, and the one
+   the article is set in. */
 static void UseListFont(void)
 {
     TextFont(gListFont);
@@ -225,45 +245,71 @@ static void UseChromeFont(void)
     TextFace(normal);
 }
 
-/* Ask the Appearance Manager what its fonts are, and take the row height and
-   the baselines from them. Called once, with the window's port current. */
+/* Ask a theme font its name and size, and turn the name into a font ID. */
+static void AskThemeFont(ThemeFontID which, short *font, short *size)
+{
+    Str255 name;
+    SInt16 points = 0;
+    Style  face   = 0;
+
+    if (GetThemeFont(which, smSystemScript, name, &points, &face) == noErr &&
+        name[0] != 0 && points > 0) {
+        short id = 0;
+
+        GetFNum(name, &id);
+        *font = id;                     /* 0 is the system font, which is legal */
+        *size = points;
+    }
+}
+
+/*
+ * The three fonts, asked for once with the window's port current.
+ *
+ * kThemeSystemFont for the chrome — Charcoal 12 on a stock Mac OS 9, which
+ * is the system's own font at the system's own size, and what every window
+ * header and status line on the machine is set in. This file used to use
+ * the *small* system font for those, which is Geneva 9, and the result was
+ * a window whose chrome was smaller than everything around it.
+ *
+ * kThemeViewsFont for the two lists — Geneva 10, what the Finder sets a list
+ * view in. The application font at its default size for the article, which
+ * is what a document is set in and is the one place on screen holding
+ * prose rather than labels.
+ */
 static void MeasureThemeFonts(void)
 {
-    Str255   name;
-    SInt16   size  = 0;
-    Style    face  = 0;
     FontInfo info;
 
-    if (GetThemeFont(kThemeViewsFont, smSystemScript, name, &size, &face)
-            == noErr && name[0] != 0) {
-        short id = 0;
+    AskThemeFont(kThemeViewsFont, &gListFont, &gListSize);
+    AskThemeFont(kThemeSystemFont, &gChromeFont, &gChromeSize);
 
-        GetFNum(name, &id);
-        gListFont = id;                 /* 0 is the system font, which is legal */
-        gListSize = size;
-    }
-    if (GetThemeFont(kThemeSmallSystemFont, smSystemScript, name, &size, &face)
-            == noErr && name[0] != 0) {
-        short id = 0;
-
-        GetFNum(name, &id);
-        gChromeFont = id;
-        gChromeSize = size;
+    gReadFont = GetAppFont();
+    gReadSize = GetDefFontSize();
+    if (gReadSize <= 0) {
+        gReadSize = 12;
     }
 
     UseListFont();
     GetFontInfo(&info);
-    gRowHeight = (short)(info.ascent + info.descent + info.leading);
-    if (gRowHeight < 12) {
-        gRowHeight = 12;                /* a row has to be clickable */
+    gRowAscent  = info.ascent;
+    gRowDescent = info.descent;
+    gRowHeight  = (short)(info.ascent + info.descent + info.leading + 2);
+    if (gRowHeight < kIconSize + 2) {
+        gRowHeight = kIconSize + 2;     /* a row has to hold its icon */
     }
-    gRowBaseline = (short)(info.ascent + ((gRowHeight - info.ascent -
-                                           info.descent) / 2));
+    gRowBaseline = (short)(info.ascent +
+                           ((gRowHeight - info.ascent - info.descent) / 2));
+    gDateColumn = (short)(TextWidth("Sep 00 00:00", 0, 12) + kTextInset * 2);
 
     UseChromeFont();
     GetFontInfo(&info);
-    gChromeBase = (short)(info.ascent +
-                          ((kHeaderHeight - info.ascent - info.descent) / 2));
+    gHeaderHeight = (short)(info.ascent + info.descent + info.leading + 5);
+    if (gHeaderHeight < kHeaderHeight) {
+        gHeaderHeight = kHeaderHeight;
+    }
+    gStatusHeight = (short)(gHeaderHeight + 2);
+    gChromeBase   = (short)(info.ascent +
+                            ((gHeaderHeight - info.ascent - info.descent) / 2));
 }
 
 /*
@@ -507,7 +553,7 @@ static void Layout(void)
 
     GetWindowPortBounds(gWindow, &bounds);
 
-    contentBottom = (short)(bounds.bottom - kStatusHeight);
+    contentBottom = (short)(bounds.bottom - gStatusHeight);
 
     /* The sidebar keeps its width until the window gets too narrow to give
        the right-hand side anything useful. */
@@ -520,9 +566,9 @@ static void Layout(void)
 
     SetRect(&gSidebarHeader, bounds.left, bounds.top,
             (short)(bounds.left + gSidebarWidth),
-            (short)(bounds.top + kHeaderHeight));
+            (short)(bounds.top + gHeaderHeight));
     SetRect(&gSidebarPane, bounds.left,
-            (short)(bounds.top + kHeaderHeight),
+            (short)(bounds.top + gHeaderHeight),
             (short)(bounds.left + gSidebarWidth), contentBottom);
 
     SetRect(&gVDivider, (short)(bounds.left + gSidebarWidth), bounds.top,
@@ -531,19 +577,19 @@ static void Layout(void)
 
     rightLeft = (short)(gVDivider.right);
 
-    listBottom = (short)(bounds.top + kHeaderHeight +
-                         (long)(contentBottom - bounds.top - kHeaderHeight) *
+    listBottom = (short)(bounds.top + gHeaderHeight +
+                         (long)(contentBottom - bounds.top - gHeaderHeight) *
                          gListShare / 100);
-    if (listBottom < bounds.top + kHeaderHeight + kMinListHeight) {
-        listBottom = (short)(bounds.top + kHeaderHeight + kMinListHeight);
+    if (listBottom < bounds.top + gHeaderHeight + kMinListHeight) {
+        listBottom = (short)(bounds.top + gHeaderHeight + kMinListHeight);
     }
     if (listBottom > contentBottom - kMinReader - kDividerWidth) {
         listBottom = (short)(contentBottom - kMinReader - kDividerWidth);
     }
 
     SetRect(&gListHeader, rightLeft, bounds.top,
-            bounds.right, (short)(bounds.top + kHeaderHeight));
-    SetRect(&gListPane, rightLeft, (short)(bounds.top + kHeaderHeight),
+            bounds.right, (short)(bounds.top + gHeaderHeight));
+    SetRect(&gListPane, rightLeft, (short)(bounds.top + gHeaderHeight),
             bounds.right, listBottom);
 
     SetRect(&gHDivider, rightLeft, listBottom,
@@ -564,9 +610,6 @@ static void Layout(void)
     }
     if (gListHeaderCtl != NULL) {
         SetControlBounds(gListHeaderCtl, &gListHeader);
-    }
-    if (gStatusCtl != NULL) {
-        SetControlBounds(gStatusCtl, &gStatusRect);
     }
     if (gReaderCtl != NULL) {
         SetControlBounds(gReaderCtl, &gReaderRect);
@@ -756,9 +799,9 @@ static void ApplyRunStyle(long start, long end, Boolean chrome, short face)
     if (gReaderTE == NULL || end <= start) {
         return;
     }
-    style.tsFont = chrome ? gChromeFont : gListFont;
+    style.tsFont = chrome ? gListFont : gReadFont;
     style.tsFace = face;
-    style.tsSize = chrome ? gChromeSize : gListSize;
+    style.tsSize = chrome ? gListSize : gReadSize;
     style.tsColor.red   = 0;
     style.tsColor.green = 0;
     style.tsColor.blue  = 0;
@@ -862,8 +905,9 @@ static void SetReaderText(void)
 
         TESetText(gReaderText, (long)used, gReaderTE);
 
-        /* The headline in the views font bolded, the byline in the small
-           system font the chrome uses, the body in the views font plain. */
+        /* The headline and the body in the application font the article is
+           set in, the byline a size down in the views font — it is a label
+           about the article rather than part of it. */
         ApplyRunStyle(0, titleEnd, false, bold);
         ApplyRunStyle(titleEnd, bylineEnd, true, normal);
         ApplyRunStyle(bylineEnd, (long)used, false, normal);
@@ -956,20 +1000,34 @@ static pascal void ScrollAction(ControlRef control, ControlPartCode part)
  * and not the placard this used to draw. The control has no title of its
  * own, so the text goes on top of it in the theme's small system font.
  */
-static void DrawHeaderTitle(const Rect *r, const char *text)
+static void DrawHeaderTitle(const Rect *r, const char *text, Boolean centre)
 {
-    Rect inner = *r;
+    Rect  inner = *r;
+    short width;
+    short left;
 
     UseChromeFont();
-    TextFace(bold);
     SetThemeTextColor(kThemeTextColorWindowHeaderActive, 8, true);
 
     inner.left  = (short)(inner.left + kTextInset + 2);
     inner.right = (short)(inner.right - kTextInset);
-    MoveTo(inner.left, (short)(r->top + gChromeBase));
-    DrawTruncated(text, (short)(inner.right - inner.left));
+    width = (short)(inner.right - inner.left);
+    left  = inner.left;
 
-    TextFace(normal);
+    /* The sidebar's title is centred over its list, the way "Folders" is in
+       Outlook Express; the headline list's is left-aligned because it says
+       what is being shown and how much of it, and that reads as a label. */
+    if (centre) {
+        short text_width = (short)TextWidth(text, 0, (short)strlen(text));
+
+        if (text_width < width) {
+            left = (short)(inner.left + (width - text_width) / 2);
+        }
+    }
+
+    MoveTo(left, (short)(r->top + gChromeBase));
+    DrawTruncated(text, (short)(inner.right - left));
+
     ForeColor(blackColor);
 }
 
@@ -979,6 +1037,43 @@ static void DrawHeaderTitle(const Rect *r, const char *text)
  * own convention for an inactive list, and without it two panes both showing
  * a solid black bar leave no way to tell which one the arrow keys will move.
  */
+/*
+ * The sidebar's selection, drawn the way Outlook Express 5 draws its folder
+ * list: a box around the *name*, not a bar across the row. Focused, it is
+ * filled with the highlight colour; unfocused, the same box is outlined and
+ * the name stays legible on the list background.
+ */
+static void HighlightLabel(const Rect *cell, short left, short width,
+                           short baseline, Boolean focused)
+{
+    Rect box;
+
+    if (width <= 0) {
+        return;
+    }
+    SetRect(&box, (short)(left - 2), (short)(baseline - gRowAscent - 1),
+            (short)(left + width + 2), (short)(baseline + gRowDescent + 1));
+    if (box.top < cell->top) {
+        box.top = cell->top;
+    }
+    if (box.bottom > cell->bottom) {
+        box.bottom = cell->bottom;
+    }
+    if (box.right > cell->right) {
+        box.right = cell->right;
+    }
+
+    if (focused) {
+        LMSetHiliteMode((UInt8)(LMGetHiliteMode() & ~(1 << hiliteBit)));
+        InvertRect(&box);
+        return;
+    }
+    PenNormal();
+    SetThemeTextColor(kThemeTextColorListView, 8, true);
+    FrameRect(&box);
+    ForeColor(blackColor);
+}
+
 static void HighlightRow(const Rect *row, Boolean focused)
 {
     if (focused) {
@@ -1056,6 +1151,66 @@ static void DrawDisclosure(const Rect *cell, short left, Boolean open)
 }
 
 /*
+ * The small icon beside a row's name, the way Outlook Express and every
+ * Finder list view put one there. These are the system's own icons through
+ * Icon Services rather than artwork of ours: a folder for a group, opened
+ * when the group is, and the Internet news location icon for a feed, which
+ * is what Mac OS 9 already uses to mean "a news source at a URL".
+ *
+ * The IconRefs are the system's; they are got once and never released,
+ * because they live as long as the window does and releasing a shared
+ * system icon on every row draw would be the wrong trade.
+ */
+static IconRef gFolderIcon;
+static IconRef gOpenFolderIcon;
+static IconRef gFeedIcon;
+
+static void LoadRowIcons(void)
+{
+    (void)GetIconRef(kOnSystemDisk, kSystemIconsCreator,
+                     kGenericFolderIcon, &gFolderIcon);
+    (void)GetIconRef(kOnSystemDisk, kSystemIconsCreator,
+                     kOpenFolderIcon, &gOpenFolderIcon);
+    (void)GetIconRef(kOnSystemDisk, kSystemIconsCreator,
+                     kInternetLocationNewsIcon, &gFeedIcon);
+}
+
+static void ReleaseRowIcons(void)
+{
+    if (gFolderIcon != NULL) {
+        (void)ReleaseIconRef(gFolderIcon);
+        gFolderIcon = NULL;
+    }
+    if (gOpenFolderIcon != NULL) {
+        (void)ReleaseIconRef(gOpenFolderIcon);
+        gOpenFolderIcon = NULL;
+    }
+    if (gFeedIcon != NULL) {
+        (void)ReleaseIconRef(gFeedIcon);
+        gFeedIcon = NULL;
+    }
+}
+
+/* Plot one, centred in the row, dimmed when the feed it stands for is off. */
+static void DrawRowIcon(const Rect *cell, short left, IconRef icon,
+                        Boolean enabled)
+{
+    Rect box;
+    short top;
+
+    if (icon == NULL) {
+        return;
+    }
+    top = (short)(cell->top + ((cell->bottom - cell->top - kIconSize) / 2));
+    SetRect(&box, left, top, (short)(left + kIconSize),
+            (short)(top + kIconSize));
+
+    (void)PlotIconRef(&box, kAlignAbsoluteCenter,
+                      enabled ? kTransformNone : kTransformDisabled,
+                      kIconServicesNormalUsageFlag, icon);
+}
+
+/*
  * How many of a feed are unread. The store holds one feed at a time, so for
  * every other row this comes from the index rather than from the articles —
  * and for the feed on screen it comes from the articles, which are the ones
@@ -1085,14 +1240,15 @@ static int GroupUnread(int group)
 /* "Name (12)", with the count only when there is one. Drawn as one string so
    the truncation takes the name and never the number — the count is the part
    that has to stay legible in a narrow sidebar. */
-static void DrawRowLabel(const char *name, int unread, short left,
-                         short right, short baseline)
+static short DrawRowLabel(const char *name, int unread, short left,
+                          short right, short baseline)
 {
-    char  text[kGazetteTitleLen + 16];
     short width = (short)(right - left);
+    short used;
+    Point pen;
 
     if (unread > 0) {
-        char count[16];
+        char  count[16];
         short countWidth;
 
         snprintf(count, sizeof count, " (%d)", unread);
@@ -1101,12 +1257,22 @@ static void DrawRowLabel(const char *name, int unread, short left,
         MoveTo(left, baseline);
         DrawTruncated(name, (short)(width - countWidth));
         DrawText(count, 0, (short)strlen(count));
-        return;
+    } else {
+        MoveTo(left, baseline);
+        DrawTruncated(name, width);
     }
 
-    snprintf(text, sizeof text, "%s", name);
-    MoveTo(left, baseline);
-    DrawTruncated(text, width);
+    /* Where the pen ended up is how wide the label came out, and that is
+       what the selection is drawn around. */
+    GetPen(&pen);
+    used = (short)(pen.h - left);
+    if (used < 0) {
+        used = 0;
+    }
+    if (used > width) {
+        used = width;
+    }
+    return used;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1129,11 +1295,20 @@ static void EraseCell(const Rect *cell)
     SetThemeBackground(kThemeBrushDocumentWindowBackground, 8, true);
 }
 
+/*
+ * One row of the sidebar, laid out the way Outlook Express lays its folder
+ * list out: the disclosure triangle's column, then a small icon, then the
+ * name. A feed inside a group is indented by one step; a group's own row is
+ * the only one that draws a triangle.
+ */
 static void DrawSidebarCell(const Rect *cell, short row, Boolean selected)
 {
     GazetteSidebarRow r;
+    short             iconLeft;
     short             textLeft;
     short             baseline;
+    short             width;
+    Boolean           enabled = true;
 
     EraseCell(cell);
     if (!GazetteCoreSidebarRowAt(row, &r)) {
@@ -1142,48 +1317,53 @@ static void DrawSidebarCell(const Rect *cell, short row, Boolean selected)
 
     UseListFont();
     baseline = (short)(cell->top + gRowBaseline);
-    textLeft = (short)(cell->left + kTextInset + kTriangleColumn);
+    iconLeft = (short)(cell->left + kTextInset + kTriangleColumn);
 
     if (r.kind == kGazetteRowGroup) {
-        /* The group's own line: triangle, then the name in bold, the way a
-           folder reads in a Finder list view. */
-        DrawDisclosure(cell, (short)(cell->left + kTextInset),
-                       !GazetteCoreGroupCollapsed(r.index));
+        Boolean open = (Boolean)!GazetteCoreGroupCollapsed(r.index);
+
+        DrawDisclosure(cell, (short)(cell->left + kTextInset), open);
+        DrawRowIcon(cell, iconLeft, open ? gOpenFolderIcon : gFolderIcon, true);
+        textLeft = (short)(iconLeft + kIconSize + kIconGap);
 
         SetThemeTextColor(kThemeTextColorListView, 8, true);
         TextFace(bold);
-        DrawRowLabel(GazetteCoreGroupName(r.index), GroupUnread(r.index),
-                     textLeft, (short)(cell->right - kTextInset), baseline);
+        width = DrawRowLabel(GazetteCoreGroupName(r.index),
+                             GroupUnread(r.index), textLeft,
+                             (short)(cell->right - kTextInset), baseline);
     } else {
         int unread;
 
         if (GazetteCoreFeedGroup(r.index) >= 0) {
-            textLeft = (short)(textLeft + kGroupIndent);
+            iconLeft = (short)(iconLeft + kGroupIndent);
         }
+        enabled  = GazetteCoreFeedEnabled(r.index);
+        DrawRowIcon(cell, iconLeft, gFeedIcon, enabled);
+        textLeft = (short)(iconLeft + kIconSize + kIconGap);
 
         /* A switched-off feed keeps its place and is drawn the way an
            unavailable item is drawn anywhere else in Platinum, so it reads
            as off rather than as missing. */
-        SetThemeTextColor(GazetteCoreFeedEnabled(r.index)
-                              ? kThemeTextColorListView
-                              : kThemeTextColorDialogInactive,
+        SetThemeTextColor(enabled ? kThemeTextColorListView
+                                  : kThemeTextColorDialogInactive,
                           8, true);
 
         /* A feed with something unread is bold, the same signal the headline
            list uses for an unread article. A feed switched off shows no
            count: it is not being fetched, so whatever number was last
            recorded is not news. */
-        unread = GazetteCoreFeedEnabled(r.index) ? FeedUnread(r.index) : 0;
+        unread = enabled ? FeedUnread(r.index) : 0;
         TextFace((unread > 0) ? bold : normal);
-        DrawRowLabel(GazetteCoreFeedTitle(r.index), unread, textLeft,
-                     (short)(cell->right - kTextInset), baseline);
+        width = DrawRowLabel(GazetteCoreFeedTitle(r.index), unread, textLeft,
+                             (short)(cell->right - kTextInset), baseline);
     }
 
     TextFace(normal);
     ForeColor(blackColor);
 
     if (selected) {
-        HighlightRow(cell, (Boolean)(FocusedPane() == kRefSidebar));
+        HighlightLabel(cell, textLeft, width, baseline,
+                       (Boolean)(FocusedPane() == kRefSidebar));
     }
 }
 
@@ -1219,16 +1399,16 @@ static void DrawArticleCell(const Rect *cell, short row, Boolean selected)
     GazetteFormatDate(a->date, UnixNow(), when, sizeof when);
     if (when[0] != '\0') {
         MoveTo((short)(cell->left + kTextInset), baseline);
-        DrawTruncated(when, kDateColumn - kTextInset);
+        DrawTruncated(when, (short)(gDateColumn - kTextInset));
     }
 
     /* Unread in bold, the way every mail and news reader of the era marked
        one. The date column stays plain either way, so the weight reads as
        being about the headline rather than the row. */
     TextFace(a->read ? normal : bold);
-    MoveTo((short)(cell->left + kTextInset + kDateColumn), baseline);
+    MoveTo((short)(cell->left + kTextInset + gDateColumn), baseline);
     DrawTruncated(a->title,
-                  (short)(cell->right - cell->left - kDateColumn -
+                  (short)(cell->right - cell->left - gDateColumn -
                           2 * kTextInset));
     TextFace(normal);
 
@@ -1364,26 +1544,22 @@ static void DrawStatusText(void)
     }
     SetPortWindowPort(gWindow);
 
+    SetThemeBackground(kThemeBrushDocumentWindowBackground, 8, true);
+    EraseRect(&gStatusRect);
+
     UseChromeFont();
-    SetThemeTextColor(kThemeTextColorPlacardActive, 8, true);
+    SetThemeTextColor(kThemeTextColorDialogActive, 8, true);
     MoveTo((short)(gStatusRect.left + kTextInset + 4),
-           (short)(gStatusRect.top + gChromeBase + 2));
+           (short)(gStatusRect.top + gChromeBase));
     DrawTruncated(gStatus,
                   (short)(gStatusRect.right - gStatusRect.left -
                           2 * kTextInset - 8));
     ForeColor(blackColor);
 }
 
-/* The placard and its text, for when only the status line has changed. */
+/* For when only the status line has changed. */
 static void DrawStatus(void)
 {
-    if (gWindow == NULL) {
-        return;
-    }
-    SetPortWindowPort(gWindow);
-    if (gStatusCtl != NULL) {
-        Draw1Control(gStatusCtl);
-    }
     DrawStatusText();
 }
 
@@ -1444,8 +1620,8 @@ void GazetteUIUpdate(void)
 
     /* Their titles go on top of them: a window header control and a placard
        have no text of their own. */
-    DrawHeaderTitle(&gSidebarHeader, "Feeds");
-    DrawHeaderTitle(&gListHeader, header);
+    DrawHeaderTitle(&gSidebarHeader, "Feeds", true);
+    DrawHeaderTitle(&gListHeader, header, false);
     DrawStatusText();
 
     /* The grow box lives in the content region, so it is the application
@@ -1534,14 +1710,14 @@ static void TrackDivider(Point where, Boolean vertical)
                 GazetteUIUpdate();
             }
         } else {
-            short usable = (short)(bounds.bottom - kStatusHeight -
-                                   bounds.top - kHeaderHeight);
+            short usable = (short)(bounds.bottom - gStatusHeight -
+                                   bounds.top - gHeaderHeight);
             short share;
 
             if (usable <= 0) {
                 break;
             }
-            share = (short)((long)(pt.v - bounds.top - kHeaderHeight) * 100 /
+            share = (short)((long)(pt.v - bounds.top - gHeaderHeight) * 100 /
                             usable);
             if (share < 10)  share = 10;
             if (share > 90)  share = 90;
@@ -2300,8 +2476,10 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
     gReaderTrackUPP = NewControlUserPaneTrackingUPP(ReaderTrack);
 
     /* Before anything is laid out: the row height comes from the theme's
-       views font, and the layout is in rows. */
+       views font and the chrome's bars from the system font, and the layout
+       is in both. */
     MeasureThemeFonts();
+    LoadRowIcons();
 
     /* Lay the rectangles out before the lists, so each one is born the size
        it will be drawn at; Layout() then keeps them there. */
@@ -2316,7 +2494,6 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
                                     &gSidebarHeaderCtl);
     (void)CreateWindowHeaderControl(gWindow, &gListHeader, true,
                                     &gListHeaderCtl);
-    (void)CreatePlacardControl(gWindow, &gStatusRect, &gStatusCtl);
 
     if (!MakeListBox(gSidebarLDEF, &gSidebarPane, &gSidebarCtl, &gSidebarList) ||
         !MakeListBox(gArticleLDEF, &gListPane, &gArticleCtl, &gArticleList)) {
@@ -2395,7 +2572,6 @@ void GazetteUIClose(void)
     gArticleCtl        = NULL;
     gSidebarHeaderCtl  = NULL;
     gListHeaderCtl     = NULL;
-    gStatusCtl         = NULL;
     gReaderCtl         = NULL;
     gRootControl       = NULL;
 
@@ -2403,6 +2579,7 @@ void GazetteUIClose(void)
         TEDispose(gReaderTE);
         gReaderTE = NULL;
     }
+    ReleaseRowIcons();
 
     /* DisposeWindow takes the remaining controls with it; the UPPs are
        ours. */
