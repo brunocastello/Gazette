@@ -13,3 +13,7 @@ tests/host/run_tests.dSYM/
 
 # Python bytecode from tools/
 __pycache__/
+
+# Reference screenshots dropped in the root to point at UI problems. They are
+# working material, not part of the build.
+/*.png

@@ -378,8 +378,8 @@ static void MeasureFonts(void)
         GetFontInfo(&small);
         TextSize(gViewSize);
 
-        gStatusHeight = (short)(small.ascent + small.descent + 6);
-        gStatusBase   = (short)(small.ascent + 3);
+        gStatusHeight = (short)(small.ascent + small.descent + 4);
+        gStatusBase   = (short)(small.ascent + 2);
     }
 
     /* The article's header holds two lines: the headline, and the byline a
@@ -718,11 +718,12 @@ static void Layout(void)
      * edge lines land on top of each other and read as one, and the divider
      * now starts *below* both of them.
      */
-    SetRect(&gSidebarHeader, bounds.left, (short)(bounds.top - 1),
+    SetRect(&gSidebarHeader, (short)(bounds.left - 1),
+            (short)(bounds.top - 1),
             (short)(bounds.left + gSidebarWidth),
             (short)(bounds.top + gHeaderHeight));
     SetRect(&gListHeader, (short)(bounds.left + gSidebarWidth - 1),
-            (short)(bounds.top - 1), bounds.right,
+            (short)(bounds.top - 1), (short)(bounds.right + 1),
             (short)(bounds.top + gHeaderHeight));
 
     SetRect(&gVDivider, (short)(bounds.left + gSidebarWidth),
@@ -738,9 +739,16 @@ static void Layout(void)
      * two pixels of pane inset on each side as well, which made the gap
      * half again as wide as it looked in OE.
      */
-    SetRect(&gSidebarPane, (short)(bounds.left + kPaneInset),
+    /*
+     * Flush to the window's own edges. A pane inset from them left the
+     * scroll bar two pixels short of the border, where the Finder's — and
+     * every other Platinum window's — is glued to it. Only the divider
+     * between two panes has any width to it, and only the header above has
+     * a margin under it.
+     */
+    SetRect(&gSidebarPane, bounds.left,
             (short)(bounds.top + gHeaderHeight + kPaneInset - 1),
-            gVDivider.left, (short)(contentBottom - kPaneInset));
+            gVDivider.left, contentBottom);
 
     listBottom = (short)(bounds.top + gHeaderHeight +
                          (long)(contentBottom - bounds.top - gHeaderHeight) *
@@ -754,20 +762,20 @@ static void Layout(void)
 
     SetRect(&gListPane, rightLeft,
             (short)(bounds.top + gHeaderHeight + kPaneInset - 1),
-            (short)(bounds.right - kPaneInset), listBottom);
+            bounds.right, listBottom);
 
     SetRect(&gHDivider, rightLeft, listBottom,
             bounds.right, (short)(listBottom + kDividerWidth));
 
     /* The article's header spans the pane; its body starts below, with the
        same two-pixel margin every other content area gets. */
-    SetRect(&gReaderHeader, rightLeft, gHDivider.bottom, bounds.right,
+    SetRect(&gReaderHeader, rightLeft, gHDivider.bottom,
+            (short)(bounds.right + 1),
             (short)(gHDivider.bottom + gReaderHeaderHeight));
 
     SetRect(&gReaderPane, rightLeft,
             (short)(gReaderHeader.bottom + kPaneInset - 1),
-            (short)(bounds.right - kPaneInset),
-            (short)(contentBottom - kPaneInset));
+            bounds.right, contentBottom);
     SetRect(&gReaderRect, gReaderPane.left, gReaderPane.top,
             (short)(gReaderPane.right - kScrollWidth), gReaderPane.bottom);
 
