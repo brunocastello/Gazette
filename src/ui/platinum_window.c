@@ -41,6 +41,7 @@
 #include <Controls.h>
 #include <ControlDefinitions.h>
 #include <DateTimeUtils.h>
+#include <Folders.h>   /* kOnSystemDisk, which GetIconRef wants */
 #include <Fonts.h>
 #include <Icons.h>
 #include <Lists.h>
