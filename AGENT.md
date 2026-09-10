@@ -55,10 +55,17 @@ Gazette is a standalone app. It does **not** need to speak the old Newsstand XML
 ## Feature targets
 
 ### Core (Newsstand parity + necessary modernisation)
-- Google News support for the same countries and curated topics/sections that Newsstand 1.1 offered
+- ~~Google News support for the same countries and curated topics/sections
+  that Newsstand 1.1 offered~~ — **dropped, 2026-09-10.** See "Google News" below.
 - User-added custom RSS 2.0 and Atom feeds
 - Feed auto-discovery when a site homepage URL is given
-- Sidebar organised by sections / topics / user feeds
+- Sidebar organised by the user's own groups. **One level deep**: a feed sits
+  at the top level or in exactly one group, and a group cannot contain another
+  group. The model has no parent link, and nesting would reach the prefs
+  format, the row arithmetic, the aggregate group view, the unread totals and
+  the OPML reader — so it is a feature, not a tweak, if it is ever wanted.
+  OPML files nested deeper are read rather than refused: their feeds land in
+  the outermost folder they are under.
 - Article list with title, source, date
 - Clean plain-text (or very lightly formatted) article reader pane
 - Manual and automatic refresh
@@ -72,6 +79,38 @@ Gazette is a standalone app. It does **not** need to speak the old Newsstand XML
 - Multiple windows or a clean single-window Platinum layout with resizable panes
 - Keyboard navigation that feels native
 - Import/export of feed list (OPML if it can be kept simple)
+
+### Google News — what is supported, and what was dropped
+
+A Google News feed is an ordinary RSS feed and is subscribed to exactly like
+any other: paste the URL into New Feed and put it in whatever group you like.
+A group of hand-picked Google News URLs *is* a curated section, built by the
+person who wanted it, so the curated browser Newsstand 1.1 had was dropped
+rather than built. The user's decision, and the right one — it also keeps the
+feed list one kind of thing rather than two.
+
+The four URL shapes, checked against live Google News on 2026-09-10:
+
+| Shape | Status |
+|-------|--------|
+| `news.google.com/rss?hl=…&gl=…&ceid=…` (top stories) | works — 38 items |
+| `…/rss/headlines/section/topic/WORLD?…` (a Google section) | works, via a 302 to `/rss/topics/CAAq…` — 63 items |
+| `…/rss/search?q=…&hl=…&gl=…&ceid=…` (a saved search) | works — 99 items |
+| `…/rss/headlines/section/geo/XX?…` (a country's national news) | **dead** — Google redirects it to `/rss/unsupported` |
+
+The dead one is why dropping curation was lucky as well as right: a curated
+list would have shipped `kGazetteTopicNation` entries that quietly return
+nothing.
+
+`feeds/gazette_gnews_topics.c` and the country map are **kept deliberately**
+even though nothing in the application calls them. They are 29 countries, 184
+topics and the four URL builders, host-tested, and they are the raw material
+for anything later that wants to offer Google News URLs without the user
+typing them — a search helper, say. Do not delete them as dead code; this
+paragraph is why they are there.
+
+Full text cannot work on a Google News item, whichever shape produced it —
+see the note in the Phase 4 section.
 
 ### Explicitly out of scope for v1
 - Full modern HTML/CSS rendering engine
