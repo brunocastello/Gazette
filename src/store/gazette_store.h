@@ -87,6 +87,11 @@ void GazetteStoreCacheDelete(const char *feedURL);
 GazetteStoreFile *GazetteStoreDataCreate(const char *name);
 GazetteStoreFile *GazetteStoreDataOpen(const char *name);
 
+/* Write a whole named file into the cache folder in one call. Returns 1 on
+   success. This is what export falls back to when the Save dialog will not
+   open: a file the user can go and find beats an error message. */
+int GazetteStoreWriteDataFile(const char *name, const char *text, long len);
+
 /* ------------------------------------------------------------------ */
 /* Files the user chooses                                              */
 /*                                                                     */

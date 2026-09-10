@@ -28,7 +28,23 @@ static const unsigned char kCacheFolderName[] = "\pGazette Cache";
 
 enum {
     kGazetteCreator = 'Gzt9',       /* must match CREATOR in CMakeLists.txt */
-    kTextFileType   = 'TEXT'
+    kTextFileType   = 'TEXT',
+
+    /*
+     * SimpleText, for files Gazette hands to the outside world.
+     *
+     * Nav looks a file's "kind" string up from the type and creator together,
+     * and nothing on the system registers a kind for a 'Gzt9' document --
+     * Gazette's BNDL claims the application, not a document type -- so
+     * NavPutFile refuses with kNavMissingKindStringErr before it draws
+     * anything. 'ttxt' is registered on every Mac OS 9 system there is.
+     *
+     * It is also the right answer on its own merits. An exported feed list is
+     * for other programs to read, and one that opens in SimpleText when it is
+     * double-clicked is more use than one wearing Gazette's creator and
+     * opening nothing at all.
+     */
+    kSimpleTextCreator = 'ttxt'
 };
 
 /* ------------------------------------------------------------------ */
@@ -633,6 +649,25 @@ void GazetteStoreClose(GazetteStoreFile *f)
 /* Files the user chooses                                              */
 /* ------------------------------------------------------------------ */
 
+int GazetteStoreWriteDataFile(const char *name, const char *text, long len)
+{
+    GazetteStoreFile *f;
+
+    if (name == NULL || text == NULL || len < 0) {
+        return 0;
+    }
+    f = GazetteStoreDataCreate(name);
+    if (f == NULL) {
+        return 0;
+    }
+    if (!GazetteStoreWrite(f, text, len)) {
+        GazetteStoreClose(f);
+        return 0;
+    }
+    GazetteStoreClose(f);
+    return 1;
+}
+
 static GazetteStoreIdle gIdle;
 
 /*
@@ -880,7 +915,7 @@ int GazetteStoreAskAndWriteFile(const char *prompt, const char *defaultName,
     eventUPP = NewNavEventUPP(GazetteNavEvent);
 
     err = NavPutFile(NULL, &reply, &options, eventUPP, kTextFileType,
-                     kGazetteCreator, NULL);
+                     kSimpleTextCreator, NULL);
 
     if (eventUPP != NULL) {
         DisposeNavEventUPP(eventUPP);
@@ -905,7 +940,9 @@ int GazetteStoreAskAndWriteFile(const char *prompt, const char *defaultName,
     if (reply.replacing) {
         (void)FSpDelete(&spec);
     }
-    err = FSpCreate(&spec, kGazetteCreator, kTextFileType, smSystemScript);
+    /* The same creator the dialog was told about, so what is written is what
+       was offered. */
+    err = FSpCreate(&spec, kSimpleTextCreator, kTextFileType, smSystemScript);
     if (err != noErr && err != dupFNErr) {
         NavDisposeReply(&reply);
         return Failed("The file could not be created.", err);

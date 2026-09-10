@@ -1162,7 +1162,18 @@ static void HandleExportOPML(void)
             GazetteUISetStatus(message);
             break;
         case kGazetteFileFailed:
-            GazetteUISetStatus(GazetteStoreErrorText());
+            /*
+             * The dialog would not open. That is no reason for the user to
+             * leave without their feed list, so it goes somewhere findable
+             * and the status line says exactly where.
+             */
+            if (GazetteStoreWriteDataFile("Gazette Feeds.opml", text,
+                                          (long)len)) {
+                GazetteUISetStatus("Saved as ÒGazette Feeds.opmlÓ in the "
+                                   "Gazette Cache folder, inside Preferences.");
+            } else {
+                GazetteUISetStatus(GazetteStoreErrorText());
+            }
             break;
         default:
             break;                  /* cancelled */
