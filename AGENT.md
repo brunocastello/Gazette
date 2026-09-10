@@ -230,12 +230,22 @@ Single cooperative event loop. Network fetches and parsing progress via poll fun
   was calling, so the corner was blank.
 - Keyboard focus is the Control Manager's. ✅ `SetKeyboardFocus` moves it and
   the CDEFs draw the rings; Tab is `AdvanceKeyboardFocus`.
-- The theme's fonts and colours. ✅ `GetThemeFont` for `kThemeViewsFont` and
-  `kThemeSmallSystemFont` rather than a hard-coded Geneva 9, with the row
-  height and baselines derived from the font. `kThemeBrushDocumentWindowBackground`
-  for a document window, `kThemeBrushListViewBackground` for the lists, and
-  `LMSetHiliteMode` so a selection inverts with the user's highlight colour
-  rather than with black. `TruncText` for truncation.
+- The system's fonts and colours. ✅ `kThemeSystemFont` for the chrome
+  (Charcoal 12 on a stock Mac OS 9), `kThemeViewsFont` for the lists
+  (Geneva 10), the application font at `GetDefFontSize()` for the article.
+  Nothing is sized around them by hand: the bars, the row height, the
+  baselines and the date column are all measured.
+  `kThemeBrushDocumentWindowBackground` for a document window,
+  `kThemeBrushListViewBackground` for the lists, and `LMSetHiliteMode` so a
+  selection inverts with the user's highlight colour rather than with black.
+  `TruncText` for truncation.
+- The sidebar follows Outlook Express 5. ✅ Icon Services icons on every row
+  (a folder for a group, `kInternetLocationNewsIcon` for a feed,
+  `kTransformDisabled` when it is switched off), and a selection drawn as a
+  box around the *name* rather than a bar across the row — filled with the
+  highlight colour when focused, outlined when not. The headline list keeps
+  a full-width highlight, as OE's message list has. The status strip is flat
+  on the window background, not a placard.
 - The article as a styled TextEdit record in a **user pane control**. ✅ The
   control has drawing, tracking and focus procedures, so the pane draws
   through the hierarchy, gets its own clicks, has a real `DrawThemeFocusRect`

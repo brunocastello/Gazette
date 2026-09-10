@@ -299,9 +299,11 @@ it: the sidebar's rows come from `GazetteCoreSidebarRowAt`, the headlines from
 get out of date.
 
 The strip over each list is a **window header control** — CDEF 21's list-view
-variant, which is what Platinum puts above a list; the status line along the
-bottom is a real **placard**, which is what a placard is for. Neither carries a
-title of its own, so the text is drawn on top of them.
+variant, which is what Platinum puts above a list. It carries no title of its
+own, so the text is drawn on top of it. The status line along the bottom is
+deliberately *not* a control: Outlook Express leaves that strip flat on the
+window background, and a placard's bevel there would be a box around something
+that is not a button.
 
 The reader is a **user pane control** with drawing, tracking and focus
 procedures, holding a styled TextEdit record. Being a control means it draws
@@ -310,13 +312,27 @@ when the Control Manager says to, gets its own clicks, has a real
 `AdvanceKeyboardFocus` and **Shift-Tab** `ReverseKeyboardFocus` across all
 three panes rather than a switch statement in the application.
 
-Every font is the theme's, asked for once at startup: `GetThemeFont` for
-`kThemeViewsFont` in the lists and the article, `kThemeSmallSystemFont` for the
-headers, the status line and the byline. Both are Geneva on a stock Platinum
-system, but the Appearance control panel can change them, and the **row height
-and baselines follow from the font** rather than the other way round. Text is
-truncated with `TruncText`, the Script Manager's own, which knows where a
-character ends.
+Every font is the system's, asked for once at startup and never assumed:
+`kThemeSystemFont` for the chrome (Charcoal 12 on a stock Mac OS 9 — the
+system's own font at the system's own size), `kThemeViewsFont` for the two
+lists (Geneva 10, what the Finder sets a list view in), and the application
+font at `GetDefFontSize()` for the article, which is the one place on screen
+holding prose rather than labels.
+
+Nothing is sized around those fonts by hand: the header bar and the status bar
+are as tall as the chrome font needs, the **row height and baselines follow
+from the views font**, and the headline list's date column is measured from
+`"Sep 00 00:00"`. Text is truncated with `TruncText`, the Script Manager's own,
+which knows where a character ends.
+
+The sidebar follows Outlook Express 5's folder list. Rows carry a small icon
+from **Icon Services** — the system's own, a folder for a group (opened when
+the group is) and `kInternetLocationNewsIcon` for a feed, which is what Mac OS
+9 already uses to mean a news source at a URL; a switched-off feed is plotted
+with `kTransformDisabled`. A selected row draws a box around the **name**, not
+a bar across the row: filled with the highlight colour when the list has the
+focus, outlined when it does not. The headline list keeps a full-width row
+highlight, which is what OE's message list does.
 
 A selected row inverts with the **highlight colour** the user chose in the
 Appearance control panel, not with black: `LMSetHiliteMode` clears the hilite
