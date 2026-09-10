@@ -88,7 +88,7 @@ enum {
     kMinSidebar    = 120,
     kMaxSidebarPad = 160,       /* how much room the right side must keep     */
     kMinListHeight = 3 * kRowHeight,
-    kMinReader     = 3 * kReaderLead,
+    kMinReader     = 3 * kReaderLead + 34,  /* the article's header, too */
     kReaderMargin  = 2,         /* above the first line and below the last */
 
     /*
@@ -163,6 +163,7 @@ static ListDefUPP gArticleLDEF;
    times. */
 static ControlRef gSidebarHeaderCtl;
 static ControlRef gListHeaderCtl;
+static ControlRef gReaderHeaderCtl;
 
 /* The reader is a user pane control, so that it draws through the hierarchy,
    takes the keyboard focus like the two lists and gets a real focus ring
@@ -186,7 +187,16 @@ static Rect gSidebarPane;
 static Rect gSidebarHeader;
 static Rect gListPane;
 static Rect gListHeader;
-static Rect gReaderPane;        /* the framed box, bar included */
+/*
+ * The article's own header, the way OE's message pane has one: a grey bar
+ * carrying the headline and the byline, and the white body underneath. The
+ * TextEdit record holds the body alone now.
+ */
+static Rect gReaderHeader;
+static char gArticleTitle[kGazetteTitleLen];
+static char gArticleByline[192];
+
+static Rect gReaderPane;        /* the body, bar included */
 static Rect gReaderRect;        /* the text inside it, bar excluded */
 static Rect gStatusRect;
 static Rect gVDivider;          /* between sidebar and the right side */
@@ -247,6 +257,11 @@ static short gHeaderHeight = kHeaderHeight;
 static short gHeaderBase   = 12;
 static short gStatusHeight = kStatusHeight;
 static short gStatusBase   = 13;
+
+/* Two lines of text: the headline and the byline under it. */
+static short gReaderHeaderHeight = 34;
+static short gReaderLine1        = 13;
+static short gReaderLine2        = 26;
 
 /* Wide enough for "Sep 00 00:00", measured rather than guessed at 46. */
 static short gDateColumn   = kDateColumn;
@@ -351,6 +366,17 @@ static void MeasureFonts(void)
                             ((gHeaderHeight - info.ascent - info.descent) / 2));
     gStatusHeight = gHeaderHeight;
     gStatusBase   = gHeaderBase;
+
+    /* The article's header holds two lines: the headline, and the byline a
+       size down under it. */
+    {
+        short line = (short)(info.ascent + info.descent + info.leading);
+
+        gReaderLine1        = (short)(kPaneInset + 2 + info.ascent);
+        gReaderLine2        = (short)(gReaderLine1 + line);
+        gReaderHeaderHeight = (short)(gReaderLine2 + info.descent +
+                                      kPaneInset + 3);
+    }
 }
 
 /*
@@ -410,8 +436,11 @@ static long UnixNow(void)
  */
 static void ListViewIn(const Rect *pane, Rect *view)
 {
+    /* Two pixels of the window's grey between the rows and the bar, which is
+       what OE leaves and what stops the two reading as one sunken box. */
     SetRect(view, pane->left, (short)(pane->top + 1),
-            (short)(pane->right - kScrollWidth), (short)(pane->bottom - 1));
+            (short)(pane->right - kScrollWidth - kPaneInset),
+            (short)(pane->bottom - 1));
 }
 
 /* Where a list's rows actually are. */
@@ -467,6 +496,26 @@ static int ListRowCount(ListHandle list)
 }
 
 /*
+ * A scroll bar with nothing to scroll shows an empty track, not a greyed
+ * one: greying is what Platinum does to an *inactive window's* bars, and
+ * the List Manager greys its own the moment the range reaches zero. OE's
+ * folder list has more room than folders and its bar is drawn normally, so
+ * the greying is undone after anything that can change the range.
+ */
+static void WakeScrollBar(ListHandle list)
+{
+    ControlRef bar;
+
+    if (list == NULL) {
+        return;
+    }
+    bar = GetListVerticalScrollBar(list);
+    if (bar != NULL && GetControlHilite(bar) == 255) {
+        HiliteControl(bar, 0);
+    }
+}
+
+/*
  * Add or delete rows until the list is as long as the model behind it. The
  * cells stay empty — see the note at the top of the file about why the row
  * number is the index.
@@ -486,6 +535,7 @@ static void SetRowCount(ListHandle list, int count)
     } else {
         LDelRow((short)(have - count), (short)count, list);
     }
+    WakeScrollBar(list);
 }
 
 /*
@@ -603,6 +653,7 @@ static void SizeListPane(ControlRef control, ListHandle list,
         LCellSize(cell, list);
     }
     LSetDrawingMode(true, list);
+    WakeScrollBar(list);
 }
 
 static void Layout(void)
@@ -663,8 +714,15 @@ static void Layout(void)
     SetRect(&gHDivider, rightLeft, listBottom,
             bounds.right, (short)(listBottom + kDividerWidth));
 
+    /* The article's header spans the pane; its body starts below, with the
+       same two-pixel margin every other content area gets. */
+    SetRect(&gReaderHeader, rightLeft,
+            (short)(listBottom + kDividerWidth),
+            bounds.right,
+            (short)(listBottom + kDividerWidth + gReaderHeaderHeight));
+
     SetRect(&gReaderPane, (short)(rightLeft + kPaneInset),
-            (short)(listBottom + kDividerWidth + kPaneInset),
+            (short)(gReaderHeader.bottom + kPaneInset),
             (short)(bounds.right - kPaneInset),
             (short)(contentBottom - kPaneInset));
     SetRect(&gReaderRect, gReaderPane.left, gReaderPane.top,
@@ -684,6 +742,9 @@ static void Layout(void)
     }
     if (gListHeaderCtl != NULL) {
         SetControlBounds(gListHeaderCtl, &gListHeader);
+    }
+    if (gReaderHeaderCtl != NULL) {
+        SetControlBounds(gReaderHeaderCtl, &gReaderHeader);
     }
     if (gReaderCtl != NULL) {
         SetControlBounds(gReaderCtl, &gReaderPane);
@@ -895,9 +956,7 @@ static void SetReaderText(void)
     const GazetteArticle *a;
     GrafPtr savePort;
     Rect    view;
-    size_t  used      = 0;
-    long    titleEnd  = 0;
-    long    bylineEnd = 0;
+    size_t  used = 0;
     char    when[16];
 
     if (gWindow == NULL || gReaderTE == NULL) {
@@ -908,7 +967,9 @@ static void SetReaderText(void)
     SetPortWindowPort(gWindow);
 
     TEDeactivate(gReaderTE);
-    gReaderText[0] = '\0';
+    gReaderText[0]    = '\0';
+    gArticleTitle[0]  = '\0';
+    gArticleByline[0] = '\0';
 
     a = GazetteFeedsArticleAt(gSelectedArticle);
     if (a == NULL) {
@@ -918,35 +979,31 @@ static void SetReaderText(void)
         TESetText(gReaderText, (long)used, gReaderTE);
         ApplyRunStyle(0, (long)used, normal, gReadSize);
     } else {
-        used     = AppendText(0, a->title, strlen(a->title));
-        titleEnd = (long)used;
+        const char *from = a->source;
+        const char *body = a->body;
+
+        /* The headline and the byline go on the header bar, not into the
+           text: OE puts its Subject: and From: lines on one and the message
+           itself underneath, and the two scroll separately for it. */
+        (void)gz_copy_n(gArticleTitle, sizeof gArticleTitle,
+                        a->title, strlen(a->title));
 
         GazetteFormatDate(a->date, UnixNow(), when, sizeof when);
-        {
-            char        byline[192];
-            const char *from = a->source;
 
-            /* In a group view the articles come from several feeds, so which
-               one this is from is worth saying. The feed's own name stands
-               in when the article does not name a publisher. */
-            if (from[0] == '\0' && GazetteFeedsCurrentGroup() >= 0) {
-                from = GazetteCoreFeedTitle(a->feed);
-            }
-
-            if (from[0] != '\0' && when[0] != '\0') {
-                snprintf(byline, sizeof byline, "%s - %s", from, when);
-            } else if (from[0] != '\0') {
-                snprintf(byline, sizeof byline, "%s", from);
-            } else {
-                snprintf(byline, sizeof byline, "%s", when);
-            }
-
-            if (byline[0] != '\0') {
-                used = AppendChar(used, '\r');
-                used = AppendText(used, byline, strlen(byline));
-            }
+        /* In a group view the articles come from several feeds, so which one
+           this is from is worth saying. The feed's own name stands in when
+           the article does not name a publisher. */
+        if (from[0] == '\0' && GazetteFeedsCurrentGroup() >= 0) {
+            from = GazetteCoreFeedTitle(a->feed);
         }
-        bylineEnd = (long)used;
+        if (from[0] != '\0' && when[0] != '\0') {
+            snprintf(gArticleByline, sizeof gArticleByline, "%s - %s",
+                     from, when);
+        } else if (from[0] != '\0') {
+            snprintf(gArticleByline, sizeof gArticleByline, "%s", from);
+        } else {
+            snprintf(gArticleByline, sizeof gArticleByline, "%s", when);
+        }
 
         /*
          * The article's own page when it has been fetched and extracted, and
@@ -954,36 +1011,25 @@ static void SetReaderText(void)
          * held text belongs to, so switching articles cannot show the last
          * one's body under this one's headline.
          */
-        {
-            const char *body = a->body;
+        if (GazetteFeedsFullTextArticle() == gSelectedArticle) {
+            const char *full = GazetteFeedsFullText();
 
-            if (GazetteFeedsFullTextArticle() == gSelectedArticle) {
-                const char *full = GazetteFeedsFullText();
-
-                if (full[0] != '\0') {
-                    body = full;
-                }
-            }
-
-            used = AppendChar(used, '\r');
-            used = AppendChar(used, '\r');
-            if (body[0] != '\0') {
-                used = AppendBody(used, body);
-            } else {
-                static const char kNone[] = "(This feed carries no summary "
-                                            "for this article.)";
-
-                used = AppendText(used, kNone, sizeof kNone - 1);
+            if (full[0] != '\0') {
+                body = full;
             }
         }
 
-        TESetText(gReaderText, (long)used, gReaderTE);
+        if (body[0] != '\0') {
+            used = AppendBody(0, body);
+        } else {
+            static const char kNone[] = "(This feed carries no summary for "
+                                        "this article.)";
 
-        /* One font throughout; the headline is the only thing set apart,
-           and weight is enough to do it. */
-        ApplyRunStyle(0, titleEnd, bold, gReadSize);
-        ApplyRunStyle(titleEnd, bylineEnd, normal, gLabelSize);
-        ApplyRunStyle(bylineEnd, (long)used, normal, gReadSize);
+            used = AppendText(0, kNone, sizeof kNone - 1);
+        }
+
+        TESetText(gReaderText, (long)used, gReaderTE);
+        ApplyRunStyle(0, (long)used, normal, gReadSize);
     }
 
     TESetSelect(0, 0, gReaderTE);
@@ -1146,7 +1192,7 @@ static void DrawDisclosure(const Rect *cell, short left, Boolean open)
     SetThemeBackground(kThemeBrushListViewBackground, 8, true);
     (void)DrawThemeButton(&box, kThemeDisclosureButton, &info, NULL,
                           NULL, NULL, 0);
-    SetThemeBackground(kThemeBrushDocumentWindowBackground, 8, true);
+    SetThemeBackground(kThemeBrushDialogBackgroundActive, 8, true);
 }
 
 /*
@@ -1328,7 +1374,7 @@ static void EraseWith(const Rect *r, ThemeBrush brush)
 {
     SetThemeBackground(brush, 8, true);
     EraseRect(r);
-    SetThemeBackground(kThemeBrushDocumentWindowBackground, 8, true);
+    SetThemeBackground(kThemeBrushDialogBackgroundActive, 8, true);
 }
 
 /*
@@ -1747,6 +1793,51 @@ static void DrawGrabHandle(const Rect *divider)
     ForeColor(blackColor);
 }
 
+/*
+ * The article's headline and byline, drawn on the header bar under the
+ * splitter. The headline is one line and truncated, as OE's Subject: line
+ * is; the byline is a size down, which is what a label is.
+ */
+static void DrawReaderHeaderText(void)
+{
+    short right;
+
+    if (gWindow == NULL) {
+        return;
+    }
+    SetPortWindowPort(gWindow);
+    right = (short)(gReaderHeader.right - kTextInset - kScrollWidth);
+
+    SetThemeTextColor(kThemeTextColorWindowHeaderActive, 8, true);
+
+    UseViewFont();
+    TextFace(bold);
+    MoveTo((short)(gReaderHeader.left + kTextInset + 2),
+           (short)(gReaderHeader.top + gReaderLine1));
+    DrawTruncated(gArticleTitle,
+                  (short)(right - gReaderHeader.left - kTextInset - 2));
+
+    TextFace(normal);
+    TextSize(gLabelSize);
+    MoveTo((short)(gReaderHeader.left + kTextInset + 2),
+           (short)(gReaderHeader.top + gReaderLine2));
+    DrawTruncated(gArticleByline,
+                  (short)(right - gReaderHeader.left - kTextInset - 2));
+
+    ForeColor(blackColor);
+}
+
+/* The bar and the text on it, for when the article has changed. */
+static void DrawReaderHeader(void)
+{
+    if (gWindow == NULL || gReaderHeaderCtl == NULL) {
+        return;
+    }
+    SetPortWindowPort(gWindow);
+    Draw1Control(gReaderHeaderCtl);
+    DrawReaderHeaderText();
+}
+
 /* Just the text. The strip under it is the window's own background. */
 static void DrawStatusText(void)
 {
@@ -1757,7 +1848,7 @@ static void DrawStatusText(void)
 
     /* Flat, on the window's background, with one rule along the top — the
        line between the panes and the strip, and the only edge it has. */
-    EraseWith(&gStatusRect, kThemeBrushDocumentWindowBackground);
+    EraseWith(&gStatusRect, kThemeBrushDialogBackgroundActive);
     {
         Rect rule;
 
@@ -1793,9 +1884,9 @@ void GazetteUIUpdate(void)
     SetPortWindowPort(gWindow);
     GetWindowPortBounds(gWindow, &bounds);
 
-    /* kThemeBrushDocumentWindowBackground, not the dialog one: this is a
+    /* kThemeBrushDialogBackgroundActive, not the dialog one: this is a
        kDocumentWindowClass window and the two brushes are different greys. */
-    SetThemeBackground(kThemeBrushDocumentWindowBackground, 8, true);
+    SetThemeBackground(kThemeBrushDialogBackgroundActive, 8, true);
     EraseRect(&bounds);
 
 
@@ -1844,6 +1935,7 @@ void GazetteUIUpdate(void)
        have no text of their own. */
     DrawHeaderTitle(&gSidebarHeader, "Feeds");
     DrawHeaderTitle(&gListHeader, header);
+    DrawReaderHeaderText();
     DrawStatusText();
 
     /* The grow box lives in the content region, so it is the application
@@ -1883,6 +1975,7 @@ static void SelectArticle(int index)
     SetReaderText();
 
     DrawArticlePane();
+    DrawReaderHeader();
     DrawReader();
     if (gReaderScroll != NULL) {
         Draw1Control(gReaderScroll);
@@ -2491,6 +2584,7 @@ void GazetteUIArticleTextChanged(void)
         return;
     }
     SetReaderText();
+    DrawReaderHeader();
     DrawReader();
 
     /* The scroll bar's own frame is outside the pane DrawReader repaints. */
@@ -2702,7 +2796,12 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
     }
 
     SetWTitle(gWindow, "\pGazette");
-    SetThemeWindowBackground(gWindow, kThemeBrushDocumentWindowBackground,
+    /* kThemeBrushDialogBackgroundActive, not the document one: on Mac OS 9
+       a *document* window's background brush is white, and this window's
+       chrome is Platinum grey — measured off Outlook Express at
+       (216,216,216). Using the document brush is what made the status strip
+       and every two-pixel margin come out white. */
+    SetThemeWindowBackground(gWindow, kThemeBrushDialogBackgroundActive,
                              false);
     SetPortWindowPort(gWindow);
 
@@ -2740,6 +2839,8 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
     gSidebarHeaderCtl = MakeControl(&gSidebarHeader,
                                     kControlWindowListViewHeaderProc, 0);
     gListHeaderCtl    = MakeControl(&gListHeader,
+                                    kControlWindowListViewHeaderProc, 0);
+    gReaderHeaderCtl  = MakeControl(&gReaderHeader,
                                     kControlWindowListViewHeaderProc, 0);
 
     if (!MakeListPane(gSidebarLDEF, &gSidebarPane, &gSidebarCtl,
@@ -2839,6 +2940,7 @@ void GazetteUIClose(void)
     gArticleCtl        = NULL;
     gSidebarHeaderCtl  = NULL;
     gListHeaderCtl     = NULL;
+    gReaderHeaderCtl   = NULL;
     gReaderCtl         = NULL;
     gRootControl       = NULL;
 
