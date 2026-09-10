@@ -383,7 +383,7 @@ static void MeasureFonts(void)
         GetFontInfo(&small);
         TextSize(gViewSize);
 
-        gStatusHeight = kScrollWidth;
+        gStatusHeight = kScrollWidth - 1;
         gStatusBase   = (short)(small.ascent +
                                 (gStatusHeight - small.ascent -
                                  small.descent) / 2);
@@ -2312,6 +2312,21 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
     SetPortWindowPort(gWindow);
 
     /*
+     * The dividers are asked first. Each pane now reaches a few pixels into
+     * the divider beside it, so that its scroll bar's edge lands on the
+     * divider's rule — which means the two overlap, and the divider has to
+     * win there or it could never be grabbed.
+     */
+    if (PtInRect(where, &gVDivider)) {
+        TrackDivider(where, true);
+        return;
+    }
+    if (PtInRect(where, &gHDivider)) {
+        TrackDivider(where, false);
+        return;
+    }
+
+    /*
      * The list panes are hit-tested by rectangle rather than by
      * FindControlUnderMouse, because a list's scroll bar is a control of its
      * own sitting inside the pane: the Control Manager would hand back the
@@ -2358,15 +2373,6 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
         } else {
             TrackControl(control, where, gScrollUPP);
         }
-        return;
-    }
-
-    if (PtInRect(where, &gVDivider)) {
-        TrackDivider(where, true);
-        return;
-    }
-    if (PtInRect(where, &gHDivider)) {
-        TrackDivider(where, false);
         return;
     }
 
