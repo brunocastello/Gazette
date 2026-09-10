@@ -370,7 +370,8 @@ static void HandleEvent(const EventRecord *event)
             if (choice != 0) {
                 HandleMenuChoice(choice);
             } else if ((event->modifiers & cmdKey) == 0) {
-                (void)GazetteUIKey((short)(event->message & charCodeMask));
+                (void)GazetteUIKey((short)(event->message & charCodeMask),
+                                   event->modifiers);
             }
             break;
         }

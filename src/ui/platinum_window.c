@@ -62,7 +62,9 @@ enum {
      */
     kMaxReaderLines = 512,
 
-    /* Control reference numbers, so one action proc can serve all three. */
+    /* Control reference numbers, so one action proc can serve all three.
+       They double as the focus values: whichever pane the keyboard is
+       driving is named the same way here as the scroll bar that serves it. */
     kRefSidebar = 1,
     kRefList    = 2,
     kRefReader  = 3
@@ -114,6 +116,13 @@ static int gSelectedArticle = -1;
    change. */
 static int gSelectedGroup   = -1;
 
+/*
+ * Which pane the arrow keys drive. Tab moves it on, and a click in a pane
+ * takes it — the same two ways focus moves in every Platinum application
+ * with more than one list in a window.
+ */
+static short gFocus = kRefList;
+
 static char gStatus[192];
 
 /* The reader's text, copied out of the store rather than pointing into it:
@@ -126,6 +135,8 @@ static short      gReaderLineCount;
 
 static void Layout(void);
 static void RewrapReader(void);
+static void ChooseRow(const GazetteSidebarRow *row);
+static void SetFocus(short pane);
 static void DrawSidebar(void);
 static void DrawList(void);
 static void DrawReader(void);
@@ -583,6 +594,24 @@ static void DrawHeader(const Rect *r, const char *text)
     TextFace(normal);
 }
 
+/*
+ * A selected row. A pane the keyboard is driving inverts its selection; one
+ * it is not outlines the same rectangle instead. That is the List Manager's
+ * own convention for an inactive list, and without it two panes both showing
+ * a solid black bar leave no way to tell which one the arrow keys will move.
+ */
+static void HighlightRow(const Rect *row, Boolean focused)
+{
+    if (focused) {
+        InvertRect(row);
+        return;
+    }
+    PenNormal();
+    SetThemeTextColor(kThemeTextColorListView, 8, true);
+    FrameRect(row);
+    ForeColor(blackColor);
+}
+
 /* A white list area with the Platinum list-box frame around it. */
 static void BeginListArea(const Rect *r, RgnHandle *saveClip)
 {
@@ -776,7 +805,7 @@ static void DrawSidebar(void)
 
             SetRect(&box, gSidebarRect.left, (short)(line - 10),
                     gSidebarRect.right, (short)(line + 3));
-            InvertRect(&box);
+            HighlightRow(&box, gFocus == kRefSidebar);
         }
         line = (short)(line + kRowHeight);
     }
@@ -852,7 +881,7 @@ static void DrawList(void)
 
             SetRect(&row, gListRect.left, (short)(line - 10),
                     gListRect.right, (short)(line + 3));
-            InvertRect(&row);
+            HighlightRow(&row, gFocus == kRefList);
         }
         line = (short)(line + kRowHeight);
     }
@@ -1129,6 +1158,10 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
 
     part = FindControl(where, gWindow, &control);
     if (control != NULL && part != 0) {
+        /* A scroll bar belongs to a pane, and driving it is working in that
+           pane. */
+        SetFocus((short)GetControlReference(control));
+
         if (part == kControlIndicatorPart) {
             /* The thumb tracks itself; the pane is redrawn once it lands. */
             if (TrackControl(control, where, NULL) == kControlIndicatorPart) {
@@ -1159,52 +1192,27 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
         int               index = top + (where.v - gSidebarRect.top) / kRowHeight;
         GazetteSidebarRow row;
 
+        SetFocus(kRefSidebar);
         if (!GazetteCoreSidebarRowAt(index, &row)) {
             return;
         }
 
-        if (row.kind == kGazetteRowGroup) {
-            /* The triangle's own column opens and shuts the group; the rest
-               of the line selects it, the way a folder behaves in a list
-               view. Rename and Remove need something to act on, and that
-               something is the selection. */
-            if (where.h < gSidebarRect.left + kTextInset + kTriangleColumn) {
-                GazetteCoreSetGroupCollapsed(
-                    row.index, !GazetteCoreGroupCollapsed(row.index));
+        /* The triangle's own column opens and shuts a group; the rest of the
+           line selects it, the way a folder behaves in a list view. */
+        if (row.kind == kGazetteRowGroup &&
+            where.h < gSidebarRect.left + kTextInset + kTriangleColumn) {
+            GazetteCoreSetGroupCollapsed(
+                row.index, !GazetteCoreGroupCollapsed(row.index));
 
-                /* The rows below it have moved, so the bar's range and the
-                   whole pane both have to come back into agreement. */
-                SyncScroll(gSidebarScroll, GazetteCoreSidebarRowCount(),
-                           VisibleRowsIn(&gSidebarRect, kRowHeight));
-            } else if (row.index == gSelectedGroup) {
-                return;
-            } else {
-                gSelectedGroup = row.index;
-                DrawSidebar();
-                if (gOnGroupChosen != NULL) {
-                    gOnGroupChosen(row.index);
-                }
-                return;
-            }
+            /* The rows below it have moved, so the bar's range and the whole
+               pane both have to come back into agreement. */
+            SyncScroll(gSidebarScroll, GazetteCoreSidebarRowCount(),
+                       VisibleRowsIn(&gSidebarRect, kRowHeight));
             DrawSidebar();
             return;
         }
 
-        /*
-         * Either the feed changed, or a group was on screen and this feed is
-         * not it. Both mean the headline list is showing something else and
-         * has to be rebuilt — including when the feed clicked is the one that
-         * was selected before the group, which is the ordinary way back out
-         * of a group and used to do nothing at all.
-         */
-        if (row.index != gSelectedFeed || gSelectedGroup >= 0) {
-            gSelectedFeed  = row.index;
-            gSelectedGroup = -1;
-            DrawSidebar();
-            if (gOnFeedChosen != NULL) {
-                gOnFeedChosen(row.index);
-            }
-        }
+        ChooseRow(&row);
         return;
     }
 
@@ -1212,64 +1220,261 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
         short top   = (gListScroll != NULL) ? GetControlValue(gListScroll) : 0;
         int   index = top + (where.v - gListRect.top) / kRowHeight;
 
+        SetFocus(kRefList);
         if (index >= 0 && index < GazetteFeedsArticleCount()) {
             SelectArticle(index);
         }
         return;
     }
+
+    if (PtInRect(where, &gReaderRect)) {
+        SetFocus(kRefReader);
+        return;
+    }
 }
 
-Boolean GazetteUIKey(short key)
-{
-    int count = GazetteFeedsArticleCount();
+/* ------------------------------------------------------------------ */
+/* The keyboard                                                        */
+/*                                                                     */
+/* Tab moves the focus on, the arrow keys drive whichever pane has it,  */
+/* and the space bar pages the article wherever the focus happens to    */
+/* be — reading is what the window is for, and a reader should not have */
+/* to aim at a pane first.                                              */
+/* ------------------------------------------------------------------ */
 
-    if (gWindow == NULL) {
-        return false;
+/* Do what a click on this row would do. */
+static void ChooseRow(const GazetteSidebarRow *row)
+{
+    if (row->kind == kGazetteRowGroup) {
+        if (row->index == gSelectedGroup) {
+            return;
+        }
+        gSelectedGroup = row->index;
+        DrawSidebar();
+        if (gOnGroupChosen != NULL) {
+            gOnGroupChosen(row->index);
+        }
+        return;
     }
 
+    if (row->index != gSelectedFeed || gSelectedGroup >= 0) {
+        gSelectedFeed  = row->index;
+        gSelectedGroup = -1;
+        DrawSidebar();
+        if (gOnFeedChosen != NULL) {
+            gOnFeedChosen(row->index);
+        }
+    }
+}
+
+/* The row the sidebar's selection is drawn on, or 0 when it has none. */
+static int SelectedRow(void)
+{
+    int row;
+
+    if (gSelectedGroup >= 0) {
+        row = GazetteCoreSidebarRowForGroup(gSelectedGroup);
+    } else {
+        row = GazetteCoreSidebarRowForFeed(gSelectedFeed);
+    }
+    return (row >= 0) ? row : 0;
+}
+
+static void MoveSidebar(int to)
+{
+    GazetteSidebarRow row;
+    int               count = GazetteCoreSidebarRowCount();
+
+    if (count == 0) {
+        return;
+    }
+    if (to < 0) {
+        to = 0;
+    }
+    if (to >= count) {
+        to = count - 1;
+    }
+    if (!GazetteCoreSidebarRowAt(to, &row)) {
+        return;
+    }
+
+    RevealRow(gSidebarScroll, to, VisibleRowsIn(&gSidebarRect, kRowHeight));
+    ChooseRow(&row);
+    DrawSidebar();
+}
+
+static Boolean SidebarKey(short key)
+{
+    GazetteSidebarRow row;
+    int               at   = SelectedRow();
+    short             page = VisibleRowsIn(&gSidebarRect, kRowHeight);
+
     switch (key) {
-        case 0x1E:                          /* up arrow */
-            if (count > 0) {
-                SelectArticle((gSelectedArticle <= 0) ? 0
-                                                      : gSelectedArticle - 1);
+        case 0x1E: MoveSidebar(at - 1);    return true;   /* up    */
+        case 0x1F: MoveSidebar(at + 1);    return true;   /* down  */
+        case 0x0B: MoveSidebar(at - page); return true;   /* pg up */
+        case 0x0C: MoveSidebar(at + page); return true;   /* pg dn */
+        case 0x01: MoveSidebar(0);         return true;   /* home  */
+        case 0x04: MoveSidebar(GazetteCoreSidebarRowCount() - 1);
+                   return true;                           /* end   */
+
+        /* Left and right work the disclosure triangle, the way they do in a
+           Finder list view. On a feed, left goes out to the group it is in. */
+        case 0x1C:                                        /* left  */
+            if (!GazetteCoreSidebarRowAt(at, &row)) {
+                return true;
             }
+            if (row.kind == kGazetteRowGroup) {
+                if (!GazetteCoreGroupCollapsed(row.index)) {
+                    GazetteCoreSetGroupCollapsed(row.index, true);
+                }
+            } else if (GazetteCoreFeedGroup(row.index) >= 0) {
+                MoveSidebar(GazetteCoreSidebarRowForGroup(
+                                GazetteCoreFeedGroup(row.index)));
+                return true;
+            }
+            SyncScroll(gSidebarScroll, GazetteCoreSidebarRowCount(),
+                       VisibleRowsIn(&gSidebarRect, kRowHeight));
+            DrawSidebar();
             return true;
 
-        case 0x1F:                          /* down arrow */
-            if (count > 0) {
-                SelectArticle((gSelectedArticle < 0) ? 0
-                                                     : gSelectedArticle + 1);
+        case 0x1D:                                        /* right */
+            if (!GazetteCoreSidebarRowAt(at, &row)) {
+                return true;
             }
-            return true;
-
-        case 0x0B:                          /* page up */
-            if (count > 0) {
-                SelectArticle(gSelectedArticle -
-                              VisibleRowsIn(&gListRect, kRowHeight));
-            }
-            return true;
-
-        case 0x0C:                          /* page down */
-            if (count > 0) {
-                SelectArticle(gSelectedArticle +
-                              VisibleRowsIn(&gListRect, kRowHeight));
-            }
-            return true;
-
-        case 0x01:                          /* home */
-            if (count > 0) {
-                SelectArticle(0);
-            }
-            return true;
-
-        case 0x04:                          /* end */
-            if (count > 0) {
-                SelectArticle(count - 1);
+            if (row.kind == kGazetteRowGroup &&
+                GazetteCoreGroupCollapsed(row.index)) {
+                GazetteCoreSetGroupCollapsed(row.index, false);
+                SyncScroll(gSidebarScroll, GazetteCoreSidebarRowCount(),
+                           VisibleRowsIn(&gSidebarRect, kRowHeight));
+                DrawSidebar();
             }
             return true;
 
         default:
             return false;
+    }
+}
+
+static Boolean ListKey(short key)
+{
+    int count = GazetteFeedsArticleCount();
+
+    if (count == 0) {
+        return false;
+    }
+
+    switch (key) {
+        case 0x1E:
+            SelectArticle((gSelectedArticle <= 0) ? 0 : gSelectedArticle - 1);
+            return true;
+        case 0x1F:
+            SelectArticle((gSelectedArticle < 0) ? 0 : gSelectedArticle + 1);
+            return true;
+        case 0x0B:
+            SelectArticle(gSelectedArticle -
+                          VisibleRowsIn(&gListRect, kRowHeight));
+            return true;
+        case 0x0C:
+            SelectArticle(gSelectedArticle +
+                          VisibleRowsIn(&gListRect, kRowHeight));
+            return true;
+        case 0x01: SelectArticle(0);          return true;
+        case 0x04: SelectArticle(count - 1);  return true;
+        default:   return false;
+    }
+}
+
+/* Move the reader's scroll bar and redraw, which is what its own arrows and
+   page regions do — this is the same thing from the keyboard. */
+static Boolean ScrollReader(short delta, Boolean absolute)
+{
+    short value;
+    short max;
+
+    if (gReaderScroll == NULL) {
+        return false;
+    }
+    max   = GetControlMaximum(gReaderScroll);
+    value = absolute ? delta : (short)(GetControlValue(gReaderScroll) + delta);
+
+    if (value < 0)   value = 0;
+    if (value > max) value = max;
+
+    if (value == GetControlValue(gReaderScroll)) {
+        return true;                /* used the key, had nowhere to go */
+    }
+    SetControlValue(gReaderScroll, value);
+    DrawReader();
+    return true;
+}
+
+static Boolean ReaderKey(short key)
+{
+    short page = VisibleRowsIn(&gReaderRect, kReaderLead);
+
+    if (page > 1) {
+        page--;                     /* a page keeps one line of context */
+    }
+
+    switch (key) {
+        case 0x1E: return ScrollReader(-1, false);
+        case 0x1F: return ScrollReader(1, false);
+        case 0x0B: return ScrollReader((short)-page, false);
+        case 0x0C: return ScrollReader(page, false);
+        case 0x01: return ScrollReader(0, true);
+        case 0x04: return ScrollReader(32767, true);
+        default:   return false;
+    }
+}
+
+static void SetFocus(short pane)
+{
+    if (gFocus == pane) {
+        return;
+    }
+    gFocus = pane;
+
+    /* Both lists, because the one losing the focus has to stop looking as
+       though it has it. */
+    DrawSidebar();
+    DrawList();
+}
+
+Boolean GazetteUIKey(short key, EventModifiers modifiers)
+{
+    if (gWindow == NULL) {
+        return false;
+    }
+
+    if (key == '\t') {
+        switch (gFocus) {
+            case kRefSidebar: SetFocus(kRefList);    break;
+            case kRefList:    SetFocus(kRefReader);  break;
+            default:          SetFocus(kRefSidebar); break;
+        }
+        return true;
+    }
+
+    /* The space bar pages the article from anywhere: it is the one key a
+       reader reaches for without looking, and making it depend on which pane
+       has the focus would be a puzzle rather than a shortcut. */
+    if (key == ' ') {
+        short page = VisibleRowsIn(&gReaderRect, kReaderLead);
+
+        if (page > 1) {
+            page--;
+        }
+        if ((modifiers & shiftKey) != 0) {
+            page = (short)-page;
+        }
+        return ScrollReader(page, false);
+    }
+
+    switch (gFocus) {
+        case kRefSidebar: return SidebarKey(key);
+        case kRefList:    return ListKey(key);
+        default:          return ReaderKey(key);
     }
 }
 

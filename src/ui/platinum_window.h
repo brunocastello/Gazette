@@ -57,8 +57,12 @@ void GazetteUIActivate(Boolean active);
 /* A click in the content region, in local coordinates. */
 void GazetteUIClick(Point where, EventModifiers modifiers);
 
-/* A keystroke. Returns true when the window used it. */
-Boolean GazetteUIKey(short key);
+/*
+ * A keystroke, with the modifiers that came with it. Returns true when the
+ * window used it. Tab moves the focus between the three panes and the arrow
+ * keys drive whichever has it; see the focus notes in platinum_window.c.
+ */
+Boolean GazetteUIKey(short key, EventModifiers modifiers);
 
 /* The line along the bottom. Redraws only when the text actually changes. */
 void GazetteUISetStatus(const char *text);
