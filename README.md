@@ -279,15 +279,45 @@ modest: it refreshes the feed being looked at, and only when nothing else is
 running. Walking the whole list in the background means a queue, several
 connections and a policy for partial failure, which is Phase 4's problem.
 
+### What draws it
+
+Nothing in the window is drawn by hand. The sidebar and the headline list are
+**List Manager** lists, the article is a styled **TextEdit** record, and the
+placards, separators, list-box frames and disclosure triangles are the
+**Appearance Manager**'s.
+
+The lists are *custom* lists: `CreateCustomList` with a `ListDefSpec` of
+`kListDefUserProcType`, so the list definition function is a callback in
+`platinum_window.c` rather than an `LDEF` code resource — which Carbon does not
+allow anyway. Their cells carry no data. Each list is a view onto something the
+engine already holds in order, so a cell's row number *is* its index into it:
+the sidebar's rows come from `GazetteCoreSidebarRowAt`, the headlines from
+`GazetteFeedsArticleAt`. A copy in the cells would only be a second thing to
+get out of date.
+
+The article's three weights — the title bold at 9, the byline plain at 9, the
+body at 10 — are three TextEdit style runs, applied to ranges that are already
+in the record rather than set on an insertion point and left for the next
+`TEInsert` to pick up. A drag selects, and **Edit ▸ Copy** copies: `TECopy`
+onto TextEdit's private scrap, then `TEToScrap` to move it to the system's
+(`ZeroScrap` is not in Carbon, so `ClearCurrentScrap` comes first). The record
+is kept deactivated unless a drag is actually selecting something — an active
+TextEdit record with an empty selection draws an insertion point, and a caret
+in a pane that cannot be typed into is a lie about what the pane is.
+
 ### Two Carbon details
 
 `CreateScrollBarControl` is *"in CarbonLib 1.1 and later"* and Gazette targets
-1.0, so the scroll bars are built with `NewControl` and `kControlScrollBarProc`.
-The scroll action procedure is a real UPP — `OPAQUE_UPP_TYPES` again — made once
-with `NewControlActionUPP` and told apart by each control's reference, so one
-routine serves all three bars. It redraws its pane directly rather than
-invalidating, because it runs inside `TrackControl`'s own loop where an update
-event would not be seen until that returned.
+1.0, so the reader's scroll bar is built with `NewControl` and
+`kControlScrollBarProc`. Its action procedure is a real UPP —
+`OPAQUE_UPP_TYPES` again — made with `NewControlActionUPP`. It scrolls the
+pane directly rather than invalidating, because it runs inside
+`TrackControl`'s own loop where an update event would not be seen until that
+returned. The two lists bring their own bars and `LClick` tracks them, which
+is why the panes are hit-tested before `FindControl` ever gets a look.
+
+Styled text has no one line height to count in, so the reader's bar is
+measured in **pixels** where the lists' are measured in rows.
 
 ## The cache
 
@@ -394,16 +424,9 @@ started by hand from the Actions tab (`workflow_dispatch`).
 | 2 | **Done** | Feed engine: incremental RSS 2.0 / Atom parser, Google News country and topic maps, feed auto-discovery, headline list |
 | 3 | **Done** | Platinum UI: sidebar + headline list + reader pane, scroll bars, draggable dividers, on-disk cache, auto-refresh |
 | 4 | **Done** | Polish: feed and group management with auto-discovery, full-text fetch with block-aware extraction, search, read/unread with per-feed unread counts, readable groups, OPML import/export, keyboard navigation |
+| 5 | **Done** | Native controls: the sidebar and headline list become List Manager custom lists, the article becomes a styled TextEdit record with selection and Copy, the disclosure triangles become Appearance Manager artwork |
 
 ## Known limitations
-
-Two things are deliberately unfinished, and both are written down rather than
-left to be rediscovered.
-
-**The three lists are drawn by hand.** The sidebar's rows and disclosure
-triangles, the headline list and the reader pane are QuickDraw rather than
-List Manager lists or real CDEFs. That is debt taken on purpose — the engine
-came first — and it is the next substantial piece of work.
 
 **Google News article links are not resolved.** A `news.google.com/rss/articles/…`
 link is a redirector that resolves with JavaScript rather than with an HTTP

@@ -212,13 +212,30 @@ Single cooperative event loop. Network fetches and parsing progress via poll fun
   focused pane inverts its selection and an unfocused one outlines it. Visual
   refinement is *not* finished — see below.
 
-**Beyond Phase 4 — known and deliberate**
+**Phase 5 – Native Toolbox controls** ✅
+- Sidebar and headline list as List Manager lists. ✅ `CreateCustomList` with
+  a `ListDefSpec` of `kListDefUserProcType`, so the list definition function
+  is a callback in `platinum_window.c` and not an `LDEF` code resource, which
+  Carbon does not allow. The cells carry no data: each list is a view onto
+  something the engine already holds in order, so a cell's row number *is*
+  its index into it. What went with them is the two hand-driven scroll bars,
+  the scroll arithmetic and the hand-plotted disclosure triangle, which is
+  now `DrawThemeButton` with `kThemeDisclosureButton`.
+- The article as a styled TextEdit record. ✅ `TEStyleNew`; the pane's three
+  weights are three style runs. Styled text has no one line height to count
+  in, so its scroll bar is measured in pixels where the lists' are measured
+  in rows. `TEAutoView` is off and the offset is tracked in the window, so a
+  drag off the bottom of the pane cannot scroll behind its back.
+- Selection and Copy. ✅ A drag selects; **Edit ▸ Copy** is `TECopy` onto
+  TextEdit's private scrap and `TEToScrap` to move it to the system's, after
+  `ClearCurrentScrap` — `ZeroScrap` is not in Carbon. The record is kept
+  deactivated unless a drag is actually selecting something, because an
+  active TextEdit record with an empty selection draws an insertion point,
+  and a caret in a pane that cannot be typed into is a lie about the pane.
+
+**Beyond Phase 5 — known and deliberate**
 - A group is a place to read from: selecting one merges every enabled feed in
   it, newest first, and Command-R refreshes them in turn.
-- **The three lists are drawn by hand.** The sidebar's rows and disclosure
-  triangles, the headline list and the reader pane are QuickDraw, not List
-  Manager lists or CDEF 4 controls. This is known debt, deliberately taken to
-  get the engine working first, and the next substantial piece of work.
 - **Google News article links are not resolved.** A `news.google.com/rss/articles/…`
   link is a redirector that resolves with JavaScript rather than an HTTP
   redirect, so full text cannot reach the publisher for those feeds. It fails
