@@ -713,98 +713,73 @@ static void Layout(void)
     }
 
     /*
-     * Both headers start a pixel above the content region, so their own top
-     * lines fall outside it and get clipped away — otherwise each lands
-     * right under the title bar's bottom line and the two read as one thick
-     * black border.
+     * Every edge lands *on* the line beside it, never a pixel before it.
      *
-     * The two headers touch. They used to have the whole vertical divider
-     * between them, which put two black edges and a separator rule in the
-     * seam — seven pixels of chrome where there should be a join. The list
-     * header overlaps the sidebar header's right edge by a pixel so the two
-     * edge lines land on top of each other and read as one, and the divider
-     * now starts *below* both of them.
+     * A pane's scroll bar draws its own edge at the pane's last pixel, and
+     * a divider draws its rule down its middle; if the pane stops short,
+     * the two lines sit side by side with a pixel of grey between and the
+     * whole thing reads as loose. So each pane is extended by one pixel
+     * past the rule it meets, and the bar's edge becomes that rule. The
+     * same goes for the headers, whose own side and top edges are made to
+     * fall on the window's border or the divider's rule rather than beside
+     * them.
+     *
+     * vRule and hRule are those columns and rows, worked out once.
      */
-    /*
-     * The seam between the two headers has to land on the same column as
-     * the divider's rule below it, or the vertical line steps sideways
-     * where the headers end — measured at three pixels out. The rule is
-     * drawn down the middle of the divider, so both headers put an edge
-     * there: the sidebar's right edge and the headline header's left edge
-     * fall on the same pixel and read as one continuous line.
-     */
-    SetRect(&gSidebarHeader, (short)(bounds.left - 1),
-            (short)(bounds.top - 1),
-            (short)(bounds.left + gSidebarWidth + kDividerWidth / 2 + 1),
-            (short)(bounds.top + gHeaderHeight));
-    SetRect(&gListHeader,
-            (short)(bounds.left + gSidebarWidth + kDividerWidth / 2),
-            (short)(bounds.top - 1), (short)(bounds.right + 1),
-            (short)(bounds.top + gHeaderHeight));
+    {
+        short vRule = (short)(bounds.left + gSidebarWidth + kDividerWidth / 2);
+        short headTop = (short)(bounds.top - 1);
+        short headBot = (short)(bounds.top + gHeaderHeight);
+        short hRule;
 
-    SetRect(&gVDivider, (short)(bounds.left + gSidebarWidth),
-            (short)(bounds.top + gHeaderHeight),
-            (short)(bounds.left + gSidebarWidth + kDividerWidth),
-            contentBottom);
+        SetRect(&gSidebarHeader, (short)(bounds.left - 1), headTop,
+                (short)(vRule + 1), headBot);
+        SetRect(&gListHeader, vRule, headTop,
+                (short)(bounds.right + 1), headBot);
 
-    rightLeft = gVDivider.right;
+        SetRect(&gVDivider, (short)(bounds.left + gSidebarWidth), headBot,
+                (short)(bounds.left + gSidebarWidth + kDividerWidth),
+                contentBottom);
 
-    /*
-     * Every pane runs flush to the divider beside it: the divider's own five
-     * pixels are the whole of the space between two panes. There used to be
-     * two pixels of pane inset on each side as well, which made the gap
-     * half again as wide as it looked in OE.
-     */
-    /*
-     * Flush to the window's own edges. A pane inset from them left the
-     * scroll bar two pixels short of the border, where the Finder's — and
-     * every other Platinum window's — is glued to it. Only the divider
-     * between two panes has any width to it, and only the header above has
-     * a margin under it.
-     */
-    SetRect(&gSidebarPane, bounds.left,
-            (short)(bounds.top + gHeaderHeight + kPaneInset - 1),
-            gVDivider.left, contentBottom);
+        /* Glued to the header above, to the rule on the right, and to the
+           status strip's rule below. */
+        SetRect(&gSidebarPane, bounds.left, headBot,
+                (short)(vRule + 1), (short)(contentBottom + 1));
 
-    listBottom = (short)(bounds.top + gHeaderHeight +
-                         (long)(contentBottom - bounds.top - gHeaderHeight) *
-                         gListShare / 100);
-    if (listBottom < bounds.top + gHeaderHeight + kMinListHeight) {
-        listBottom = (short)(bounds.top + gHeaderHeight + kMinListHeight);
+        rightLeft = gVDivider.right;
+
+        listBottom = (short)(headBot +
+                             (long)(contentBottom - headBot) *
+                             gListShare / 100);
+        if (listBottom < headBot + kMinListHeight) {
+            listBottom = (short)(headBot + kMinListHeight);
+        }
+        if (listBottom > contentBottom - kMinReader - kDividerWidth) {
+            listBottom = (short)(contentBottom - kMinReader - kDividerWidth);
+        }
+        hRule = (short)(listBottom + kDividerWidth / 2);
+
+        SetRect(&gListPane, rightLeft, headBot,
+                (short)(bounds.right + 1), (short)(hRule + 1));
+
+        SetRect(&gHDivider, rightLeft, listBottom, bounds.right,
+                (short)(listBottom + kDividerWidth));
+
+        /* The article's header starts on the same rule the list above ends
+           on, so the two borders are one line. */
+        SetRect(&gReaderHeader, rightLeft, hRule,
+                (short)(bounds.right + 1),
+                (short)(hRule + gReaderHeaderHeight));
+
+        SetRect(&gReaderPane, rightLeft, gReaderHeader.bottom,
+                (short)(bounds.right + 1), (short)(contentBottom + 1));
+        SetRect(&gReaderRect, gReaderPane.left, gReaderPane.top,
+                (short)(gReaderPane.right - kScrollWidth),
+                gReaderPane.bottom);
     }
-    if (listBottom > contentBottom - kMinReader - kDividerWidth) {
-        listBottom = (short)(contentBottom - kMinReader - kDividerWidth);
-    }
 
-    SetRect(&gListPane, rightLeft,
-            (short)(bounds.top + gHeaderHeight + kPaneInset - 1),
-            (short)(bounds.right + 1), listBottom);
-
-    SetRect(&gHDivider, rightLeft, listBottom,
-            bounds.right, (short)(listBottom + kDividerWidth));
-
-    /* The article's header spans the pane; its body starts below, with the
-       same two-pixel margin every other content area gets. */
-    SetRect(&gReaderHeader, rightLeft, gHDivider.bottom,
-            (short)(bounds.right + 1),
-            (short)(gHDivider.bottom + gReaderHeaderHeight));
-
-    /*
-     * A pixel past the content region on the right, so the scroll bar's own
-     * right edge falls on the window's border rather than beside it. The
-     * Finder's list ends, its bar runs, and the next pixel is the window
-     * edge — one black line. Ours had the bar's edge and then the window's,
-     * two abreast.
-     */
-    SetRect(&gReaderPane, rightLeft,
-            (short)(gReaderHeader.bottom + kPaneInset - 1),
-            (short)(bounds.right + 1), contentBottom);
-    SetRect(&gReaderRect, gReaderPane.left, gReaderPane.top,
-            (short)(gReaderPane.right - kScrollWidth), gReaderPane.bottom);
-
-    /* End to end, and flush with the panes above: the strip's own rule is
-       the line between them, so there is nothing to leave a gap for. The
-       grow box is drawn over its right hand corner. */
+    /* End to end. The strip's own rule is the line between it and the panes
+       above, and every one of their scroll bars ends on it. */
     SetRect(&gStatusRect, bounds.left, contentBottom,
             bounds.right, bounds.bottom);
 
