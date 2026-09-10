@@ -251,6 +251,7 @@ static TEHandle gReaderTE;
 static char     gReaderText[2 * kGazetteExtractMax + 512];
 
 static void Layout(void);
+static ControlRef MakeControl(const Rect *bounds, short procID, short value);
 static void SetReaderText(void);
 static void SizeReader(void);
 static void ChooseRow(const GazetteSidebarRow *row);
@@ -1653,6 +1654,52 @@ static void DrawArticlePane(void)
     if (clip != NULL) {
         SetClip(clip);
         DisposeRgn(clip);
+    }
+}
+
+/*
+ * The reader's contents. This is the user pane control's drawing procedure,
+ * so the Control Manager calls it — from DrawControls, from Draw1Control and
+ * whenever the focus ring has to change.
+ */
+static pascal void ReaderDraw(ControlRef control, SInt16 part)
+{
+    RgnHandle clip = NULL;
+
+    (void)control;
+    (void)part;
+
+    if (gWindow == NULL) {
+        return;
+    }
+    SetPortWindowPort(gWindow);
+
+    clip = NewRgn();
+    if (clip != NULL) {
+        GetClip(clip);
+    }
+    EraseWith(&gReaderRect, kThemeBrushWhite);
+    ClipRect(&gReaderRect);
+
+    if (gReaderTE != NULL) {
+        Rect view = (**gReaderTE).viewRect;   /* not a pointer into the
+                                                 handle, which can move */
+
+        TEUpdate(&view, gReaderTE);
+    }
+
+    if (clip != NULL) {
+        SetClip(clip);
+        DisposeRgn(clip);
+    }
+
+    /* Round the text only, stopping short of the scroll bar — the same rule
+       the two lists follow. */
+    if (gReaderCtl != NULL && GetControlValue(gReaderCtl) != 0) {
+        Rect ring = gReaderRect;
+
+        InsetRect(&ring, 1, 1);
+        (void)DrawThemeFocusRect(&ring, true);
     }
 }
 
