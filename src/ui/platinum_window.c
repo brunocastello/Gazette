@@ -1954,6 +1954,19 @@ static void UnclipList(RgnHandle saved)
     }
 }
 
+/*
+ * Is this row wholly in view? Only the last one can fail: the List Manager
+ * scrolls by whole cells, so the top of the list is always aligned and it is
+ * the bottom that runs out of room.
+ */
+static Boolean RowFullyVisible(ListHandle list, const Rect *cellRect)
+{
+    Rect view;
+
+    ListView(list, &view);
+    return (Boolean)(cellRect->bottom <= view.bottom);
+}
+
 static pascal void SidebarLDEF(short message, Boolean isSelected, Rect *cellRect,
                                Cell cell, short dataOffset, short dataLen,
                                ListHandle list)
@@ -1967,7 +1980,11 @@ static pascal void SidebarLDEF(short message, Boolean isSelected, Rect *cellRect
         return;
     }
     ClipToList(list, &saved);
-    DrawSidebarCell(cellRect, cell.v, isSelected);
+    if (RowFullyVisible(list, cellRect)) {
+        DrawSidebarCell(cellRect, cell.v, isSelected);
+    } else {
+        EraseWith(cellRect, kThemeBrushListViewBackground);
+    }
     UnclipList(saved);
 }
 
@@ -2046,20 +2063,13 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
     textLeft = (short)(cell->left + kTextInset + kIconSize + kIconGap);
 
     /*
-     * Read and unread are told apart by colour rather than by weight: black
-     * for something not yet opened, grey for something already read. Bold
-     * made a list of unread articles — which is most of them, most of the
-     * time — read as a wall.
+     * The same face the feed names are set in, and always black: bold while
+     * unread, plain once it has been opened. Weight says it without taking
+     * the headline's colour away, which is what greying it did.
      */
-    UseSysFont();
-    if (a->read) {
-        RGBColor grey;
-
-        grey.red = grey.green = grey.blue = 128 * 257;
-        RGBForeColor(&grey);
-    } else {
-        ForeColor(blackColor);
-    }
+    UseViewFont();
+    TextFace(a->read ? normal : bold);
+    ForeColor(blackColor);
 
     MoveTo(textLeft, baseline);
     DrawTruncated(a->title, (short)(cell->right - kTextInset - textLeft));
@@ -2081,7 +2091,20 @@ static pascal void ArticleLDEF(short message, Boolean isSelected, Rect *cellRect
         return;
     }
     ClipToList(list, &saved);
-    DrawArticleCell(cellRect, cell.v, isSelected);
+
+    /*
+     * A row with only part of its height left draws nothing but its
+     * background. Half a row of text is untidy; half a row whose icon is
+     * drawn whole — because Icon Services does not clip — is worse, and
+     * refusing the icon on its own made it blink in and out as a divider was
+     * dragged past the boundary. Leaving the strip empty is steady, and the
+     * List Manager scrolls by whole rows so nothing is ever out of reach.
+     */
+    if (RowFullyVisible(list, cellRect)) {
+        DrawArticleCell(cellRect, cell.v, isSelected);
+    } else {
+        EraseWith(cellRect, kThemeBrushWhite);
+    }
     UnclipList(saved);
 }
 
