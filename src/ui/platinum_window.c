@@ -100,7 +100,7 @@ enum {
     kMaxSidebarPad = 160,       /* how much room the right side must keep     */
     kMinListHeight = 3 * kRowHeight,
     kMinReader     = 3 * kReaderLead + 34,  /* the article's header, too */
-    kReaderMargin  = 2,         /* above the first line and below the last */
+    kReaderMargin  = 6,         /* above the first line and below the last */
 
     /*
      * Measured off a screenshot of Outlook Express 5.0.6 rather than
@@ -110,6 +110,7 @@ enum {
      * two pixels of grey *are* the separation.
      */
     kPaneInset     = 2,
+    kMaxTitleLines = 3,         /* a headline wraps, but not without end   */
 
     /* The focus border's thickness, and therefore how far a row has to keep
        clear of the edge of the view it is in. */
@@ -284,7 +285,8 @@ static short gViewFont  = kFontIDGeneva;  /* lists, headings, status */
 static short gViewSize  = 12;
 static short gReadFont  = kFontIDGeneva;  /* the article's body       */
 static short gReadSize  = 12;
-static short gLabelSize = 9;              /* the byline under a headline */
+static short gLabelSize  = 9;             /* the byline under a headline */
+static short gStatusSize = 10;            /* the strip along the bottom  */
 
 static short gRowHeight    = kRowHeight;
 static short gRowBaseline  = kBaseline;
@@ -298,10 +300,17 @@ static short gHeaderBase   = 12;
 static short gStatusHeight = kStatusHeight;
 static short gStatusBase   = 13;
 
-/* Two lines of text: the headline and the byline under it. */
+/*
+ * The headline, which wraps onto as many lines as it needs up to a limit,
+ * and the byline under it. So the bar's height is not fixed: it is the first
+ * baseline, plus a line for each line of headline, plus the tail below the
+ * byline.
+ */
 static short gReaderHeaderHeight = 34;
 static short gReaderLine1        = 13;
-static short gReaderLine2        = 26;
+static short gReaderLineStep     = 13;
+static short gReaderTail         = 8;
+static short gReaderTitleLines   = 1;
 
 
 /*
@@ -337,6 +346,9 @@ static TEHandle gReaderTE;
 static char     gReaderText[2 * kGazetteExtractMax + 512];
 
 static void Layout(void);
+static short ReaderHeaderHeightFor(short lines);
+static short ReaderTitleLineCount(void);
+static short ReaderTitleWidth(void);
 static ControlRef MakeControl(const Rect *bounds, short procID, short value);
 static void DrawFocusBorder(const Rect *view, Boolean on);
 static void FillFocusColour(const Rect *r);
@@ -415,7 +427,8 @@ static void MeasureFonts(void)
     gReadFont = gViewFont;
     gViewSize  = 12;
     gReadSize  = 12;
-    gLabelSize = 9;
+    gLabelSize  = 9;
+    gStatusSize = 10;
 
     /*
      * And the Large System Font, whatever the Appearance control panel has
@@ -486,26 +499,151 @@ static void MeasureFonts(void)
     {
         FontInfo small;
 
-        TextSize(gLabelSize);
+        TextSize(gStatusSize);
         GetFontInfo(&small);
         TextSize(gViewSize);
 
+        /* Fixed: the strip is as deep as a scroll bar less a pixel whatever
+           the text in it measures, so a size up only re-centres it. */
         gStatusHeight = kScrollWidth - 1;
         gStatusBase   = (short)(small.ascent +
                                 (gStatusHeight - small.ascent -
                                  small.descent) / 2);
     }
 
-    /* The article's header holds two lines: the headline, and the byline a
-       size down under it. */
+    /*
+     * The article's header: the headline in the large system font, and the
+     * byline a size down under it. The headline's own metrics set the first
+     * baseline and the step between wrapped lines; the byline's descent is
+     * what the bar has to leave room for underneath.
+     */
     {
-        short line = (short)(info.ascent + info.descent + info.leading);
+        FontInfo title;
+        FontInfo label;
 
-        gReaderLine1        = (short)(kPaneInset + 2 + info.ascent);
-        gReaderLine2        = (short)(gReaderLine1 + line);
-        gReaderHeaderHeight = (short)(gReaderLine2 + info.descent +
-                                      kPaneInset + 3);
+        TextFont(gSysFont);
+        TextSize(gSysSize);
+        GetFontInfo(&title);
+
+        TextFont(gViewFont);
+        TextSize(gLabelSize);
+        GetFontInfo(&label);
+        TextSize(gViewSize);
+
+        gReaderLine1    = (short)(kPaneInset + 2 + title.ascent);
+        gReaderLineStep = (short)(title.ascent + title.descent +
+                                  title.leading);
+        gReaderTail     = (short)(label.descent + kPaneInset + 3);
+
+        gReaderHeaderHeight = ReaderHeaderHeightFor(1);
     }
+}
+
+/*
+ * Break text into lines that each fit in a width, at word boundaries. Gives
+ * back where each line starts and how long it is, and the number of lines —
+ * never more than kMaxTitleLines, because a headline long enough to fill the
+ * bar would leave nothing to read underneath it. Whatever is left over stays
+ * on the last line for the drawing to truncate.
+ *
+ * The font has to be set before calling: the fit is measured, not guessed.
+ */
+static short WrapTitle(const char *text, short width, short *starts,
+                       short *lens)
+{
+    short len;
+    short at = 0;
+    short n  = 0;
+
+    if (text == NULL || width <= 0) {
+        return 0;
+    }
+    len = (short)strlen(text);
+
+    while (at < len && n < kMaxTitleLines) {
+        short fit   = -1;       /* end of the last whole word that fitted   */
+        short first = -1;       /* end of the first, fits or not            */
+        short k     = at;
+
+        for (;;) {
+            short was = k;
+
+            while (k < len && text[k] == ' ') {
+                k++;
+            }
+            while (k < len && text[k] != ' ') {
+                k++;
+            }
+            if (k <= was) {
+                break;          /* nothing left to add */
+            }
+            if (first < 0) {
+                first = k;
+            }
+            if (TextWidth(text, at, (short)(k - at)) > width) {
+                break;
+            }
+            fit = k;
+            if (k >= len) {
+                break;
+            }
+        }
+
+        /* A single word wider than the bar goes on its own line anyway and
+           is cut there, rather than dragging the rest of the headline with
+           it. */
+        if (fit < 0) {
+            fit = (first > at) ? first : len;
+        }
+
+        starts[n] = at;
+        lens[n]   = (short)(fit - at);
+        n++;
+
+        at = fit;
+        while (at < len && text[at] == ' ') {
+            at++;
+        }
+    }
+    return n;
+}
+
+/* The width a headline has to wrap inside — the same one it is drawn in. */
+static short ReaderTitleWidth(void)
+{
+    return (short)(gReaderHeader.right - kTextInset - kScrollWidth -
+                   gReaderHeader.left - kTextInset - 2);
+}
+
+/* How many lines this headline takes at the bar's present width. */
+static short ReaderTitleLineCount(void)
+{
+    short   starts[kMaxTitleLines];
+    short   lens[kMaxTitleLines];
+    GrafPtr savePort;
+    short   n;
+
+    if (gWindow == NULL) {
+        return 1;
+    }
+    GetPort(&savePort);
+    SetPortWindowPort(gWindow);
+    UseSysFont();
+    TextFace(bold);
+    n = WrapTitle(gArticleTitle, ReaderTitleWidth(), starts, lens);
+    TextFace(normal);
+    SetPort(savePort);
+
+    return (n < 1) ? 1 : n;
+}
+
+/* What the header bar has to be, to hold a headline that many lines long. */
+static short ReaderHeaderHeightFor(short lines)
+{
+    if (lines < 1) {
+        lines = 1;
+    }
+    return (short)(gReaderLine1 + lines * gReaderLineStep + gReaderTail);
 }
 
 /*
@@ -1014,6 +1152,14 @@ static void Layout(void)
                 (short)(bounds.right + 1),
                 (short)(gHDivider.bottom - 2 + gReaderHeaderHeight));
 
+        /* How tall the bar is depends on how wide it is, because the
+           headline wraps rather than being cut off. Left and right are set
+           just above, and the count needs only those. */
+        gReaderTitleLines    = ReaderTitleLineCount();
+        gReaderHeaderHeight  = ReaderHeaderHeightFor(gReaderTitleLines);
+        gReaderHeader.bottom = (short)(gHDivider.bottom - 2 +
+                                       gReaderHeaderHeight);
+
         SetRect(&gReaderPane, (short)(split + 6),
                 (short)(gReaderHeader.bottom - 1),
                 (short)(bounds.right + 1), (short)(contentBottom + 1));
@@ -1155,7 +1301,16 @@ static void SyncReaderScroll(void)
     }
     SetControlMaximum(gReaderScroll, max);
     SetControlValue(gReaderScroll, ReaderOffset());
-    HiliteControl(gReaderScroll, (max > 0) ? 0 : 255);
+
+    /*
+     * Left active even with nothing to scroll. Making it inactive empties
+     * the bar — no arrows, no thumb, just a hollow track — which is what a
+     * window that is not in front looks like, and reads as the bar having
+     * gone away. An active bar with no range keeps its arrows and drops the
+     * thumb, which is what the Finder shows for a window whose contents
+     * fit.
+     */
+    HiliteControl(gReaderScroll, 0);
 }
 
 /* Scroll to an offset. TEScroll draws the strip that comes into view, which
@@ -1272,7 +1427,8 @@ static void SetReaderText(void)
     const GazetteArticle *a;
     GrafPtr savePort;
     Rect    view;
-    size_t  used = 0;
+    size_t  used   = 0;
+    Boolean relaid = false;
     char    when[16];
 
     if (gWindow == NULL || gReaderTE == NULL) {
@@ -1350,14 +1506,30 @@ static void SetReaderText(void)
 
     TESetSelect(0, 0, gReaderTE);
 
+    /*
+     * A headline that wraps onto a different number of lines than the last
+     * one makes the header taller or shorter, and everything below it moves.
+     * Lay out again before the text is measured, or it is measured for a
+     * pane it is no longer in.
+     */
+    if (ReaderTitleLineCount() != gReaderTitleLines) {
+        Layout();
+        relaid = true;
+    }
+
     /* Back to the top, and the wrap and the bar back in step with the new
        length. */
     ReaderRects(&view);
+    (**gReaderTE).viewRect = view;
     (**gReaderTE).destRect = view;
     TECalText(gReaderTE);
     SyncReaderScroll();
 
     SetPort(savePort);
+
+    if (relaid) {
+        GazetteUIUpdate();
+    }
 }
 
 /* The pane has moved or changed width, so the text has to be laid out again
@@ -2571,34 +2743,53 @@ static void DrawGrabHandle(const Rect *divider, Boolean vertical)
 
 /*
  * The article's headline and byline, drawn on the header bar under the
- * splitter. The headline is one line and truncated, as OE's Subject: line
- * is; the byline is a size down, which is what a label is.
+ * splitter. The headline is in the large system font and wraps onto as many
+ * lines as it needs, rather than ending in an ellipsis — a headline is the
+ * one line of an article you always want in full. The byline is a size down,
+ * which is what a label is.
  */
 static void DrawReaderHeaderText(void)
 {
-    short right;
+    short starts[kMaxTitleLines];
+    short lens[kMaxTitleLines];
+    short left;
+    short width;
+    short lines;
+    short i;
 
     if (gWindow == NULL) {
         return;
     }
     SetPortWindowPort(gWindow);
-    right = (short)(gReaderHeader.right - kTextInset - kScrollWidth);
+    left  = (short)(gReaderHeader.left + kTextInset + 2);
+    width = ReaderTitleWidth();
 
     SetThemeTextColor(kThemeTextColorWindowHeaderActive, 8, true);
 
-    UseViewFont();
+    UseSysFont();
     TextFace(bold);
-    MoveTo((short)(gReaderHeader.left + kTextInset + 2),
-           (short)(gReaderHeader.top + gReaderLine1));
-    DrawTruncated(gArticleTitle,
-                  (short)(right - gReaderHeader.left - kTextInset - 2));
+    lines = WrapTitle(gArticleTitle, width, starts, lens);
+    for (i = 0; i < lines; i++) {
+        MoveTo(left, (short)(gReaderHeader.top + gReaderLine1 +
+                             i * gReaderLineStep));
+        if (i == lines - 1) {
+            /* The last line carries anything the wrap ran out of room for,
+               so it is the one that may still need cutting. */
+            DrawTruncated(gArticleTitle + starts[i], width);
+        } else {
+            DrawText(gArticleTitle, starts[i], lens[i]);
+        }
+    }
+    if (lines < 1) {
+        lines = 1;
+    }
 
     TextFace(normal);
+    UseViewFont();
     TextSize(gLabelSize);
-    MoveTo((short)(gReaderHeader.left + kTextInset + 2),
-           (short)(gReaderHeader.top + gReaderLine2));
-    DrawTruncated(gArticleByline,
-                  (short)(right - gReaderHeader.left - kTextInset - 2));
+    MoveTo(left, (short)(gReaderHeader.top + gReaderLine1 +
+                         lines * gReaderLineStep));
+    DrawTruncated(gArticleByline, width);
 
     ForeColor(blackColor);
 }
@@ -2634,7 +2825,7 @@ static void DrawStatusText(void)
     LineTo((short)(gStatusRect.right - 1), gStatusRect.top);
 
     UseViewFont();
-    TextSize(gLabelSize);
+    TextSize(gStatusSize);
     SetThemeTextColor(kThemeTextColorDialogActive, 8, true);
     MoveTo((short)(gStatusRect.left + kTextInset + 4),
            (short)(gStatusRect.top + gStatusBase));
@@ -3373,13 +3564,11 @@ void GazetteUIActivate(Boolean active)
         TEDeactivate(gReaderTE);
     }
 
-    /* ActivateControl has just re-enabled the reader's bar along with
-       everything else in the hierarchy, so a bar with nothing to scroll has
-       to be put back to sleep. 255 is the inactive hilite state, 0 the
-       active one. */
+    /* Inactive only when the window itself is not in front — having nothing
+       to scroll is not a reason to empty the bar. 255 is the inactive hilite
+       state, 0 the active one. */
     if (gReaderScroll != NULL) {
-        HiliteControl(gReaderScroll,
-                      (active && GetControlMaximum(gReaderScroll) > 0) ? 0 : 255);
+        HiliteControl(gReaderScroll, active ? 0 : 255);
     }
 }
 
