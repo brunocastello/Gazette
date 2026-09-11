@@ -348,6 +348,7 @@ static char     gReaderText[2 * kGazetteExtractMax + 512];
 static void Layout(void);
 static void ListViewIn(const Rect *pane, Rect *view);
 static void ListView(ListHandle list, Rect *view);
+static void PlaceListScrollBar(ListHandle list, const Rect *pane);
 static short ReaderHeaderHeightFor(short lines);
 static short ReaderTitleLineCount(void);
 static short ReaderTitleWidth(void);
@@ -716,39 +717,50 @@ static void ListViewIn(const Rect *pane, Rect *view)
      * the bar's top edge lands on and the rows must not paint over.
      */
     SetRect(view, pane->left, (short)(pane->top + 1),
-            (short)(pane->right - kScrollWidth), pane->bottom);
+            (short)(pane->right - kScrollWidth + 1), pane->bottom);
 }
 
 /*
- * Where the rows go: the frame, less the two pixels at every edge that the
- * focus border is drawn in.
+ * Where the rows go: the frame, less the two pixels at the top and the
+ * bottom that the focus border is drawn in.
  *
  * The List Manager scrolls by copying pixels — ScrollRect over its own view
  * rectangle — so anything drawn inside that rectangle travels with the rows.
- * The border used to be drawn on the frame *and* handed to the List Manager
- * as its view, so scrolling carried the blue top edge down into the middle
- * of the list and left it there, under whatever row it landed on. Keeping
- * the border outside the rectangle the List Manager knows about is the whole
- * fix: it cannot scroll what it cannot see.
+ * That is what dragged the blue top edge down into the middle of the list
+ * and left it there, under whatever row it landed on, and keeping the
+ * border's horizontal runs out of the rectangle is what stops it.
+ *
+ * The vertical runs stay inside, deliberately. A list scrolls up and down,
+ * and a solid blue column shifted up or down is still a solid blue column —
+ * only the strip newly uncovered at one end needs repainting, and the row
+ * drawn into it does that itself. Insetting the sides instead would leave
+ * two pixels of background at either edge that a selected row could not
+ * reach, so a selection would stop short of the frame whenever the pane
+ * was not focused and the blue was not there to cover for it.
  */
 static void ListRowsIn(const Rect *pane, Rect *view)
 {
     ListViewIn(pane, view);
-    InsetRect(view, kFocusBorder, kFocusBorder);
+    view->top    = (short)(view->top + kFocusBorder);
+    view->bottom = (short)(view->bottom - kFocusBorder);
 }
 
 /* The frame a list is drawn in — its rows, plus the border around them. */
 static void ListFrame(ListHandle list, Rect *frame)
 {
     ListView(list, frame);
-    InsetRect(frame, (short)-kFocusBorder, (short)-kFocusBorder);
+    frame->top    = (short)(frame->top - kFocusBorder);
+    frame->bottom = (short)(frame->bottom + kFocusBorder);
 }
 
 /*
- * Put the scroll bar back where the frame says it goes. The List Manager
- * hangs its bar off the view rectangle it was given, and that rectangle is
- * now inset by the border — so left alone the bar would move in two pixels
- * and come up short at both ends.
+ * Put the scroll bar where the frame says it goes: hard against the frame's
+ * right edge, and running the pane's full height.
+ *
+ * The List Manager hangs its bar one pixel clear of the view rectangle it
+ * was given, which left a column of background between the border and the
+ * bar; and that rectangle is inset at top and bottom by the border, which
+ * would have the bar come up short at both ends. Neither is left to it.
  */
 static void PlaceListScrollBar(ListHandle list, const Rect *pane)
 {
@@ -764,8 +776,8 @@ static void PlaceListScrollBar(ListHandle list, const Rect *pane)
         return;
     }
     ListViewIn(pane, &frame);
-    SetRect(&want, (short)(frame.right + 1), (short)(frame.top - 1),
-            (short)(frame.right + 1 + kScrollWidth), (short)(frame.bottom + 1));
+    SetRect(&want, frame.right, (short)(frame.top - 1),
+            (short)(frame.right + kScrollWidth), (short)(frame.bottom + 1));
     SetControlBounds(bar, &want);
 }
 
@@ -2035,14 +2047,52 @@ static void EraseWith(const Rect *r, ThemeBrush brush)
  * the only one that draws a triangle.
  */
 /*
- * A row occupies the whole of the rectangle it is given. It used to be inset
- * to keep clear of the focus border, which was drawn inside the list's own
- * view; the border is outside that view now, so there is nothing to keep
- * clear of and a selection can fill the row end to end.
+ * Where a row's content goes: clear of the two pixels at either side that
+ * the focus border is drawn in. The row's background still fills the whole
+ * rectangle — a selection reaches the frame, and the border is painted back
+ * over it — but nothing is written under where the border will be.
  */
 static void RowRect(const Rect *cell, Rect *out)
 {
     *out = *cell;
+    out->left  = (short)(out->left + kFocusBorder);
+    out->right = (short)(out->right - kFocusBorder);
+}
+
+/* The focus border's colour, painted into a rectangle. */
+static void FillFocusColour(const Rect *r)
+{
+    RGBColor blue;
+    RGBColor save;
+
+    GetForeColor(&save);
+    blue.red   = 91 * 257;
+    blue.green = 91 * 257;
+    blue.blue  = 197 * 257;
+    RGBForeColor(&blue);
+    PaintRect(r);
+    RGBForeColor(&save);
+}
+
+/*
+ * Put back the two pixels of border a full-width row has painted over. A row
+ * is redrawn on its own often enough — a selection moving, a click tracking,
+ * a strip uncovered by a scroll — that waiting for the pane to be redrawn
+ * would leave the border notched for as long as the mouse was down.
+ */
+static void RestoreRowFocusEdges(const Rect *full, ControlRef owner)
+{
+    Rect edge;
+
+    if (!PaneHasFocus(owner)) {
+        return;
+    }
+    SetRect(&edge, full->left, full->top,
+            (short)(full->left + kFocusBorder), full->bottom);
+    FillFocusColour(&edge);
+    SetRect(&edge, (short)(full->right - kFocusBorder), full->top,
+            full->right, full->bottom);
+    FillFocusColour(&edge);
 }
 
 static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
@@ -2063,6 +2113,7 @@ static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
     RowRect(full, &cellRect);
 
     EraseWith(cell, kThemeBrushListViewBackground);
+    RestoreRowFocusEdges(full, gSidebarCtl);
 
     /*
      * A white line along the bottom of every row. Both Newsstand and
@@ -2316,12 +2367,15 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
     }
 
     /*
-     * A selected headline is filled end to end — the whole width of the row.
-     * Down first, so the headline is drawn on top of it.
+     * A selected headline is filled end to end — the whole width of the row,
+     * frame to frame, not the part of it the text sits in. Down first, so
+     * the headline is drawn on top of it; and the border's two pixels go
+     * straight back over either end.
      */
     if (selected) {
         FillHighlight(full);
     }
+    RestoreRowFocusEdges(full, gArticleCtl);
 
     /* The document icon every article carries, and then its headline. The
        date is gone from the row: it is in the heading above and, to the
@@ -2488,6 +2542,10 @@ static void DrawListPane(ControlRef control, ListHandle list, int rows,
         ControlRef bar = GetListVerticalScrollBar(list);
 
         if (bar != NULL) {
+            /* Placed again rather than only at sizing time: the List Manager
+               re-derives its bar from its view whenever it feels the need,
+               and its view is not where the bar goes. */
+            PlaceListScrollBar(list, &pane);
             Draw1Control(bar);
         }
     }
