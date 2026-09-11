@@ -967,13 +967,6 @@ static void DrawListScrollBar(ListHandle list, ControlRef paneCtl)
     GetControlBounds(paneCtl, &pane);
     PlaceListScrollBar(list, &pane);
 
-    /* Greyed only because the window is not in front. Nothing to scroll is
-       not a reason: Platinum's answer to that is an empty track with its
-       arrows still on it. */
-    if (gActive && GetControlHilite(bar) == 255) {
-        HiliteControl(bar, 0);
-    }
-
     save = NewRgn();
     if (save != NULL) {
         GetClip(save);
@@ -981,7 +974,18 @@ static void DrawListScrollBar(ListHandle list, ControlRef paneCtl)
     GetWindowPortBounds(gWindow, &bounds);
     ClipRect(&bounds);
 
-    ShowControl(bar);
+    /*
+     * Stated outright, not asked about first.
+     *
+     * LActivate takes the bar away when the window goes to the back, and
+     * asking whether it needs putting back is how it stayed away: the
+     * answer came from the same state that was wrong. Both of these are set
+     * whatever they already say — visible, and awake if and only if the
+     * window is in front. Nothing to scroll is not a reason to grey one;
+     * Platinum's answer to that is an empty track with its arrows still on.
+     */
+    SetControlVisibility(bar, true, false);
+    HiliteControl(bar, (SInt16)(gActive ? 0 : 255));
     Draw1Control(bar);
 
     if (save != NULL) {
