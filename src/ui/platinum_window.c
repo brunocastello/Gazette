@@ -3641,14 +3641,6 @@ void GazetteUIActivate(Boolean active)
     if (gArticleList != NULL) {
         LActivate(active, gArticleList);
     }
-    if (active) {
-        /* LActivate decides a bar with nothing to scroll should be greyed;
-           Platinum's answer is an empty track drawn normally, so it is put
-           back. Measured: OE's edges are black, ours were (75,75,75). */
-        WakeScrollBar(gSidebarList);
-        WakeScrollBar(gArticleList);
-    }
-
     /* And one call for the rest of the hierarchy. */
     if (gRootControl != NULL) {
         if (active) {
@@ -3669,6 +3661,23 @@ void GazetteUIActivate(Boolean active)
        state, 0 the active one. */
     if (gReaderScroll != NULL) {
         HiliteControl(gReaderScroll, active ? 0 : 255);
+    }
+
+    /*
+     * The lists last, and drawn rather than only ungreyed.
+     *
+     * LActivate decides a bar with nothing to scroll should be greyed, and
+     * Platinum's answer is an empty track drawn normally -- so it has to be
+     * put back. But ungreying it before the hierarchy is activated is worse
+     * than not doing it at all: ActivateControl will not repaint a control
+     * it finds already active, so the bar stays hollow on screen while
+     * reading as awake, and WakeScrollBar, seeing it ungreyed, never tries
+     * again. That is the whole of why the feeds list's bar was there at
+     * launch and gone the first time the window came back to the front.
+     */
+    if (active) {
+        DrawSidebarPane();
+        DrawArticlePane();
     }
 }
 
