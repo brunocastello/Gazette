@@ -1171,8 +1171,21 @@ static void Layout(void)
          * draws that rule, the two were stacking up two pixels thick
          * wherever a bar met a header.
          */
-        SetRect(&gSidebarPane, bounds.left, (short)(headBot - 1), split,
-                contentBottom);
+        /*
+         * A pixel short of the groove, because the bar's right edge is meant
+         * to *be* the line the header above it draws — and the header ends
+         * its own black at split - 1, with the groove's white highlight on
+         * split. Reaching all the way to split put the bar's black column on
+         * that highlight instead, so the line down the side of the window
+         * stepped a pixel sideways where the header ended and the list
+         * began.
+         *
+         * The headline list has the same arithmetic and gets away with it:
+         * its pane ends a pixel past the window's right edge, so the column
+         * in question is clipped away and never drawn.
+         */
+        SetRect(&gSidebarPane, bounds.left, (short)(headBot - 1),
+                (short)(split - 1), contentBottom);
 
         listBottom = (short)(headBot +
                              (long)(contentBottom - headBot) *
