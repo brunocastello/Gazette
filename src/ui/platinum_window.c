@@ -182,6 +182,22 @@ static ControlRef gReaderHeaderCtl;
 static ControlRef gReaderCtl;
 static ControlRef gReaderScroll;
 
+/*
+ * Which pane control is wearing the focus border.
+ *
+ * Not the control's value, which is where this used to live: a user pane
+ * made with NewControl takes its *feature bits* through the value, so
+ * writing a focus flag over them both destroyed the features and made the
+ * flag meaningless — the value read 36 from the moment the pane was created,
+ * so every pane thought it had the focus until the first click, and none of
+ * them had a working one afterwards.
+ *
+ * Not GetKeyboardFocus either: the focus procedure runs *during*
+ * SetKeyboardFocus, before the Control Manager has recorded the change, so
+ * asking it from inside the procedure gives the old answer.
+ */
+static ControlRef gFocusPane;
+
 static ControlActionUPP        gScrollUPP;
 static ControlUserPaneDrawUPP  gReaderDrawUPP;
 static ControlUserPaneFocusUPP gReaderFocusUPP;
@@ -295,6 +311,7 @@ static void ChooseRow(const GazetteSidebarRow *row);
 static int  SelectedRow(void);
 static void  SetFocus(short pane);
 static short FocusedPane(void);
+static Boolean PaneHasFocus(ControlRef control);
 static void DrawSidebarPane(void);
 static void DrawArticlePane(void);
 static void DrawReader(void);
@@ -488,6 +505,12 @@ static void ListViewIn(const Rect *pane, Rect *view)
             (short)(pane->right - kScrollWidth), pane->bottom);
 }
 
+/* Does this pane wear the focus border? */
+static Boolean PaneHasFocus(ControlRef control)
+{
+    return (Boolean)(control != NULL && control == gFocusPane);
+}
+
 /* Where a list's rows actually are. */
 static void ListView(ListHandle list, Rect *view)
 {
@@ -640,7 +663,7 @@ static void RefreshFocusBorder(ListHandle list)
     }
     control = (list == gSidebarList) ? gSidebarCtl
             : (list == gArticleList) ? gArticleCtl : NULL;
-    if (control == NULL || GetControlValue(control) == 0) {
+    if (!PaneHasFocus(control)) {
         return;
     }
     SetPortWindowPort(gWindow);
@@ -1783,7 +1806,7 @@ static void DrawListPane(ControlRef control, ListHandle list, int rows,
     /* LUpdate greys the bar again on its way past, so this goes after it. */
     WakeScrollBar(list);
 
-    DrawFocusBorder(&view, (Boolean)(GetControlValue(control) != 0));
+    DrawFocusBorder(&view, PaneHasFocus(control));
 
     if (clip != NULL) {
         SetClip(clip);
@@ -1810,10 +1833,17 @@ static pascal ControlPartCode PaneFocus(ControlRef control,
     if (control == NULL) {
         return kControlFocusNoPart;
     }
-    SetControlValue(control, (action == kControlFocusNoPart) ? 0 : 1);
+    if (action == kControlFocusNoPart) {
+        if (gFocusPane == control) {
+            gFocusPane = NULL;
+        }
+        Draw1Control(control);
+        return kControlFocusNoPart;
+    }
+
+    gFocusPane = control;
     Draw1Control(control);
-    return (action == kControlFocusNoPart) ? kControlFocusNoPart
-                                           : kControlReaderFocusPart;
+    return kControlReaderFocusPart;
 }
 
 static void DrawSidebarPane(void)
@@ -1907,9 +1937,7 @@ static pascal void ReaderDraw(ControlRef control, SInt16 part)
 
     /* Round the text only, stopping short of the scroll bar — the same rule
        the two lists follow. */
-    DrawFocusBorder(&gReaderRect,
-                    (Boolean)(gReaderCtl != NULL &&
-                              GetControlValue(gReaderCtl) != 0));
+    DrawFocusBorder(&gReaderRect, PaneHasFocus(gReaderCtl));
 }
 
 static void DrawReader(void)
@@ -2415,6 +2443,7 @@ static Boolean HitDisclosure(Point where)
 static void SidebarClicked(Point where, EventModifiers modifiers)
 {
     GazetteSidebarRow row;
+    Rect              rows;
     int               at;
 
     /* The triangle's own column opens and shuts a group; the rest of the
@@ -2423,8 +2452,15 @@ static void SidebarClicked(Point where, EventModifiers modifiers)
         return;
     }
 
+    ListView(gSidebarList, &rows);
     (void)LClick(where, modifiers, gSidebarList);
     RefreshFocusBorder(gSidebarList);
+
+    /* A click on the scroll bar scrolls and nothing else — it must not be
+       read as choosing whatever row is still selected. */
+    if (!PtInRect(where, &rows)) {
+        return;
+    }
 
     at = SelectedListRow(gSidebarList);
     if (at < 0) {
@@ -2486,7 +2522,9 @@ static pascal ControlPartCode ReaderFocus(ControlRef control,
     }
 
     if (action == kControlFocusNoPart) {
-        SetControlValue(control, 0);
+        if (gFocusPane == control) {
+            gFocusPane = NULL;
+        }
         if (gReaderTE != NULL) {
             SetPortWindowPort(gWindow);
             TEDeactivate(gReaderTE);
@@ -2496,7 +2534,7 @@ static pascal ControlPartCode ReaderFocus(ControlRef control,
         return kControlFocusNoPart;
     }
 
-    SetControlValue(control, 1);
+    gFocusPane = control;
     Draw1Control(control);
     return kControlReaderFocusPart;
 }
@@ -2540,9 +2578,25 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
     }
 
     if (PtInRect(where, &gListPane)) {
+        Rect rows;
+
         SetFocus(kRefList);
+        ListView(gArticleList, &rows);
+
         (void)LClick(where, modifiers, gArticleList);
         RefreshFocusBorder(gArticleList);
+
+        /*
+         * Only a click in the rows opens an article. LClick tracks the
+         * scroll bar as readily as it tracks a drag through the rows, and
+         * opening whatever happened to stay selected after a scroll would
+         * call SelectArticle — which reveals the selection, scrolling the
+         * list straight back to where it started. Which is exactly what it
+         * did.
+         */
+        if (!PtInRect(where, &rows)) {
+            return;
+        }
         {
             int row = SelectedListRow(gArticleList);
 
@@ -2556,27 +2610,44 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
         return;
     }
 
-    control = FindControlUnderMouse(where, gWindow, &part);
+    /*
+     * The article's scroll bar sits inside the article's own user pane, and
+     * the pane covers it. Asking FindControlUnderMouse which control is
+     * under the mouse and testing for the pane first handed every bar click
+     * to the pane's tracking procedure, which passed it to TEClick — so the
+     * bar selected text instead of scrolling, and the article would not move
+     * at all. Its rectangle is asked about first, as the lists' are.
+     */
+    if (gReaderScroll != NULL && PtInRect(where, &gReaderPane)) {
+        Rect bar;
 
-    if (control != NULL && control == gReaderCtl) {
-        SetFocus(kRefReader);
-        (void)HandleControlClick(gReaderCtl, where, modifiers, NULL);
-        return;
-    }
-
-    if (control != NULL && control == gReaderScroll && part != 0) {
-        SetFocus(kRefReader);
-        if (part == kControlIndicatorPart) {
-            /* The thumb tracks itself; the pane is redrawn once it lands. */
-            if (TrackControl(control, where, NULL) == kControlIndicatorPart) {
-                DrawReader();
+        GetControlBounds(gReaderScroll, &bar);
+        if (PtInRect(where, &bar)) {
+            SetFocus(kRefReader);
+            part = TestControl(gReaderScroll, where);
+            if (part == 0) {
+                return;                 /* nothing to scroll */
             }
-        } else {
-            TrackControl(control, where, gScrollUPP);
+            if (part == kControlIndicatorPart) {
+                /* The thumb tracks itself; the pane is redrawn once it
+                   lands. */
+                if (TrackControl(gReaderScroll, where, NULL) ==
+                    kControlIndicatorPart) {
+                    DrawReader();
+                }
+            } else {
+                TrackControl(gReaderScroll, where, gScrollUPP);
+            }
+            return;
         }
+
+        SetFocus(kRefReader);
+        ReaderClick(where, modifiers);
         return;
     }
 
+    control = FindControlUnderMouse(where, gWindow, &part);
+    (void)control;
 }
 
 /* ------------------------------------------------------------------ */
@@ -3259,6 +3330,7 @@ void GazetteUIClose(void)
     gListHeaderCtl     = NULL;
     gReaderHeaderCtl   = NULL;
     gReaderCtl         = NULL;
+    gFocusPane         = NULL;
     gRootControl       = NULL;
 
     if (gReaderTE != NULL) {
