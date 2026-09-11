@@ -1569,6 +1569,29 @@ static void DrawRowIcon(const Rect *cell, short left, IconRef icon,
     SetRect(&box, left, top, (short)(left + kIconSize),
             (short)(top + kIconSize));
 
+    /*
+     * Icon Services does not clip the way QuickDraw does. A row only half on
+     * screen at the bottom of a scrolled list had its text clipped properly
+     * and its icon drawn whole, which left an icon sitting under the last
+     * row with nothing beside it. If the icon does not fit inside what is
+     * currently clipped, it is not drawn at all.
+     */
+    {
+        RgnHandle clip = NewRgn();
+
+        if (clip != NULL) {
+            Rect limit;
+
+            GetClip(clip);
+            GetRegionBounds(clip, &limit);
+            DisposeRgn(clip);
+
+            if (box.top < limit.top || box.bottom > limit.bottom) {
+                return;
+            }
+        }
+    }
+
     (void)PlotIconRef(&box, kAlignAbsoluteCenter,
                       enabled ? kTransformNone : kTransformDisabled,
                       kIconServicesNormalUsageFlag, icon);
@@ -1934,20 +1957,28 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
     int                   article;
 
     RowRect(full, &cellRect);
-    EraseWith(cell, kThemeBrushWhite);
 
     if (row < 0 || row >= gHeadRowCount) {
+        EraseWith(cell, kThemeBrushWhite);
         return;
     }
 
     baseline = (short)(cell->top + gRowBaseline);
 
+    /*
+     * A heading sits on the same grey the feeds list is drawn on, so it
+     * reads as a band across the white rather than as an article that
+     * happens to be a date.
+     */
     if (gHeadRows[row].kind == kHeadlineDate) {
+        EraseWith(cell, kThemeBrushListViewBackground);
         DrawDateHeading(cell, gHeadRows[row].article);
         TextFace(normal);
         ForeColor(blackColor);
         return;
     }
+
+    EraseWith(cell, kThemeBrushWhite);
 
     article = gHeadRows[row].article;
     a       = GazetteFeedsArticleAt(article);
@@ -1968,12 +1999,22 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
     DrawRowIcon(cell, (short)(cell->left + kTextInset), gDocIcon, true);
     textLeft = (short)(cell->left + kTextInset + kIconSize + kIconGap);
 
-    UseViewFont();
-    SetThemeTextColor(kThemeTextColorListView, 8, true);
+    /*
+     * Read and unread are told apart by colour rather than by weight: black
+     * for something not yet opened, grey for something already read. Bold
+     * made a list of unread articles — which is most of them, most of the
+     * time — read as a wall.
+     */
+    UseSysFont();
+    if (a->read) {
+        RGBColor grey;
 
-    /* Unread in bold, the way every mail and news reader of the era marked
-       one. */
-    TextFace(a->read ? normal : bold);
+        grey.red = grey.green = grey.blue = 128 * 257;
+        RGBForeColor(&grey);
+    } else {
+        ForeColor(blackColor);
+    }
+
     MoveTo(textLeft, baseline);
     DrawTruncated(a->title, (short)(cell->right - kTextInset - textLeft));
 
