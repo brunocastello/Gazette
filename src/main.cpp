@@ -510,6 +510,35 @@ static void HandleEvent(const EventRecord *event)
             }
             break;
 
+        case osEvt:
+            /*
+             * Switching to another application and back is not an
+             * activateEvt. That one is for a window changing places with
+             * another of *this* application's windows; the whole application
+             * going to the back and coming forward again arrives here, as a
+             * suspend or a resume.
+             *
+             * Without this branch the window was deactivated on the way out
+             * — the Window Manager does that much itself — and nothing ever
+             * told it it had come back. So its controls stayed greyed, and a
+             * scroll bar greyed with nothing to scroll draws as an empty
+             * track and reads as having gone away.
+             *
+             * The message's high byte says which kind of osEvt this is;
+             * mouse-moved events arrive the same way and are not this.
+             */
+            if (((event->message >> 24) & 0xFF) == suspendResumeMessage &&
+                GazetteUIWindow() != nil) {
+                Boolean resumed =
+                    (Boolean)((event->message & resumeFlag) != 0);
+
+                GazetteUIActivate(resumed);
+                if (resumed) {
+                    GazetteUIResized();
+                }
+            }
+            break;
+
         default:
             break;
     }
