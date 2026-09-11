@@ -470,14 +470,20 @@ static void ListViewIn(const Rect *pane, Rect *view)
 {
     /*
      * The bar goes flush against the pane's right edge, because that is
-     * where the reader's is and the two have to line up. Insetting the list
-     * by a further two pixels for a gap put its bar two pixels left of the
-     * reader's — measured at x616..631 against x618..633 — and two scroll
-     * bars stacked two pixels out of true is the misalignment you cannot
-     * stop looking at.
+     * where the article's is and the two have to line up.
+     *
+     * The view reaches the pane's own bottom, not a pixel short of it. A
+     * pixel short left two marks: a line of window grey inside the view
+     * along its bottom edge, and — because the List Manager hangs its
+     * scroll bar one pixel below the view — the bar's bottom edge landing
+     * just above the black rule under it instead of on it, so the two read
+     * as a double border.
+     *
+     * The top keeps its pixel: that is the header's own black rule, which
+     * the bar's top edge lands on and the rows must not paint over.
      */
     SetRect(view, pane->left, (short)(pane->top + 1),
-            (short)(pane->right - kScrollWidth), (short)(pane->bottom - 1));
+            (short)(pane->right - kScrollWidth), pane->bottom);
 }
 
 /* Where a list's rows actually are. */
@@ -769,7 +775,7 @@ static void Layout(void)
          * wherever a bar met a header.
          */
         SetRect(&gSidebarPane, bounds.left, (short)(headBot - 1), split,
-                (short)(contentBottom + 1));
+                contentBottom);
 
         listBottom = (short)(headBot +
                              (long)(contentBottom - headBot) *
