@@ -82,7 +82,7 @@ enum {
      * black, white.
      */
     kVDividerWidth = 8,
-    kHDividerWidth = 10,
+    kHDividerWidth = 8,
     kTextInset     = 4,
     kDateColumn    = 46,        /* likewise, until gDateColumn is measured     */
     kBaseline      = 10,        /* likewise, until gRowBaseline is worked out */
@@ -701,7 +701,6 @@ static void SizeListPane(ControlRef control, ListHandle list,
 static void Layout(void)
 {
     Rect  bounds;
-    short rightLeft;
     short listBottom;
     short contentBottom;
 
@@ -772,8 +771,6 @@ static void Layout(void)
         SetRect(&gSidebarPane, bounds.left, (short)(headBot - 1), split,
                 (short)(contentBottom + 1));
 
-        rightLeft = gVDivider.right;
-
         listBottom = (short)(headBot +
                              (long)(contentBottom - headBot) *
                              gListShare / 100);
@@ -784,7 +781,13 @@ static void Layout(void)
             listBottom = (short)(contentBottom - kMinReader - kHDividerWidth);
         }
 
-        SetRect(&gListPane, rightLeft, (short)(headBot - 1),
+        /*
+         * Starting one pixel past the groove's black, so the rows meet the
+         * border with nothing between. The groove's own trailing two pixels
+         * of grey are covered by the pane, which is what takes the grey
+         * edge off the inside of the view.
+         */
+        SetRect(&gListPane, (short)(split + 6), (short)(headBot - 1),
                 (short)(bounds.right + 1), listBottom);
 
         /*
@@ -807,9 +810,18 @@ static void Layout(void)
                 (short)(bounds.right + 1),
                 (short)(gHDivider.bottom - 2 + gReaderHeaderHeight));
 
-        SetRect(&gReaderPane, rightLeft, (short)(gReaderHeader.bottom - 1),
+        SetRect(&gReaderPane, (short)(split + 6),
+                (short)(gReaderHeader.bottom - 1),
                 (short)(bounds.right + 1), (short)(contentBottom + 1));
-        SetRect(&gReaderRect, gReaderPane.left, gReaderPane.top,
+
+        /*
+         * The text starts a pixel inside the pane, the way a list's rows do.
+         * Erasing from the pane's own top wiped out the header's black rule
+         * across the whole width — the bar's top edge needs to land on that
+         * rule, but the article's white must not be painted over it.
+         */
+        SetRect(&gReaderRect, gReaderPane.left,
+                (short)(gReaderPane.top + 1),
                 (short)(gReaderPane.right - kScrollWidth),
                 gReaderPane.bottom);
     }
@@ -1909,8 +1921,10 @@ static void DrawHDivider(const Rect *r)
 
     EraseWith(r, kThemeBrushDialogBackgroundActive);
 
+    /* Black on the first row, so the rows and the scroll bar above end
+       against it rather than on two pixels of grey. */
     for (i = 0; i < 2; i++) {
-        short y = (short)(r->top + (i ? 8 : 2));
+        short y = (short)(r->top + (i ? 6 : 0));
 
         GreyPen(0);
         MoveTo(r->left, y);
@@ -1954,7 +1968,7 @@ static void DrawGrabHandle(const Rect *divider, Boolean vertical)
             at = (short)(at + 4);
         }
     } else {
-        short y  = (short)(divider->top + 5);
+        short y  = (short)(divider->top + 3);
         short at = (short)((divider->left + divider->right) / 2 - 8);
 
         for (i = 0; i < 5; i++) {
