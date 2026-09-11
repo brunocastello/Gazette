@@ -38,6 +38,22 @@ static int                gArticleCount;
 static char               gFilter[64];
 static short              gFilterMap[kGazetteMaxArticles];
 static int                gFilterCount;
+
+/*
+ * The sort. Like the filter, it is an ordering of indices rather than of the
+ * store: gOrder holds store indices in the order the window should see them,
+ * so nothing that remembers an article by its store position — the cache,
+ * the read index, the held full text — is disturbed by re-sorting.
+ *
+ * gOrdered says whether gOrder is worth consulting. It is not when the sort
+ * is the date descending and no filter is set, because that is the order the
+ * articles already arrived in.
+ */
+static short              gOrder[kGazetteMaxArticles];
+static int                gOrderCount;
+static int                gOrdered;
+static int                gSortColumn = kGazetteSortDate;
+static int                gSortAscending;
 static char               gFeedTitle[kGazetteFeedTitleLen];
 static int                gCurrentFeed = -1;
 static int                gPendingFeed = -1;
@@ -129,10 +145,13 @@ static long UnixNow(void)
 /* The store                                                           */
 /* ------------------------------------------------------------------ */
 
-/* A store index from a public one. They are the same thing when no filter is
-   set, which is the common case and costs a comparison. */
+/* A store index from a public one. They are the same thing when nothing is
+   filtered and nothing is re-sorted, which is the common case. */
 static int StoreIndex(int index)
 {
+    if (gOrdered) {
+        return (index >= 0 && index < gOrderCount) ? gOrder[index] : -1;
+    }
     if (gFilter[0] == '\0') {
         return (index >= 0 && index < gArticleCount) ? index : -1;
     }
@@ -149,19 +168,123 @@ static int Matches(const GazetteArticle *a)
            gz_contains_ci(a->body, strlen(a->body), gFilter);
 }
 
+/*
+ * Is a before b? Ties fall back to the order the articles arrived in, which
+ * keeps the sort stable — two articles posted in the same minute must not
+ * swap places every time the list is redrawn.
+ */
+static int Precedes(short ai, short bi)
+{
+    const GazetteArticle *a = &gArticles[ai];
+    const GazetteArticle *b = &gArticles[bi];
+    int cmp;
+
+    if (gSortColumn == kGazetteSortTitle) {
+        cmp = gz_stricmp(a->title, b->title);
+    } else {
+        /* An article with no date sorts as the oldest there is, rather than
+           leaping to the top because zero is a small number. */
+        long ad = (a->date != 0) ? a->date : -2147483647L;
+        long bd = (b->date != 0) ? b->date : -2147483647L;
+
+        cmp = (ad < bd) ? -1 : ((ad > bd) ? 1 : 0);
+    }
+
+    if (cmp == 0) {
+        return ai < bi;
+    }
+    return gSortAscending ? (cmp < 0) : (cmp > 0);
+}
+
+/*
+ * Insertion sort over the index list. The list is at most
+ * kGazetteMaxArticles long and is re-sorted only when the user clicks a
+ * column heading, so the simple thing is the right thing; it is also stable,
+ * which a quicksort would not be.
+ */
+static void SortOrder(void)
+{
+    int i;
+
+    for (i = 1; i < gOrderCount; i++) {
+        short v = gOrder[i];
+        int   j = i;
+
+        while (j > 0 && Precedes(v, gOrder[j - 1])) {
+            gOrder[j] = gOrder[j - 1];
+            j--;
+        }
+        gOrder[j] = v;
+    }
+}
+
+/*
+ * Rebuild the order the window sees. Skipped entirely when the sort is the
+ * date newest-first and nothing is filtered, because the articles are
+ * already in that order and an identity mapping is just work.
+ */
+static void Reorder(void)
+{
+    int i;
+
+    gOrdered = 0;
+    gOrderCount = 0;
+
+    if (gSortColumn == kGazetteSortDate && !gSortAscending) {
+        return;
+    }
+
+    if (gFilter[0] != '\0') {
+        for (i = 0; i < gFilterCount; i++) {
+            gOrder[gOrderCount++] = gFilterMap[i];
+        }
+    } else {
+        for (i = 0; i < gArticleCount; i++) {
+            gOrder[gOrderCount++] = (short)i;
+        }
+    }
+
+    SortOrder();
+    gOrdered = 1;
+}
+
 static void Refilter(void)
 {
     int i;
 
     gFilterCount = 0;
-    if (gFilter[0] == '\0') {
-        return;
-    }
-    for (i = 0; i < gArticleCount; i++) {
-        if (Matches(&gArticles[i])) {
-            gFilterMap[gFilterCount++] = (short)i;
+    if (gFilter[0] != '\0') {
+        for (i = 0; i < gArticleCount; i++) {
+            if (Matches(&gArticles[i])) {
+                gFilterMap[gFilterCount++] = (short)i;
+            }
         }
     }
+    Reorder();
+}
+
+void GazetteFeedsSetSort(int column, Boolean ascending)
+{
+    if (column != kGazetteSortTitle) {
+        column = kGazetteSortDate;
+    }
+    gSortColumn    = column;
+    gSortAscending = ascending ? 1 : 0;
+    Reorder();
+
+    /* The held full text is remembered by the index the window uses, and the
+       indices have just been renumbered under it. */
+    GazetteFeedsFullTextCancel();
+}
+
+int GazetteFeedsSortColumn(void)
+{
+    return gSortColumn;
+}
+
+Boolean GazetteFeedsSortAscending(void)
+{
+    return gSortAscending ? true : false;
 }
 
 void GazetteFeedsSetFilter(const char *text)
@@ -187,6 +310,9 @@ int GazetteFeedsTotalCount(void)
 
 int GazetteFeedsArticleCount(void)
 {
+    if (gOrdered) {
+        return gOrderCount;
+    }
     return (gFilter[0] != '\0') ? gFilterCount : gArticleCount;
 }
 
