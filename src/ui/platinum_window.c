@@ -748,9 +748,14 @@ static void Layout(void)
          * them. It used to stop at the headers and pick up again below,
          * which left the line looking cut.
          */
+        /*
+         * The headline header starts one pixel past the groove's black line
+         * rather than clear of the whole groove — glued to the border, the
+         * way OE's is, instead of floating two pixels off it.
+         */
         SetRect(&gSidebarHeader, (short)(bounds.left - 1), headTop,
                 split, headBot);
-        SetRect(&gListHeader, (short)(split + kVDividerWidth), headTop,
+        SetRect(&gListHeader, (short)(split + 6), headTop,
                 (short)(bounds.right + 1), headBot);
 
         SetRect(&gVDivider, split, bounds.top,
@@ -773,10 +778,23 @@ static void Layout(void)
             listBottom = (short)(contentBottom - kMinReader - kHDividerWidth);
         }
 
+        /*
+         * Two pixels further down than the rows need, so the scroll bar's
+         * bottom edge lands against the groove's first black line instead of
+         * leaving grey between them. OE's bar does the same: at the rows its
+         * splitter shows two pixels of grey before the black, at the bar
+         * none at all.
+         */
         SetRect(&gListPane, rightLeft, headBot,
-                (short)(bounds.right + 1), listBottom);
+                (short)(bounds.right + 1), (short)(listBottom + 2));
 
-        SetRect(&gHDivider, rightLeft, listBottom, (short)(bounds.right + 1),
+        /*
+         * Starting on the vertical groove's own black column, so the two
+         * borders meet and turn a corner rather than stopping short of each
+         * other with a gap between.
+         */
+        SetRect(&gHDivider, (short)(split + 5), listBottom,
+                (short)(bounds.right + 1),
                 (short)(listBottom + kHDividerWidth));
 
         /*
@@ -785,7 +803,8 @@ static void Layout(void)
          * adding a third line under them. Measured: black, white, then
          * another black — that last one was this.
          */
-        SetRect(&gReaderHeader, rightLeft, (short)(gHDivider.bottom - 2),
+        SetRect(&gReaderHeader, (short)(split + 6),
+                (short)(gHDivider.bottom - 2),
                 (short)(bounds.right + 1),
                 (short)(gHDivider.bottom - 2 + gReaderHeaderHeight));
 
@@ -3031,12 +3050,19 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
 
     /* The headers first, so that they are behind the lists in the hierarchy
        and a list's frame wins where the two meet by a pixel. */
+    /*
+     * kControlWindowHeaderProc, not the list-view variant. The variant is
+     * documented as "for list views — no bottom line", and that is exactly
+     * what was missing: measured against OE, its headers close with a grey
+     * shadow and then a black rule, and ours stopped at the shadow. The
+     * black line under a header is what encloses the list beneath it.
+     */
     gSidebarHeaderCtl = MakeControl(&gSidebarHeader,
-                                    kControlWindowListViewHeaderProc, 0);
+                                    kControlWindowHeaderProc, 0);
     gListHeaderCtl    = MakeControl(&gListHeader,
-                                    kControlWindowListViewHeaderProc, 0);
+                                    kControlWindowHeaderProc, 0);
     gReaderHeaderCtl  = MakeControl(&gReaderHeader,
-                                    kControlWindowListViewHeaderProc, 0);
+                                    kControlWindowHeaderProc, 0);
 
     if (!MakeListPane(gSidebarLDEF, &gSidebarPane, &gSidebarCtl,
                       &gSidebarList) ||
