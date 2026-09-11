@@ -385,7 +385,12 @@ static void MeasureFonts(void)
 
     /* A row is as tall as the font needs or as tall as its icon, whichever
        is more — OE's folder rows are the icon's height plus a pixel. */
-    gRowHeight = (short)(info.ascent + info.descent + info.leading + 2);
+    /*
+     * Newsstand's own sidebar measures twenty-five pixels a row in Geneva
+     * 12, which is nine more than the font needs. Rows ruled a white line
+     * apart want that room: at three the lines sat almost on the text.
+     */
+    gRowHeight = (short)(info.ascent + info.descent + info.leading + 9);
     if (gRowHeight < kIconSize + 1) {
         gRowHeight = kIconSize + 1;
     }
@@ -1482,16 +1487,17 @@ static short BadgeWidth(int count)
     short len;
     short w;
 
-    if (count <= 0) {
-        return 0;
-    }
-    snprintf(text, sizeof text, "%d", count);
+    /* Every row carries one, zero included: a column of badges with a gap
+       in it reads as a row that failed to load, not as a row with nothing
+       unread. */
+    snprintf(text, sizeof text, "%d", (count > 0) ? count : 0);
     len = (short)strlen(text);
 
     UseBadgeFont();
     w = (short)TextWidth(text, 0, len);
-    UseViewFont();              /* the caller is about to measure a name */
 
+    /* The caller sets the name's own font after this — measuring must not
+       be what decides it. */
     return (short)(w + kBadgePad * 2 + kBadgeGap);
 }
 
@@ -1500,23 +1506,31 @@ static void DrawBadge(short right, short baseline, int count)
     char     text[16];
     short    len;
     short    w;
+    short    half;
+    FontInfo badgeFont;
     Rect     pill;
     RGBColor fill;
     RGBColor save;
 
-    if (count <= 0) {
-        return;
-    }
-    snprintf(text, sizeof text, "%d", count);
+    snprintf(text, sizeof text, "%d", (count > 0) ? count : 0);
     len = (short)strlen(text);
 
     UseBadgeFont();
     w = (short)TextWidth(text, 0, len);
 
+    /*
+     * Sized to the badge's own font rather than to the row's, so the shape
+     * hugs the number. A capsule is a rounded rectangle whose corner ovals
+     * are as wide as the shape is tall; against a pill built for a
+     * twelve-point row the nine-point number left it long and shallow, and
+     * the ends read as square.
+     */
+    GetFontInfo(&badgeFont);
+    half        = (short)((badgeFont.ascent + badgeFont.descent + 3) / 2);
     pill.right  = right;
     pill.left   = (short)(right - w - kBadgePad * 2);
-    pill.top    = (short)(baseline - gRowAscent + 1);
-    pill.bottom = (short)(baseline + gRowDescent);
+    pill.top    = (short)(baseline - half - badgeFont.descent + 1);
+    pill.bottom = (short)(pill.top + half * 2);
 
     GetForeColor(&save);
 
@@ -1685,26 +1699,30 @@ static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
     }
     textLeft = (short)(iconLeft + kIconSize + kIconGap);
 
-    /*
-     * The weight is decided before the label is measured, because a bold
-     * name is wider than a plain one and the selection is drawn to fit.
-     *
-     * A category is bold; a feed never is. A feed with unread articles used
-     * to be bold as well, which said the same thing the badge says and the
-     * highlight says — three ways of saying "this one", where one will do.
-     */
-    if (r.kind == kGazetteRowGroup) {
-        TextFace(bold);
-        unread = GroupUnread(r.index);
-    } else {
+    if (r.kind != kGazetteRowGroup) {
         enabled = GazetteCoreFeedEnabled(r.index);
         unread  = enabled ? FeedUnread(r.index) : 0;
-        TextFace(normal);
+    } else {
+        unread = GroupUnread(r.index);
     }
+
+    /*
+     * The badge is measured first and the name's font set after, because
+     * measuring the badge has to switch to the badge's own font and cannot
+     * be trusted to put back a weight it never knew about. It did not: a
+     * category with unread articles came out unbolded, and only a category
+     * with none kept its bold — because a count of zero returns before the
+     * font is touched at all.
+     *
+     * A category is bold; a feed never is.
+     */
+    badge = BadgeWidth(unread);
+
+    UseViewFont();
+    TextFace((r.kind == kGazetteRowGroup) ? bold : normal);
 
     /* The badge is pinned right, so the name is truncated into what is left
        rather than the two overlapping. */
-    badge = BadgeWidth(unread);
     width = BuildRowLabel(r.kind == kGazetteRowGroup
                               ? GazetteCoreGroupName(r.index)
                               : GazetteCoreFeedTitle(r.index),
