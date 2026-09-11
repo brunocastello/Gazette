@@ -111,6 +111,10 @@ enum {
      */
     kPaneInset     = 2,
 
+    /* The focus border's thickness, and therefore how far a row has to keep
+       clear of the edge of the view it is in. */
+    kFocusBorder   = 2,
+
     /* Which pane the keyboard is driving. The reader's scroll bar carries
        kRefReader as its control reference, so its action procedure and the
        focus are named the same way. */
@@ -1558,8 +1562,24 @@ static void EraseWith(const Rect *r, ThemeBrush brush)
  * name. A feed inside a group is indented by one step; a group's own row is
  * the only one that draws a triangle.
  */
-static void DrawSidebarCell(const Rect *cell, short row, Boolean selected)
+/*
+ * A row never draws in the two pixels at either edge of the view, because
+ * that is where the focus border lives. Redrawing it afterwards is not
+ * enough: the List Manager repaints the row under the mouse over and over
+ * while a click is held, so the border was being cut through for as long as
+ * the button was down and only healed on release.
+ */
+static void RowRect(const Rect *cell, Rect *out)
 {
+    *out = *cell;
+    out->left  = (short)(out->left + kFocusBorder);
+    out->right = (short)(out->right - kFocusBorder);
+}
+
+static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
+{
+    Rect              cellRect;
+    const Rect       *cell = &cellRect;
     GazetteSidebarRow r;
     char              label[kGazetteTitleLen + 32];
     short             labelLen = 0;
@@ -1568,6 +1588,8 @@ static void DrawSidebarCell(const Rect *cell, short row, Boolean selected)
     short             baseline;
     short             width;
     Boolean           enabled = true;
+
+    RowRect(full, &cellRect);
 
     EraseWith(cell, kThemeBrushListViewBackground);
     if (!GazetteCoreSidebarRowAt(row, &r)) {
@@ -1660,11 +1682,15 @@ static pascal void SidebarLDEF(short message, Boolean isSelected, Rect *cellRect
     }
 }
 
-static void DrawArticleCell(const Rect *cell, short row, Boolean selected)
+static void DrawArticleCell(const Rect *full, short row, Boolean selected)
 {
     const GazetteArticle *a = GazetteFeedsArticleAt(row);
+    Rect                  cellRect;
+    const Rect           *cell = &cellRect;
     char                  when[16];
     short                 baseline;
+
+    RowRect(full, &cellRect);
 
     EraseWith(cell, kThemeBrushWhite);
     if (a == NULL) {
@@ -2629,11 +2655,16 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
                 return;                 /* nothing to scroll */
             }
             if (part == kControlIndicatorPart) {
-                /* The thumb tracks itself; the pane is redrawn once it
-                   lands. */
+                /*
+                 * The thumb tracks itself and leaves its new value in the
+                 * control; the article still has to be told to go there.
+                 * Redrawing the pane was not enough — it drew the article at
+                 * the offset it already had, so the thumb moved and nothing
+                 * else did, and only the arrows appeared to work.
+                 */
                 if (TrackControl(gReaderScroll, where, NULL) ==
                     kControlIndicatorPart) {
-                    DrawReader();
+                    ScrollReaderTo(GetControlValue(gReaderScroll));
                 }
             } else {
                 TrackControl(gReaderScroll, where, gScrollUPP);
