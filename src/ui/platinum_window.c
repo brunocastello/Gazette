@@ -84,7 +84,6 @@ enum {
     kVDividerWidth = 8,
     kHDividerWidth = 8,
     kTextInset     = 4,
-    kDateColumn    = 46,        /* likewise, until gDateColumn is measured     */
     kBaseline      = 10,        /* likewise, until gRowBaseline is worked out */
 
     /* The sidebar is an outline: a column for the disclosure triangle, then
@@ -304,14 +303,36 @@ static short gReaderHeaderHeight = 34;
 static short gReaderLine1        = 13;
 static short gReaderLine2        = 26;
 
-/* Wide enough for "Sep 00 00:00", measured rather than guessed at 46. */
-static short gDateColumn   = kDateColumn;
 
 /*
  * The article, staged here and then handed to TextEdit, which keeps its own
  * copy. Room for twice the extractor's output because a paragraph break
  * becomes two carriage returns on the way in, plus the title and the byline.
  */
+/*
+ * The headline list's rows are no longer its articles. A day's worth are
+ * gathered under a heading — "Today", "Yesterday", "1 week ago" — and the
+ * dates come off the rows themselves, because printing the same date down
+ * forty rows says nothing and the exact minute belongs in the article, which
+ * is where it is.
+ *
+ * So the list has two kinds of row and this maps between them: what a row
+ * is, and which row an article is on.
+ */
+enum {
+    kHeadlineDate    = 0,
+    kHeadlineArticle = 1
+};
+
+typedef struct {
+    short kind;
+    short article;              /* for kHeadlineArticle */
+} HeadlineRow;
+
+/* Every article, plus at most one heading each. */
+static HeadlineRow gHeadRows[kGazetteMaxArticles * 2];
+static int         gHeadRowCount;
+
 static TEHandle gReaderTE;
 static char     gReaderText[2 * kGazetteExtractMax + 512];
 
@@ -440,12 +461,6 @@ static void MeasureFonts(void)
     }
     gRowBaseline = (short)(info.ascent +
                            ((gRowHeight - info.ascent - info.descent) / 2));
-    /* The headline list is the views font, so its date column measures in
-       that and not in the sidebar's. */
-    UseViewFont();
-    GetFontInfo(&info);
-    gDateColumn = (short)(TextWidth("Sep 00 00:00", 0, 12) + kTextInset * 2);
-
     /* The headings are the system font too, so they measure in it. */
     UseSysFont();
     GetFontInfo(&info);
@@ -570,6 +585,74 @@ static void ListViewIn(const Rect *pane, Rect *view)
 static Boolean PaneHasFocus(ControlRef control)
 {
     return (Boolean)(control != NULL && control == gFocusPane);
+}
+
+/*
+ * Rebuild the headline rows from the articles. They arrive in date order, so
+ * a heading is needed wherever the day changes and nowhere else — one pass,
+ * no sorting.
+ */
+static void BuildHeadlineRows(void)
+{
+    long now  = UnixNow();
+    long last = 0;
+    int  have = 0;
+    int  i;
+    int  count = GazetteFeedsArticleCount();
+
+    (void)now;
+    gHeadRowCount = 0;
+
+    for (i = 0; i < count; i++) {
+        const GazetteArticle *a = GazetteFeedsArticleAt(i);
+        long                  day;
+
+        if (a == NULL) {
+            break;
+        }
+        if (gHeadRowCount + 2 > (int)(sizeof gHeadRows / sizeof gHeadRows[0])) {
+            break;
+        }
+
+        day = GazetteDayNumber(a->date);
+        if (!have || day != last) {
+            gHeadRows[gHeadRowCount].kind    = kHeadlineDate;
+            gHeadRows[gHeadRowCount].article = (short)i;
+            gHeadRowCount++;
+            last = day;
+            have = 1;
+        }
+
+        gHeadRows[gHeadRowCount].kind    = kHeadlineArticle;
+        gHeadRows[gHeadRowCount].article = (short)i;
+        gHeadRowCount++;
+    }
+}
+
+/* The article a row shows, or -1 for a heading. */
+static int ArticleAtRow(int row)
+{
+    if (row < 0 || row >= gHeadRowCount) {
+        return -1;
+    }
+    if (gHeadRows[row].kind != kHeadlineArticle) {
+        return -1;
+    }
+    return gHeadRows[row].article;
+}
+
+/* The row an article is on, or -1. */
+static int RowForArticle(int article)
+{
+    int i;
+
+    for (i = 0; i < gHeadRowCount; i++) {
+        if (gHeadRows[i].kind == kHeadlineArticle &&
+            gHeadRows[i].article == article) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 /* Where a list's rows actually are. */
@@ -1438,6 +1521,7 @@ static void DrawDisclosure(const Rect *cell, short left, Boolean open)
 static IconRef gFolderIcon;
 static IconRef gOpenFolderIcon;
 static IconRef gFeedIcon;
+static IconRef gDocIcon;
 
 static void LoadRowIcons(void)
 {
@@ -1447,6 +1531,8 @@ static void LoadRowIcons(void)
                      kOpenFolderIcon, &gOpenFolderIcon);
     (void)GetIconRef(kOnSystemDisk, kSystemIconsCreator,
                      kInternetLocationNewsIcon, &gFeedIcon);
+    (void)GetIconRef(kOnSystemDisk, kSystemIconsCreator,
+                     kGenericDocumentIcon, &gDocIcon);
 }
 
 static void ReleaseRowIcons(void)
@@ -1462,6 +1548,10 @@ static void ReleaseRowIcons(void)
     if (gFeedIcon != NULL) {
         (void)ReleaseIconRef(gFeedIcon);
         gFeedIcon = NULL;
+    }
+    if (gDocIcon != NULL) {
+        (void)ReleaseIconRef(gDocIcon);
+        gDocIcon = NULL;
     }
 }
 
@@ -1806,17 +1896,61 @@ static pascal void SidebarLDEF(short message, Boolean isSelected, Rect *cellRect
     }
 }
 
+/* A day's heading: the relative day, in the system font, grey. */
+static void DrawDateHeading(const Rect *cell, int article)
+{
+    const GazetteArticle *a = GazetteFeedsArticleAt(article);
+    char                  label[32];
+    RGBColor              grey;
+    RGBColor              save;
+
+    if (a == NULL) {
+        return;
+    }
+    GazetteRelativeDay(a->date, UnixNow(), label, sizeof label);
+    if (label[0] == '\0') {
+        return;
+    }
+
+    UseSysFont();
+    GetForeColor(&save);
+    grey.red = grey.green = grey.blue = 110 * 257;
+    RGBForeColor(&grey);
+
+    MoveTo((short)(cell->left + kTextInset + 2),
+           (short)(cell->top + gRowBaseline));
+    DrawTruncated(label, (short)(cell->right - cell->left - kTextInset * 2));
+
+    RGBForeColor(&save);
+}
+
 static void DrawArticleCell(const Rect *full, short row, Boolean selected)
 {
-    const GazetteArticle *a = GazetteFeedsArticleAt(row);
+    const GazetteArticle *a;
     Rect                  cellRect;
     const Rect           *cell = &cellRect;
-    char                  when[16];
     short                 baseline;
+    short                 textLeft;
+    int                   article;
 
     RowRect(full, &cellRect);
-
     EraseWith(cell, kThemeBrushWhite);
+
+    if (row < 0 || row >= gHeadRowCount) {
+        return;
+    }
+
+    baseline = (short)(cell->top + gRowBaseline);
+
+    if (gHeadRows[row].kind == kHeadlineDate) {
+        DrawDateHeading(cell, gHeadRows[row].article);
+        TextFace(normal);
+        ForeColor(blackColor);
+        return;
+    }
+
+    article = gHeadRows[row].article;
+    a       = GazetteFeedsArticleAt(article);
     if (a == NULL) {
         return;
     }
@@ -1828,26 +1962,20 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
         FillHighlight(cell);
     }
 
+    /* The document icon every article carries, and then its headline. The
+       date is gone from the row: it is in the heading above and, to the
+       minute, in the article itself. */
+    DrawRowIcon(cell, (short)(cell->left + kTextInset), gDocIcon, true);
+    textLeft = (short)(cell->left + kTextInset + kIconSize + kIconGap);
+
     UseViewFont();
-    baseline = (short)(cell->top + gRowBaseline);
     SetThemeTextColor(kThemeTextColorListView, 8, true);
 
-    /* Unread in bold — the whole row of it, date included, because the
-       weight is about the article and not about the headline. */
+    /* Unread in bold, the way every mail and news reader of the era marked
+       one. */
     TextFace(a->read ? normal : bold);
-
-    /* The date sits in a fixed column so the headlines line up; an article
-       with no date simply leaves it blank rather than shifting. */
-    GazetteFormatDate(a->date, UnixNow(), when, sizeof when);
-    if (when[0] != '\0') {
-        MoveTo((short)(cell->left + kTextInset), baseline);
-        DrawTruncated(when, (short)(gDateColumn - kTextInset));
-    }
-
-    MoveTo((short)(cell->left + kTextInset + gDateColumn), baseline);
-    DrawTruncated(a->title,
-                  (short)(cell->right - cell->left - gDateColumn -
-                          2 * kTextInset));
+    MoveTo(textLeft, baseline);
+    DrawTruncated(a->title, (short)(cell->right - kTextInset - textLeft));
 
     TextFace(normal);
     ForeColor(blackColor);
@@ -1992,7 +2120,7 @@ static pascal void PaneDraw(ControlRef control, SInt16 part)
         DrawListPane(control, gSidebarList, GazetteCoreSidebarRowCount(),
                      kThemeBrushListViewBackground);
     } else if (control == gArticleCtl) {
-        DrawListPane(control, gArticleList, GazetteFeedsArticleCount(),
+        DrawListPane(control, gArticleList, gHeadRowCount,
                      kThemeBrushWhite);
     }
 }
@@ -2437,7 +2565,7 @@ void GazetteUIUpdate(void)
     }
 
     /* An empty headline list has no cell to say so in. */
-    if (GazetteFeedsArticleCount() == 0) {
+    if (gHeadRowCount == 0) {
         DrawArticlePane();
     }
 }
@@ -2464,7 +2592,7 @@ static void SelectArticle(int index)
         GazetteFeedsMarkRead(gSelectedArticle, 1);
     }
 
-    SelectRow(gArticleList, gSelectedArticle, true);
+    SelectRow(gArticleList, RowForArticle(gSelectedArticle), true);
     SetReaderText();
 
     DrawArticlePane();
@@ -2768,12 +2896,15 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
             return;
         }
         {
-            int row = SelectedListRow(gArticleList);
+            int article = ArticleAtRow(SelectedListRow(gArticleList));
 
-            if (row >= 0) {
-                SelectArticle(row);
+            if (article >= 0) {
+                SelectArticle(article);
             } else if (gSelectedArticle >= 0) {
-                SelectRow(gArticleList, gSelectedArticle, false);
+                /* A heading, or the empty space below the last row. Neither
+                   is an article, so the selection goes back where it was. */
+                SelectRow(gArticleList, RowForArticle(gSelectedArticle),
+                          false);
                 DrawArticlePane();
             }
         }
@@ -3115,10 +3246,14 @@ void GazetteUIArticlesChanged(void)
 
     gSelectedArticle = (GazetteFeedsArticleCount() > 0) ? 0 : -1;
 
+    /* The rows are rebuilt before the list is told how many there are: a
+       day's heading is a row too. */
+    BuildHeadlineRows();
+
     LSetDrawingMode(false, gArticleList);
-    SetRowCount(gArticleList, GazetteFeedsArticleCount());
+    SetRowCount(gArticleList, gHeadRowCount);
     LScroll(0, (short)-ListRowCount(gArticleList), gArticleList);
-    SelectRow(gArticleList, gSelectedArticle, false);
+    SelectRow(gArticleList, RowForArticle(gSelectedArticle), false);
     LSetDrawingMode(true, gArticleList);
 
     Layout();

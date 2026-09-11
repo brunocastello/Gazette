@@ -289,6 +289,50 @@ static void TestAsciiText(void)
     }
 
     {
+        /* The headings the headline list gathers a day's articles under.
+           Counted in whole days, so an article from late last night is
+           Yesterday this morning rather than Today. */
+        const long day = 86400L;
+        const long now = 1000L * day + 45000L;      /* mid-afternoon */
+
+        GazetteRelativeDay(now - 3600L, now, out, sizeof out);
+        CheckStr("an hour ago is Today", out, "Today");
+
+        GazetteRelativeDay(now - 40000L, now, out, sizeof out);
+        CheckStr("earlier the same day is Today", out, "Today");
+
+        GazetteRelativeDay(999L * day + 80000L, now, out, sizeof out);
+        CheckStr("late last night is Yesterday", out, "Yesterday");
+
+        GazetteRelativeDay(997L * day, now, out, sizeof out);
+        CheckStr("three days back counts days", out, "3 days ago");
+
+        GazetteRelativeDay(992L * day, now, out, sizeof out);
+        CheckStr("eight days back is one week", out, "1 week ago");
+
+        GazetteRelativeDay(980L * day, now, out, sizeof out);
+        CheckStr("twenty days back is two weeks", out, "2 weeks ago");
+
+        GazetteRelativeDay(960L * day, now, out, sizeof out);
+        CheckStr("forty days back is one month", out, "1 month ago");
+
+        GazetteRelativeDay(600L * day, now, out, sizeof out);
+        CheckStr("over a year back counts years", out, "1 year ago");
+
+        GazetteRelativeDay(0, now, out, sizeof out);
+        CheckStr("no date at all is Undated", out, "Undated");
+
+        GazetteRelativeDay(now + 5L * day, now, out, sizeof out);
+        CheckStr("a date in the future is Today, not a negative", out,
+                 "Today");
+
+        CheckLong("the same day gives the same day number",
+                  GazetteDayNumber(now) - GazetteDayNumber(now - 3600L), 0);
+        CheckLong("a day apart is one day number apart",
+                  GazetteDayNumber(now) - GazetteDayNumber(now - day), 1);
+    }
+
+    {
         char s[] = "  lots\t\tof\r\n  space  ";
         size_t n = gz_flatten_ws(s, sizeof s - 1);
         CheckStr("whitespace flattens", s, "lots of space");

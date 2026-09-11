@@ -537,6 +537,110 @@ size_t GazetteFormatDate(long seconds, long nowSeconds, char *out, size_t cap)
     return len;
 }
 
+long GazetteDayNumber(long seconds)
+{
+    long days;
+
+    if (seconds == 0) {
+        return -2147483647L;        /* every undated article, together */
+    }
+
+    /* Floor division, so a timestamp before 1970 does not round towards zero
+       and land on the following day. */
+    days = seconds / 86400L;
+    if (seconds % 86400L < 0) {
+        days--;
+    }
+    return days;
+}
+
+/* "3 days" / "1 week" — the number and its unit, singular when it is one. */
+static size_t PlainCount(long n, const char *unit, char *out, size_t cap)
+{
+    size_t len = 0;
+    char   digits[12];
+    int    d = 0;
+
+    if (n <= 0) {
+        n = 1;
+    }
+    while (n > 0 && d < (int)sizeof digits) {
+        digits[d++] = (char)('0' + (int)(n % 10));
+        n /= 10;
+    }
+    while (d > 0 && len + 1 < cap) {
+        out[len++] = digits[--d];
+    }
+    if (len + 1 < cap) {
+        out[len++] = ' ';
+    }
+    while (*unit != '\0' && len + 1 < cap) {
+        out[len++] = *unit++;
+    }
+    /* "1 day" but "3 days" — the s is the only thing that changes. */
+    if (!(out[0] == '1' && len >= 2 && out[1] == ' ') && len + 1 < cap) {
+        out[len++] = 's';
+    }
+    if (len + 5 < cap) {
+        out[len++] = ' ';
+        out[len++] = 'a';
+        out[len++] = 'g';
+        out[len++] = 'o';
+    }
+    out[len] = '\0';
+    return len;
+}
+
+static size_t Literal(const char *text, char *out, size_t cap)
+{
+    size_t len = 0;
+
+    while (text[len] != '\0' && len + 1 < cap) {
+        out[len] = text[len];
+        len++;
+    }
+    out[len] = '\0';
+    return len;
+}
+
+size_t GazetteRelativeDay(long seconds, long nowSeconds, char *out, size_t cap)
+{
+    long days;
+
+    if (out == NULL || cap == 0) {
+        return 0;
+    }
+    out[0] = '\0';
+
+    if (seconds == 0) {
+        return Literal("Undated", out, cap);
+    }
+    if (nowSeconds == 0) {
+        return Literal("Earlier", out, cap);
+    }
+
+    days = GazetteDayNumber(nowSeconds) - GazetteDayNumber(seconds);
+
+    /* A clock that is behind, or an article dated ahead of now: both are
+       "Today" rather than a negative number of days. */
+    if (days <= 0) {
+        return Literal("Today", out, cap);
+    }
+    if (days == 1) {
+        return Literal("Yesterday", out, cap);
+    }
+    if (days < 7) {
+        return PlainCount(days, "day", out, cap);
+    }
+    if (days < 31) {
+        return PlainCount(days / 7, "week", out, cap);
+    }
+    if (days < 365) {
+        return PlainCount(days / 30, "month", out, cap);
+    }
+    return PlainCount(days / 365, "year", out, cap);
+}
+
 /* ------------------------------------------------------------------ */
 /* Capture                                                            */
 /* ------------------------------------------------------------------ */

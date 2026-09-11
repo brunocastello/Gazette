@@ -192,6 +192,24 @@ long GazetteParseDate(const char *s, size_t len);
  */
 size_t GazetteFormatDate(long seconds, long nowSeconds, char *out, size_t cap);
 
+/*
+ * The heading a day's articles are gathered under: "Today", "Yesterday",
+ * "3 days ago", "1 week ago", and so on up through months and years.
+ * Writes "Undated" for 0.
+ *
+ * The distance is counted in whole days rather than in elapsed seconds, so
+ * an article posted late last night is "Yesterday" this morning rather than
+ * "Today" — which is what a reader means by the word, and what makes two
+ * articles from the same evening share a heading.
+ */
+size_t GazetteRelativeDay(long seconds, long nowSeconds, char *out,
+                          size_t cap);
+
+/* Which day a timestamp falls on, counted from the epoch. Two articles with
+   the same answer belong under the same heading. 0 answers LONG_MIN-ish so
+   undated articles group together and never merge with a real day. */
+long GazetteDayNumber(long seconds);
+
 #ifdef __cplusplus
 }
 #endif
