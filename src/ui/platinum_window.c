@@ -287,6 +287,8 @@ static short gStatusSize = 10;            /* the strip along the bottom  */
 
 static short gRowHeight    = kRowHeight;
 static short gRowBaseline  = kBaseline;
+static short gHeadRowHeight   = kRowHeight;   /* the headline list's own */
+static short gHeadRowBaseline = kBaseline;
 static short gRowAscent    = 9;
 static short gRowDescent   = 3;
 
@@ -347,6 +349,7 @@ static char     gReaderText[2 * kGazetteExtractMax + 512];
 
 static void Layout(void);
 static void ListViewIn(const Rect *pane, Rect *view);
+static short ListRowHeight(ListHandle list);
 static int  RowForArticle(int article);
 static void SetRowCount(ListHandle list, int count);
 static void SelectRow(ListHandle list, int row, Boolean reveal);
@@ -482,6 +485,23 @@ static void MeasureFonts(void)
     }
     gRowBaseline = (short)(info.ascent +
                            ((gRowHeight - info.ascent - info.descent) / 2));
+
+    /*
+     * The headline list's rows are tighter than the sidebar's. The sidebar
+     * is a handful of names with room to breathe; the headline list is a
+     * column of them, and a headline that wraps takes a row per line — at
+     * the sidebar's pitch the two lines of one headline stood further apart
+     * than two separate headlines did.
+     *
+     * Still no shorter than the icon, which is what sets the floor.
+     */
+    gHeadRowHeight = (short)(info.ascent + info.descent + info.leading + 4);
+    if (gHeadRowHeight < kIconSize + 1) {
+        gHeadRowHeight = (short)(kIconSize + 1);
+    }
+    gHeadRowBaseline = (short)(info.ascent +
+                               ((gHeadRowHeight - info.ascent -
+                                 info.descent) / 2));
     /* The headings are the system font too, so they measure in it. */
     UseSysFont();
     GetFontInfo(&info);
@@ -784,6 +804,12 @@ static void PlaceListScrollBar(ListHandle list, const Rect *pane)
     SetRect(&want, frame.right, (short)(frame.top - 1),
             (short)(frame.right + kScrollWidth), (short)(frame.bottom + 1));
     SetControlBounds(bar, &want);
+}
+
+/* How tall one row of this list is. The two lists do not agree. */
+static short ListRowHeight(ListHandle list)
+{
+    return (list == gArticleList) ? gHeadRowHeight : gRowHeight;
 }
 
 /* Does this pane wear the focus border? */
@@ -1234,7 +1260,7 @@ static void SizeListPane(ControlRef control, ListHandle list,
     LSize((short)(view.right - view.left),
           (short)(view.bottom - view.top), list);
 
-    cell.v = gRowHeight;
+    cell.v = ListRowHeight(list);
     cell.h = (short)(view.right - view.left);
     if (cell.h > 0) {
         LCellSize(cell, list);
@@ -1982,7 +2008,7 @@ static void ReleaseRowIcons(void)
 
 /* Plot one, centred in the row, dimmed when the feed it stands for is off. */
 static void DrawRowIcon(const Rect *cell, short left, IconRef icon,
-                        Boolean enabled)
+                        Boolean enabled, short rowHeight)
 {
     Rect box;
     short top;
@@ -1996,7 +2022,7 @@ static void DrawRowIcon(const Rect *cell, short left, IconRef icon,
      * foot of the view, so centring in it walked the icon upwards a pixel at
      * a time as a divider was dragged — the "bumping".
      */
-    top = (short)(cell->top + ((gRowHeight - kIconSize) / 2));
+    top = (short)(cell->top + ((rowHeight - kIconSize) / 2));
     SetRect(&box, left, top, (short)(left + kIconSize),
             (short)(top + kIconSize));
 
@@ -2352,9 +2378,10 @@ static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
         Boolean open = (Boolean)!GazetteCoreGroupCollapsed(r.index);
 
         DrawDisclosure(cell, (short)(cell->left + kTextInset), open);
-        DrawRowIcon(cell, iconLeft, open ? gOpenFolderIcon : gFolderIcon, true);
+        DrawRowIcon(cell, iconLeft, open ? gOpenFolderIcon : gFolderIcon, true,
+                    gRowHeight);
     } else {
-        DrawRowIcon(cell, iconLeft, gFeedIcon, enabled);
+        DrawRowIcon(cell, iconLeft, gFeedIcon, enabled, gRowHeight);
     }
 
     /* A switched-off feed is drawn the way an unavailable item is drawn
@@ -2438,7 +2465,7 @@ static Boolean RowFullyVisible(ListHandle list, const Rect *cellRect)
      * own bottom always looks as though it fits, however little of the row
      * is really there.
      */
-    return (Boolean)(cellRect->top + gRowHeight <= view.bottom);
+    return (Boolean)(cellRect->top + ListRowHeight(list) <= view.bottom);
 }
 
 static pascal void SidebarLDEF(short message, Boolean isSelected, Rect *cellRect,
@@ -2484,7 +2511,7 @@ static void DrawDateHeading(const Rect *cell, int article)
     RGBForeColor(&grey);
 
     MoveTo((short)(cell->left + kTextInset + 2),
-           (short)(cell->top + gRowBaseline));
+           (short)(cell->top + gHeadRowBaseline));
     DrawTruncated(label, (short)(cell->right - cell->left - kTextInset * 2));
 
     RGBForeColor(&save);
@@ -2510,7 +2537,7 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
         return;
     }
 
-    baseline = (short)(cell->top + gRowBaseline);
+    baseline = (short)(cell->top + gHeadRowBaseline);
 
     if (gHeadRows[row].kind == kHeadlineDate) {
         DrawDateHeading(cell, gHeadRows[row].article);
@@ -2532,6 +2559,27 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
      * a selection that covered the first line of a headline and not the
      * second would read as a drawing fault.
      */
+    /*
+     * A light rule under the last line of each headline — under the whole
+     * of it, not between the lines of one, which is what tells a headline
+     * that wrapped apart from two that did not. The sidebar rules its rows
+     * white; on the headline list's white a pale grey is what shows.
+     *
+     * Before the highlight, so a selected headline covers its own rule
+     * rather than having a line drawn across it.
+     */
+    if (row + 1 >= gHeadRowCount || gHeadRows[row + 1].kind != kHeadlineCont) {
+        RGBColor rule;
+        RGBColor was;
+
+        GetForeColor(&was);
+        rule.red = rule.green = rule.blue = 204 * 257;
+        RGBForeColor(&rule);
+        MoveTo(cell->left, (short)(cell->bottom - 1));
+        LineTo((short)(cell->right - 1), (short)(cell->bottom - 1));
+        RGBForeColor(&was);
+    }
+
     (void)selected;
     if (article == gSelectedArticle) {
         /* Filled end to end — the whole width of the row, frame to frame,
@@ -2547,7 +2595,8 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
        the icon. The date is gone from the row: it is in the heading above
        and, to the minute, in the article itself. */
     if (gHeadRows[row].kind == kHeadlineArticle) {
-        DrawRowIcon(cell, (short)(cell->left + kTextInset), gDocIcon, true);
+        DrawRowIcon(cell, (short)(cell->left + kTextInset), gDocIcon, true,
+                    gHeadRowHeight);
     }
     textLeft = (short)(cell->left + HeadlineTextInset());
 
@@ -2798,7 +2847,7 @@ static void DrawArticlePane(void)
     UseViewFont();
     SetThemeTextColor(kThemeTextColorListView, 8, true);
     MoveTo((short)(view.left + kTextInset),
-           (short)(view.top + gRowBaseline + 1));
+           (short)(view.top + gHeadRowBaseline + 1));
     if (GazetteFeedsFilter()[0] != '\0') {
         DrawString("\pNothing here matches - Edit menu, Show All.");
     } else {
@@ -4024,6 +4073,7 @@ void GazetteUISelectFeed(int index)
  * drawn by exactly the code as before; only the chrome around them changed.
  */
 static Boolean MakeListPane(ListDefUPP defProc, const Rect *bounds,
+                            short rowHeight,
                             ControlRef *outControl, ListHandle *outList)
 {
     ListDefSpec spec;
@@ -4046,7 +4096,7 @@ static Boolean MakeListPane(ListDefUPP defProc, const Rect *bounds,
 
     ListRowsIn(bounds, &view);
     SetRect(&data, 0, 0, 1, 0);         /* one column, no rows yet */
-    cell.v = gRowHeight;
+    cell.v = rowHeight;
     cell.h = (short)(view.right - view.left);
 
     if (CreateCustomList(&view, &data, cell, &spec, gWindow,
@@ -4162,9 +4212,9 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
     gReaderHeaderCtl  = MakeControl(&gReaderHeader,
                                     kControlWindowHeaderProc, 0);
 
-    if (!MakeListPane(gSidebarLDEF, &gSidebarPane, &gSidebarCtl,
+    if (!MakeListPane(gSidebarLDEF, &gSidebarPane, gRowHeight, &gSidebarCtl,
                       &gSidebarList) ||
-        !MakeListPane(gArticleLDEF, &gListPane, &gArticleCtl,
+        !MakeListPane(gArticleLDEF, &gListPane, gHeadRowHeight, &gArticleCtl,
                       &gArticleList)) {
         GazetteUIClose();
         return false;
