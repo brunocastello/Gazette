@@ -741,16 +741,19 @@ static void Layout(void)
         short headTop = (short)(bounds.top - 1);
         short headBot = (short)(bounds.top + gHeaderHeight);
 
-        /* The divider's own black line, and the column the header seam has
-           to fall on so the vertical line runs unbroken. */
-        short vLine = (short)(split + 5);
-
+        /*
+         * The border runs the whole height of the window, top to bottom,
+         * rather than starting below the headers — so the two headers stop
+         * either side of it and the groove is drawn over the gap between
+         * them. It used to stop at the headers and pick up again below,
+         * which left the line looking cut.
+         */
         SetRect(&gSidebarHeader, (short)(bounds.left - 1), headTop,
-                (short)(vLine + 1), headBot);
-        SetRect(&gListHeader, vLine, headTop,
+                split, headBot);
+        SetRect(&gListHeader, (short)(split + kVDividerWidth), headTop,
                 (short)(bounds.right + 1), headBot);
 
-        SetRect(&gVDivider, split, headBot,
+        SetRect(&gVDivider, split, bounds.top,
                 (short)(split + kVDividerWidth), contentBottom);
 
         /* Flush to the divider on the right — the sidebar's scroll bar edge
@@ -776,9 +779,15 @@ static void Layout(void)
         SetRect(&gHDivider, rightLeft, listBottom, (short)(bounds.right + 1),
                 (short)(listBottom + kHDividerWidth));
 
-        SetRect(&gReaderHeader, rightLeft, gHDivider.bottom,
+        /*
+         * Two pixels up, so the header control's own top line and highlight
+         * fall exactly on the groove's closing black and white rather than
+         * adding a third line under them. Measured: black, white, then
+         * another black — that last one was this.
+         */
+        SetRect(&gReaderHeader, rightLeft, (short)(gHDivider.bottom - 2),
                 (short)(bounds.right + 1),
-                (short)(gHDivider.bottom + gReaderHeaderHeight));
+                (short)(gHDivider.bottom - 2 + gReaderHeaderHeight));
 
         SetRect(&gReaderPane, rightLeft, gReaderHeader.bottom,
                 (short)(bounds.right + 1), (short)(contentBottom + 1));
@@ -1897,33 +1906,47 @@ static void DrawHDivider(const Rect *r)
 }
 
 /*
- * The dotted grab handle that says a border can be dragged. OE puts one in
- * the middle of each of its splitters, and it is the only thing telling a
- * user the border is a control at all.
+ * The dotted grab handle that says a border can be dragged, measured off
+ * Outlook Express: five dots four pixels apart, each one a dark pixel with
+ * a white highlight set diagonally below and right of it, sitting one pixel
+ * into the groove's grey band. Ours was a single flat black pixel in the
+ * middle of the band, which is neither the right colour, the right count,
+ * nor the right place.
  */
 static void DrawGrabHandle(const Rect *divider, Boolean vertical)
 {
-    short i;
+    RGBColor dark;
+    RGBColor light;
+    short    i;
 
-    SetThemeTextColor(kThemeTextColorDialogActive, 8, true);
+    dark.red  = dark.green  = dark.blue  = 29 * 257;
+    light.red = light.green = light.blue = 0xFFFF;
 
     if (vertical) {
-        short mid = (short)((divider->left + divider->right) / 2);
-        short at  = (short)((divider->top + divider->bottom) / 2 - 14);
+        short x  = (short)(divider->left + 2);
+        short at = (short)((divider->top + divider->bottom) / 2 - 8);
 
         for (i = 0; i < 5; i++) {
-            MoveTo((short)(mid - 1), at);
-            LineTo((short)(mid - 1), (short)(at + 1));
-            at = (short)(at + 6);
+            RGBForeColor(&dark);
+            MoveTo(x, at);
+            LineTo(x, at);
+            RGBForeColor(&light);
+            MoveTo((short)(x + 1), (short)(at + 1));
+            LineTo((short)(x + 1), (short)(at + 1));
+            at = (short)(at + 4);
         }
     } else {
-        short mid = (short)((divider->top + divider->bottom) / 2);
-        short at  = (short)((divider->left + divider->right) / 2 - 14);
+        short y  = (short)(divider->top + 5);
+        short at = (short)((divider->left + divider->right) / 2 - 8);
 
         for (i = 0; i < 5; i++) {
-            MoveTo(at, mid);
-            LineTo((short)(at + 1), mid);
-            at = (short)(at + 6);
+            RGBForeColor(&dark);
+            MoveTo(at, y);
+            LineTo(at, y);
+            RGBForeColor(&light);
+            MoveTo((short)(at + 1), (short)(y + 1));
+            LineTo((short)(at + 1), (short)(y + 1));
+            at = (short)(at + 4);
         }
     }
     ForeColor(blackColor);
