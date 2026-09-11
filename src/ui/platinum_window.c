@@ -111,13 +111,6 @@ enum {
      */
     kPaneInset     = 2,
 
-    /*
-     * The headline list's column headings — Date and Title — measured off
-     * Outlook Express: a two-pixel bevel, sixteen pixels of button face,
-     * then the shadow and the black rule. Twenty in all.
-     */
-    kColumnHeight  = 20,
-
     /* Which pane the keyboard is driving. The reader's scroll bar carries
        kRefReader as its control reference, so its action procedure and the
        focus are named the same way. */
@@ -205,8 +198,6 @@ static Rect gSidebarPane;
 static Rect gSidebarHeader;
 static Rect gListPane;
 static Rect gListHeader;
-static Rect gColumns;           /* the Date / Title headings */
-static Rect gDateColumnRect;    /* the Date heading alone, for hit testing */
 /*
  * The article's own header, the way OE's message pane has one: a grey bar
  * carrying the headline and the byline, and the white body underneath. The
@@ -277,7 +268,6 @@ static short gHeaderHeight = kHeaderHeight;
 static short gHeaderBase   = 12;
 static short gStatusHeight = kStatusHeight;
 static short gStatusBase   = 13;
-static short gColumnBase   = 14;
 
 /* Two lines of text: the headline and the byline under it. */
 static short gReaderHeaderHeight = 34;
@@ -408,11 +398,6 @@ static void MeasureFonts(void)
                                 (gStatusHeight - small.ascent -
                                  small.descent) / 2);
     }
-
-    /* Centred in the heading's sixteen pixels of button face, which start
-       two pixels down from the top of the row. */
-    gColumnBase = (short)(2 + info.ascent +
-                          (16 - info.ascent - info.descent) / 2);
 
     /* The article's header holds two lines: the headline, and the byline a
        size down under it. */
@@ -795,8 +780,8 @@ static void Layout(void)
         listBottom = (short)(headBot +
                              (long)(contentBottom - headBot) *
                              gListShare / 100);
-        if (listBottom < headBot + kColumnHeight + kMinListHeight) {
-            listBottom = (short)(headBot + kColumnHeight + kMinListHeight);
+        if (listBottom < headBot + kMinListHeight) {
+            listBottom = (short)(headBot + kMinListHeight);
         }
         if (listBottom > contentBottom - kMinReader - kHDividerWidth) {
             listBottom = (short)(contentBottom - kMinReader - kHDividerWidth);
@@ -808,17 +793,7 @@ static void Layout(void)
          * of grey are covered by the pane, which is what takes the grey
          * edge off the inside of the view.
          */
-        /*
-         * The column headings go between the pane header and the rows. They
-         * carry their own black rule at the bottom, so the list starts a
-         * pixel inside them exactly as it did inside the header before.
-         */
-        SetRect(&gColumns, (short)(split + 6), (short)(headBot - 1),
-                (short)(bounds.right + 1),
-                (short)(headBot - 1 + kColumnHeight));
-
-        SetRect(&gListPane, (short)(split + 6),
-                (short)(gColumns.bottom - 1),
+        SetRect(&gListPane, (short)(split + 6), (short)(headBot - 1),
                 (short)(bounds.right + 1), listBottom);
 
         /*
@@ -851,10 +826,25 @@ static void Layout(void)
          * across the whole width — the bar's top edge needs to land on that
          * rule, but the article's white must not be painted over it.
          */
+        /*
+         * A pixel short of the pane at *both* ends, and for two different
+         * reasons.
+         *
+         * At the top the pixel is the header's black rule: the scroll bar's
+         * top edge lands on it and the article's white must not paint over
+         * it.
+         *
+         * At the bottom the pixel is the *status strip's* rule. The pane
+         * reaches a row past it so the scroll bar's bottom edge lands there,
+         * but the text must not — erasing the pane's full height painted the
+         * rule white, and only a full window update put it back. Changing
+         * article redraws the reader alone, so the border simply vanished
+         * until something else repainted the window.
+         */
         SetRect(&gReaderRect, gReaderPane.left,
                 (short)(gReaderPane.top + 1),
                 (short)(gReaderPane.right - kScrollWidth),
-                gReaderPane.bottom);
+                (short)(gReaderPane.bottom - 1));
     }
 
     /* End to end. The strip's own rule is the line between it and the panes
@@ -2016,65 +2006,6 @@ static void DrawGrabHandle(const Rect *divider, Boolean vertical)
 }
 
 /*
- * The headline list's two column headings, drawn as Platinum list header
- * buttons — the same control the Finder puts over a list view's columns and
- * the one Outlook Express uses. The column the list is sorted by is drawn
- * pressed, with the sort direction's arrow on its right hand end, which is
- * how OE says which way it has ordered things.
- */
-static void DrawColumnHeading(const Rect *r, const char *title,
-                              Boolean sorted, Boolean ascending)
-{
-    ThemeButtonDrawInfo info;
-    Rect                inner = *r;
-
-    info.state     = kThemeStateActive;
-    info.value     = sorted ? kThemeButtonOn : kThemeButtonOff;
-    info.adornment = (ThemeButtonAdornment)
-                     (sorted ? (ascending ? kThemeAdornmentHeaderButtonSortUp
-                                          : kThemeAdornmentNone)
-                             : kThemeAdornmentNone);
-
-    (void)DrawThemeButton(r, kThemeListHeaderButton, &info, NULL,
-                          NULL, NULL, 0);
-
-    UseViewFont();
-    SetThemeTextColor(sorted ? kThemeTextColorListView
-                             : kThemeTextColorWindowHeaderActive, 8, true);
-
-    /* Room at the right for the sort arrow the CDEF draws there. */
-    inner.left  = (short)(inner.left + kTextInset + 2);
-    inner.right = (short)(inner.right - kTextInset - kScrollWidth);
-    MoveTo(inner.left, (short)(r->top + gColumnBase));
-    DrawTruncated(title, (short)(inner.right - inner.left));
-
-    ForeColor(blackColor);
-}
-
-static void DrawColumns(void)
-{
-    Rect    date;
-    Rect    title;
-    Boolean byDate = (Boolean)(GazetteFeedsSortColumn() == kGazetteSortDate);
-    Boolean up     = (Boolean)(GazetteFeedsSortAscending() != 0);
-
-    if (gWindow == NULL || gColumns.right <= gColumns.left) {
-        return;
-    }
-    SetPortWindowPort(gWindow);
-
-    date  = gColumns;
-    date.right = (short)(gColumns.left + gDateColumn);
-    title = gColumns;
-    title.left = date.right;
-
-    gDateColumnRect = date;
-
-    DrawColumnHeading(&date, "Date", byDate, up);
-    DrawColumnHeading(&title, "Title", (Boolean)!byDate, up);
-}
-
-/*
  * The article's headline and byline, drawn on the header bar under the
  * splitter. The headline is one line and truncated, as OE's Subject: line
  * is; the byline is a size down, which is what a label is.
@@ -2218,7 +2149,6 @@ void GazetteUIUpdate(void)
        have no text of their own. */
     DrawHeaderTitle(&gSidebarHeader, "Feeds");
     DrawHeaderTitle(&gListHeader, header);
-    DrawColumns();
     DrawReaderHeaderText();
     DrawStatusText();
 
@@ -2545,29 +2475,6 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
     if (PtInRect(where, &gSidebarPane)) {
         SetFocus(kRefSidebar);
         SidebarClicked(where, modifiers);
-        return;
-    }
-
-    /*
-     * A click on a column heading sorts by it. Clicking the one already
-     * sorted by turns the order round, which is what every list view on the
-     * machine does and what the arrow in the heading is promising.
-     */
-    if (PtInRect(where, &gColumns)) {
-        int     want = PtInRect(where, &gDateColumnRect)
-                           ? kGazetteSortDate : kGazetteSortTitle;
-        Boolean up   = (Boolean)(GazetteFeedsSortAscending() != 0);
-
-        SetFocus(kRefList);
-        if (want == GazetteFeedsSortColumn()) {
-            up = (Boolean)!up;
-        } else {
-            /* A fresh column starts the way that column is usually wanted:
-               newest first for a date, A to Z for a title. */
-            up = (Boolean)(want == kGazetteSortTitle);
-        }
-        GazetteFeedsSetSort(want, up);
-        GazetteUIArticlesChanged();
         return;
     }
 
