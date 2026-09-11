@@ -347,6 +347,7 @@ static char     gReaderText[2 * kGazetteExtractMax + 512];
 
 static void Layout(void);
 static void ListViewIn(const Rect *pane, Rect *view);
+static void ListView(ListHandle list, Rect *view);
 static short ReaderHeaderHeightFor(short lines);
 static short ReaderTitleLineCount(void);
 static short ReaderTitleWidth(void);
