@@ -1355,7 +1355,6 @@ static void DrawHeaderTitle(const Rect *r, const char *text)
     Rect inner = *r;
 
     UseSysFont();
-    TextFace(bold);
     SetThemeTextColor(kThemeTextColorWindowHeaderActive, 8, true);
 
     inner.left  = (short)(inner.left + kTextInset + 2);
@@ -1364,7 +1363,6 @@ static void DrawHeaderTitle(const Rect *r, const char *text)
     MoveTo(inner.left, (short)(r->top + gHeaderBase));
     DrawTruncated(text, (short)(inner.right - inner.left));
 
-    TextFace(normal);
     ForeColor(blackColor);
 }
 
@@ -1530,11 +1528,18 @@ static void CountText(int count, char *out, size_t cap)
     snprintf(out, cap, "(%d)", (count > 0) ? count : 0);
 }
 
+/*
+ * The count is set in the system font whatever the row beside it is in, so
+ * a column of them stays a column: the categories are in that face already
+ * and the feed names are not, and a count that changed face with its row
+ * would read as two different columns.
+ */
 static short CountWidth(int count)
 {
     char text[16];
 
     CountText(count, text, sizeof text);
+    UseSysFont();
     return (short)(TextWidth(text, 0, (short)strlen(text)) + kCountGap);
 }
 
@@ -1548,6 +1553,7 @@ static void DrawCount(short right, short baseline, int count, Boolean enabled)
     CountText(count, text, sizeof text);
     len = (short)strlen(text);
 
+    UseSysFont();
     GetForeColor(&save);
     if (enabled) {
         grey.red = grey.green = grey.blue = 90 * 257;
@@ -1720,16 +1726,19 @@ static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
     }
 
     /*
-     * The count is set in the row's own face, so the font is chosen first
-     * and the count measured in it — which also means measuring can no
-     * longer clear the weight, as it did when the badge had a font of its
-     * own and put the wrong one back.
-     *
-     * A category is bold; a feed never is.
+     * The count first, in the system font it is always set in, and then the
+     * row's own face — a category in the system font, a feed name in the
+     * one the articles are read in. Nothing in the sidebar is bold: the
+     * highlight says which feed is open and the count says how much is in
+     * it, and weight had nothing left to say.
      */
-    UseSysFont();
-    TextFace((r.kind == kGazetteRowGroup) ? bold : normal);
     badge = CountWidth(unread);
+
+    if (r.kind == kGazetteRowGroup) {
+        UseSysFont();
+    } else {
+        UseViewFont();
+    }
 
     /* The badge is pinned right, so the name is truncated into what is left
        rather than the two overlapping. */
