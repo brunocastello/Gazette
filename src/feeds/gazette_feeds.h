@@ -74,9 +74,9 @@ enum {
  * first; for a title, A to Z. A feed arrives newest first, so the default is
  * the date descending, which is the order it came in.
  */
-void GazetteFeedsSetSort(int column, Boolean ascending);
+void GazetteFeedsSetSort(int column, int ascending);
 int  GazetteFeedsSortColumn(void);
-Boolean GazetteFeedsSortAscending(void);
+int     GazetteFeedsSortAscending(void);
 
 /* The title the feed gave itself, which is usually better than the one the
    user wrote in their preferences. "" until a refresh has succeeded. */

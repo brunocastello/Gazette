@@ -2056,7 +2056,7 @@ static void DrawColumns(void)
     Rect    date;
     Rect    title;
     Boolean byDate = (Boolean)(GazetteFeedsSortColumn() == kGazetteSortDate);
-    Boolean up     = GazetteFeedsSortAscending();
+    Boolean up     = (Boolean)(GazetteFeedsSortAscending() != 0);
 
     if (gWindow == NULL || gColumns.right <= gColumns.left) {
         return;
@@ -2556,7 +2556,7 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
     if (PtInRect(where, &gColumns)) {
         int     want = PtInRect(where, &gDateColumnRect)
                            ? kGazetteSortDate : kGazetteSortTitle;
-        Boolean up   = GazetteFeedsSortAscending();
+        Boolean up   = (Boolean)(GazetteFeedsSortAscending() != 0);
 
         SetFocus(kRefList);
         if (want == GazetteFeedsSortColumn()) {

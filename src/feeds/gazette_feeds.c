@@ -263,7 +263,7 @@ static void Refilter(void)
     Reorder();
 }
 
-void GazetteFeedsSetSort(int column, Boolean ascending)
+void GazetteFeedsSetSort(int column, int ascending)
 {
     if (column != kGazetteSortTitle) {
         column = kGazetteSortDate;
@@ -282,9 +282,9 @@ int GazetteFeedsSortColumn(void)
     return gSortColumn;
 }
 
-Boolean GazetteFeedsSortAscending(void)
+int GazetteFeedsSortAscending(void)
 {
-    return gSortAscending ? true : false;
+    return gSortAscending;
 }
 
 void GazetteFeedsSetFilter(const char *text)
