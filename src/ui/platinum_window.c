@@ -493,9 +493,16 @@ static void MeasureFonts(void)
      * the sidebar's pitch the two lines of one headline stood further apart
      * than two separate headlines did.
      *
+     * The four pixels of air are what puts the rule clear of the text: the
+     * cells are uniform, so the space above a line and the space below it
+     * are the same number, and that number is also the gap between the two
+     * lines of a wrapped headline. Eight splits the difference — enough to
+     * stand the rule off the words above and below it, not so much that a
+     * headline reads as two.
+     *
      * Still no shorter than the icon, which is what sets the floor.
      */
-    gHeadRowHeight = (short)(info.ascent + info.descent + info.leading + 4);
+    gHeadRowHeight = (short)(info.ascent + info.descent + info.leading + 8);
     if (gHeadRowHeight < kIconSize + 1) {
         gHeadRowHeight = (short)(kIconSize + 1);
     }
@@ -2573,7 +2580,7 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
         RGBColor was;
 
         GetForeColor(&was);
-        rule.red = rule.green = rule.blue = 204 * 257;
+        rule.red = rule.green = rule.blue = 221 * 257;
         RGBForeColor(&rule);
         MoveTo(cell->left, (short)(cell->bottom - 1));
         LineTo((short)(cell->right - 1), (short)(cell->bottom - 1));
