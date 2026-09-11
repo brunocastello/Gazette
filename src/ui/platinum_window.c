@@ -95,8 +95,7 @@ enum {
     kGroupIndent    = 16,
     kIconSize       = 16,       /* the small icon beside a row's name */
     kIconGap        = 3,
-    kBadgePad       = 5,        /* inside the unread badge, either side */
-    kBadgeGap       = 4,        /* between the badge and the name */
+    kCountGap       = 8,        /* between the name and its unread count */
 
     kMinSidebar    = 120,
     kMaxSidebarPad = 160,       /* how much room the right side must keep     */
@@ -273,6 +272,15 @@ static char gStatus[192];
  * application font is", which is what OE asks for and what GetAppFont
  * answers.
  */
+/*
+ * The Appearance control panel's Large System Font — Charcoal unless the
+ * user has said otherwise. The sidebar is chrome: it is what you navigate
+ * with rather than what you read, so it is set in the system's own face,
+ * and so are the headings over the panes.
+ */
+static short gSysFont   = 0;              /* 0 is the system font */
+static short gSysSize   = 12;
+
 static short gViewFont  = kFontIDGeneva;  /* lists, headings, status */
 static short gViewSize  = 12;
 static short gReadFont  = kFontIDGeneva;  /* the article's body       */
@@ -329,7 +337,15 @@ static void DrawHeaderTitle(const Rect *r, const char *text);
 /* Small helpers                                                       */
 /* ------------------------------------------------------------------ */
 
-/* OE's list font: the two lists, both headings, the status line. */
+/* The Large System Font: the sidebar and the headings over the panes. */
+static void UseSysFont(void)
+{
+    TextFont(gSysFont);
+    TextSize(gSysSize);
+    TextFace(normal);
+}
+
+/* OE's list font: the headline list, the article, the status line. */
 static void UseViewFont(void)
 {
     TextFont(gViewFont);
@@ -378,7 +394,35 @@ static void MeasureFonts(void)
     gReadSize  = 12;
     gLabelSize = 9;
 
-    UseViewFont();
+    /*
+     * And the Large System Font, whatever the Appearance control panel has
+     * been set to — Charcoal on a stock Mac OS 9. GetFNum answers 0 for a
+     * name it does not know, and font 0 *is* the system font, so a failure
+     * here lands on the right answer anyway.
+     */
+    {
+        Str255 name;
+        SInt16 points = 0;
+        Style  face   = 0;
+
+        gSysFont = 0;
+        gSysSize = 12;
+        if (GetThemeFont(kThemeSystemFont, smSystemScript, name, &points,
+                         &face) == noErr) {
+            if (name[0] != 0) {
+                short id = 0;
+
+                GetFNum(name, &id);
+                gSysFont = id;
+            }
+            if (points > 0) {
+                gSysSize = points;
+            }
+        }
+    }
+
+    /* The sidebar's rows are set in it, so its metrics are the row's. */
+    UseSysFont();
     GetFontInfo(&info);
     gRowAscent  = info.ascent;
     gRowDescent = info.descent;
@@ -390,15 +434,21 @@ static void MeasureFonts(void)
      * 12, which is nine more than the font needs. Rows ruled a white line
      * apart want that room: at three the lines sat almost on the text.
      */
-    gRowHeight = (short)(info.ascent + info.descent + info.leading + 9);
+    gRowHeight = (short)(info.ascent + info.descent + info.leading + 11);
     if (gRowHeight < kIconSize + 1) {
         gRowHeight = kIconSize + 1;
     }
     gRowBaseline = (short)(info.ascent +
                            ((gRowHeight - info.ascent - info.descent) / 2));
+    /* The headline list is the views font, so its date column measures in
+       that and not in the sidebar's. */
+    UseViewFont();
+    GetFontInfo(&info);
     gDateColumn = (short)(TextWidth("Sep 00 00:00", 0, 12) + kTextInset * 2);
 
-    /* Both chrome bars are set in the same font, so they measure alike. */
+    /* The headings are the system font too, so they measure in it. */
+    UseSysFont();
+    GetFontInfo(&info);
     gHeaderHeight = (short)(info.ascent + info.descent + info.leading + 9);
     if (gHeaderHeight < kHeaderHeight) {
         gHeaderHeight = kHeaderHeight;
@@ -1304,7 +1354,7 @@ static void DrawHeaderTitle(const Rect *r, const char *text)
 {
     Rect inner = *r;
 
-    UseViewFont();
+    UseSysFont();
     TextFace(bold);
     SetThemeTextColor(kThemeTextColorWindowHeaderActive, 8, true);
 
@@ -1464,89 +1514,52 @@ static int GroupUnread(int group)
 }
 
 /*
- * The unread count, as a rounded badge pinned to the right hand end of the
- * row — a shape rather than a number in brackets, so the eye finds it in a
- * column instead of reading to the end of every name to see whether one is
- * there.
+ * The unread count, pinned to the right hand end of the row and set in the
+ * same face, weight and size as the name beside it, a shade of grey down.
  *
- * Answers how wide it is without drawing, so the name knows how much room
- * it has to be truncated into; pass NULL for the rect to ask only.
+ * It was a filled badge for a while. QuickDraw's rounded rectangle cannot
+ * make a convincing capsule at this size — the corner ovals have four or
+ * five pixels to turn in and the ends come out square — and a number
+ * centred by hand inside a shape that small never quite sits right. Text
+ * aligned to a common right edge does the same job: the eye still finds the
+ * column, and nothing has to be drawn to fake a shape the toolbox does not
+ * have.
  */
-/* The badge's own font: a size down from the names beside it, and bold, so
-   a small number still reads out of a filled shape. */
-static void UseBadgeFont(void)
+static void CountText(int count, char *out, size_t cap)
 {
-    TextFont(gViewFont);
-    TextSize(gLabelSize);
-    TextFace(bold);
+    snprintf(out, cap, "(%d)", (count > 0) ? count : 0);
 }
 
-static short BadgeWidth(int count)
+static short CountWidth(int count)
 {
-    char  text[16];
-    short len;
-    short w;
+    char text[16];
 
-    /* Every row carries one, zero included: a column of badges with a gap
-       in it reads as a row that failed to load, not as a row with nothing
-       unread. */
-    snprintf(text, sizeof text, "%d", (count > 0) ? count : 0);
-    len = (short)strlen(text);
-
-    UseBadgeFont();
-    w = (short)TextWidth(text, 0, len);
-
-    /* The caller sets the name's own font after this — measuring must not
-       be what decides it. */
-    return (short)(w + kBadgePad * 2 + kBadgeGap);
+    CountText(count, text, sizeof text);
+    return (short)(TextWidth(text, 0, (short)strlen(text)) + kCountGap);
 }
 
-static void DrawBadge(short right, short baseline, int count)
+static void DrawCount(short right, short baseline, int count, Boolean enabled)
 {
     char     text[16];
     short    len;
-    short    w;
-    short    half;
-    FontInfo badgeFont;
-    Rect     pill;
-    RGBColor fill;
+    RGBColor grey;
     RGBColor save;
 
-    snprintf(text, sizeof text, "%d", (count > 0) ? count : 0);
+    CountText(count, text, sizeof text);
     len = (short)strlen(text);
 
-    UseBadgeFont();
-    w = (short)TextWidth(text, 0, len);
-
-    /*
-     * Sized to the badge's own font rather than to the row's, so the shape
-     * hugs the number. A capsule is a rounded rectangle whose corner ovals
-     * are as wide as the shape is tall; against a pill built for a
-     * twelve-point row the nine-point number left it long and shallow, and
-     * the ends read as square.
-     */
-    GetFontInfo(&badgeFont);
-    half        = (short)((badgeFont.ascent + badgeFont.descent + 3) / 2);
-    pill.right  = right;
-    pill.left   = (short)(right - w - kBadgePad * 2);
-    pill.top    = (short)(baseline - half - badgeFont.descent + 1);
-    pill.bottom = (short)(pill.top + half * 2);
-
     GetForeColor(&save);
+    if (enabled) {
+        grey.red = grey.green = grey.blue = 90 * 257;
+        RGBForeColor(&grey);
+    } else {
+        SetThemeTextColor(kThemeTextColorDialogInactive, 8, true);
+    }
 
-    /* A mid grey the count reads out of in white, which is what the badge
-       does everywhere it turns up and what keeps it quiet next to a name. */
-    fill.red = fill.green = fill.blue = 150 * 257;
-    RGBForeColor(&fill);
-    PaintRoundRect(&pill, (short)(pill.bottom - pill.top),
-                   (short)(pill.bottom - pill.top));
-
-    ForeColor(whiteColor);
-    MoveTo((short)(pill.left + kBadgePad), baseline);
+    MoveTo((short)(right - TextWidth(text, 0, len)), baseline);
     DrawText(text, 0, len);
 
     RGBForeColor(&save);
-    UseViewFont();
 }
 
 /* "Name (12)", with the count only when there is one. Drawn as one string so
@@ -1690,7 +1703,7 @@ static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
         return;
     }
 
-    UseViewFont();
+    UseSysFont();
     baseline = (short)(cell->top + gRowBaseline);
     iconLeft = (short)(cell->left + kTextInset + kTriangleColumn);
 
@@ -1707,19 +1720,16 @@ static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
     }
 
     /*
-     * The badge is measured first and the name's font set after, because
-     * measuring the badge has to switch to the badge's own font and cannot
-     * be trusted to put back a weight it never knew about. It did not: a
-     * category with unread articles came out unbolded, and only a category
-     * with none kept its bold — because a count of zero returns before the
-     * font is touched at all.
+     * The count is set in the row's own face, so the font is chosen first
+     * and the count measured in it — which also means measuring can no
+     * longer clear the weight, as it did when the badge had a font of its
+     * own and put the wrong one back.
      *
      * A category is bold; a feed never is.
      */
-    badge = BadgeWidth(unread);
-
-    UseViewFont();
+    UseSysFont();
     TextFace((r.kind == kGazetteRowGroup) ? bold : normal);
+    badge = CountWidth(unread);
 
     /* The badge is pinned right, so the name is truncated into what is left
        rather than the two overlapping. */
@@ -1768,7 +1778,7 @@ static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
         DrawText(label, 0, labelLen);
     }
 
-    DrawBadge((short)(cell->right - kTextInset), baseline, unread);
+    DrawCount((short)(cell->right - kTextInset), baseline, unread, enabled);
 
     TextFace(normal);
     ForeColor(blackColor);
