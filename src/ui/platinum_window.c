@@ -587,11 +587,12 @@ static void WakeScrollBar(ListHandle list)
     if (bar == NULL || GetControlHilite(bar) != 255) {
         return;
     }
-    /* Draw1Control as well as HiliteControl: the bar is already on screen in
-       its greyed form, and un-greying it without redrawing leaves the grey
-       there until something else happens to repaint it. */
+    /*
+     * Only the hilite. Drawing is the caller's, because this is reached
+     * from places where the port's clip has no business including a scroll
+     * bar — and a redraw that is clipped away still counts as done.
+     */
     HiliteControl(bar, 0);
-    Draw1Control(bar);
 }
 
 /*
@@ -1886,14 +1887,34 @@ static void DrawListPane(ControlRef control, ListHandle list, int rows,
        colour goes down over whatever is there. */
     FillListRemainder(list, rows, brush);
 
-    /* LUpdate greys the bar again on its way past, so this goes after it. */
-    WakeScrollBar(list);
-
     DrawFocusBorder(&view, PaneHasFocus(control));
 
     if (clip != NULL) {
         SetClip(clip);
         DisposeRgn(clip);
+    }
+
+    /*
+     * The bar, now that the clip is back. It could not be done above: the
+     * clip was narrowed to the rows precisely so that nothing in here paints
+     * over the bar, and a control asked to redraw itself inside that clip
+     * draws nothing at all — while still counting as redrawn. So the bar was
+     * un-greyed without ever being repainted, WakeScrollBar saw it was no
+     * longer greyed and did nothing on every later pass, and the pixels sat
+     * there untouched until something erased them. Then the bar was simply
+     * gone until the window was rebuilt, which is why it came back on
+     * relaunch.
+     *
+     * LUpdate greys a bar with nothing to scroll on its way past, so waking
+     * it goes after that and the redraw after both.
+     */
+    WakeScrollBar(list);
+    {
+        ControlRef bar = GetListVerticalScrollBar(list);
+
+        if (bar != NULL) {
+            Draw1Control(bar);
+        }
     }
 }
 
