@@ -497,12 +497,13 @@ static void MeasureFonts(void)
      * second and the space below it can be chosen separately — a block of
      * one or two uniform rows could only ever have one number for all three.
      *
-     * The two lines sit a plain line-height apart, as tight as the font
-     * reads, and the block carries kHeadlinePad above and below it with the
-     * rule in the space underneath.
+     * The two lines sit a line-height and a couple of pixels apart, and the
+     * block carries kHeadlinePad above and below it with the rule in the
+     * space underneath. The row height follows from those: it is half the
+     * block, so loosening the lines makes each article taller.
      */
     {
-        short step  = (short)(info.ascent + info.descent + info.leading);
+        short step  = (short)(info.ascent + info.descent + info.leading + 2);
         short block = (short)(2 * kHeadlinePad + info.ascent + info.descent +
                               step + 1);
 
@@ -2569,14 +2570,20 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
 
     RowRect(full, &cellRect);
 
-    /* Erased end to end, not just across the inset: otherwise a row that has
-       just lost its selection keeps two stripes of highlight where the focus
-       border sits. */
-    EraseWith(full, kThemeBrushWhite);
-
+    /*
+     * Erased end to end, not just across the inset: otherwise a row that has
+     * just lost its selection keeps two stripes of highlight where the focus
+     * border sits.
+     *
+     * A date heading is banded in the grey the sidebar's rows are drawn on,
+     * so the two lists answer each other; everything else is on white.
+     */
     if (row < 0 || row >= gHeadRowCount) {
+        EraseWith(full, kThemeBrushWhite);
         return;
     }
+    EraseWith(full, (gHeadRows[row].kind == kHeadlineDate)
+                        ? kThemeBrushListViewBackground : kThemeBrushWhite);
 
     baseline = (short)(cell->top +
                        ((gHeadRows[row].kind == kHeadlineCont)
@@ -2612,15 +2619,13 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
      * rather than having a line drawn across it.
      */
     if (row + 1 >= gHeadRowCount || gHeadRows[row + 1].kind != kHeadlineCont) {
-        RGBColor rule;
-        RGBColor was;
+        Rect line;
 
-        GetForeColor(&was);
-        rule.red = rule.green = rule.blue = 221 * 257;
-        RGBForeColor(&rule);
-        MoveTo(cell->left, (short)(cell->bottom - 1));
-        LineTo((short)(cell->right - 1), (short)(cell->bottom - 1));
-        RGBForeColor(&was);
+        /* Erased rather than drawn, so that it is exactly the brush the
+           sidebar is filled with rather than a grey picked to look like it. */
+        SetRect(&line, cell->left, (short)(cell->bottom - 1), cell->right,
+                cell->bottom);
+        EraseWith(&line, kThemeBrushListViewBackground);
     }
 
     (void)selected;
