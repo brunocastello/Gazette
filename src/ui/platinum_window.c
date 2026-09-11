@@ -339,6 +339,8 @@ static char     gReaderText[2 * kGazetteExtractMax + 512];
 static void Layout(void);
 static ControlRef MakeControl(const Rect *bounds, short procID, short value);
 static void DrawFocusBorder(const Rect *view, Boolean on);
+static void FillFocusColour(const Rect *r);
+static void RestoreRowFocusEdges(const Rect *full, ControlRef owner);
 static void RefreshFocusBorder(ListHandle list);
 static void SetReaderText(void);
 static void SizeReader(void);
@@ -1565,7 +1567,13 @@ static void DrawRowIcon(const Rect *cell, short left, IconRef icon,
     if (icon == NULL) {
         return;
     }
-    top = (short)(cell->top + ((cell->bottom - cell->top - kIconSize) / 2));
+    /*
+     * Centred in a row's full height, not in whatever is left of the
+     * rectangle. The List Manager truncates the last cell's rectangle at the
+     * foot of the view, so centring in it walked the icon upwards a pixel at
+     * a time as a divider was dragged — the "bumping".
+     */
+    top = (short)(cell->top + ((gRowHeight - kIconSize) / 2));
     SetRect(&box, left, top, (short)(left + kIconSize),
             (short)(top + kIconSize));
 
@@ -1964,7 +1972,14 @@ static Boolean RowFullyVisible(ListHandle list, const Rect *cellRect)
     Rect view;
 
     ListView(list, &view);
-    return (Boolean)(cellRect->bottom <= view.bottom);
+
+    /*
+     * Measured from the row's top plus a whole row, because the rectangle
+     * handed in has already been cut off at the foot of the view — so its
+     * own bottom always looks as though it fits, however little of the row
+     * is really there.
+     */
+    return (Boolean)(cellRect->top + gRowHeight <= view.bottom);
 }
 
 static pascal void SidebarLDEF(short message, Boolean isSelected, Rect *cellRect,
@@ -2027,16 +2042,20 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
 
     RowRect(full, &cellRect);
 
+    /* Erased end to end, not just across the inset: otherwise a row that has
+       just lost its selection keeps two stripes of highlight where the focus
+       border sits. */
+    EraseWith(full, kThemeBrushWhite);
+
     if (row < 0 || row >= gHeadRowCount) {
-        EraseWith(&cellRect, kThemeBrushWhite);
+        RestoreRowFocusEdges(full, gArticleCtl);
         return;
     }
 
     baseline = (short)(cell->top + gRowBaseline);
 
-    EraseWith(cell, kThemeBrushWhite);
-
     if (gHeadRows[row].kind == kHeadlineDate) {
+        RestoreRowFocusEdges(full, gArticleCtl);
         DrawDateHeading(cell, gHeadRows[row].article);
         TextFace(normal);
         ForeColor(blackColor);
@@ -2046,15 +2065,24 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
     article = gHeadRows[row].article;
     a       = GazetteFeedsArticleAt(article);
     if (a == NULL) {
+        RestoreRowFocusEdges(full, gArticleCtl);
         return;
     }
 
-    /* A selected headline gets a background across the whole row — it is a
-       line in a list of them, not a name to be boxed. Down first, so the
-       headline is drawn on top of it. */
+    /*
+     * A selected headline is filled end to end — the whole width of the row,
+     * not the part of it the text sits in. Down first, so the headline is
+     * drawn on top of it.
+     *
+     * That takes the focus border's two pixels with it at either end, so
+     * they go straight back: a row is redrawn on its own often enough that
+     * waiting for the pane to be redrawn would leave the border notched for
+     * as long as the mouse was down.
+     */
     if (selected) {
-        FillHighlight(cell);
+        FillHighlight(full);
     }
+    RestoreRowFocusEdges(full, gArticleCtl);
 
     /* The document icon every article carries, and then its headline. The
        date is gone from the row: it is in the heading above and, to the
@@ -2372,6 +2400,42 @@ static void DrawReader(void)
  * the rectangle it is given and in the theme's highlight colour. This is
  * OE's, and OE's is what was asked for.
  */
+/*
+ * Put back the two pixels of focus border a full-width row paints over. A
+ * row is redrawn on its own often enough — a selection moving, a click
+ * tracking — that waiting for the pane to be redrawn would leave the border
+ * notched for as long as the mouse was down.
+ */
+static void RestoreRowFocusEdges(const Rect *full, ControlRef owner)
+{
+    Rect edge;
+
+    if (!PaneHasFocus(owner)) {
+        return;
+    }
+    SetRect(&edge, full->left, full->top,
+            (short)(full->left + kFocusBorder), full->bottom);
+    FillFocusColour(&edge);
+    SetRect(&edge, (short)(full->right - kFocusBorder), full->top,
+            full->right, full->bottom);
+    FillFocusColour(&edge);
+}
+
+/* The focus border's colour, painted into a rectangle. */
+static void FillFocusColour(const Rect *r)
+{
+    RGBColor blue;
+    RGBColor save;
+
+    GetForeColor(&save);
+    blue.red   = 91 * 257;
+    blue.green = 91 * 257;
+    blue.blue  = 197 * 257;
+    RGBForeColor(&blue);
+    PaintRect(r);
+    RGBForeColor(&save);
+}
+
 static void DrawFocusBorder(const Rect *view, Boolean on)
 {
     RGBColor blue;
