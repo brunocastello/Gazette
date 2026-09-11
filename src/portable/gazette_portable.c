@@ -400,6 +400,51 @@ static const GzAsciiSub kAsciiSubs[] = {
     { 0x00B0UL, " deg" },
     { 0x00AEUL, "(R)"  }, { 0x00A9UL, "(C)"  }, { 0x2122UL, "(TM)" },
     { 0x00BDUL, "1/2"  }, { 0x00BCUL, "1/4"  }, { 0x00BEUL, "3/4"  },
+    { 0x2153UL, "1/3"  }, { 0x2154UL, "2/3"  },
+    { 0x00B9UL, "1"    }, { 0x00B2UL, "2"    }, { 0x00B3UL, "3"    },
+
+    /* More punctuation. A news feed carries all of these sooner or later,
+       and every one of them used to arrive as a question mark. */
+    { 0x2010UL, "-"    }, { 0x2011UL, "-"    }, { 0x2012UL, "-"    },
+    { 0x2015UL, "--"   }, { 0x2212UL, "-"    },
+    { 0x201AUL, "'"    }, { 0x201BUL, "'"    },
+    { 0x201EUL, "\""   }, { 0x201FUL, "\""   },
+    { 0x00ABUL, "<<"   }, { 0x00BBUL, ">>"   },
+    { 0x2039UL, "<"    }, { 0x203AUL, ">"    },
+    { 0x2032UL, "'"    }, { 0x2033UL, "\""   },
+    { 0x02BCUL, "'"    }, { 0x02BBUL, "'"    },
+    { 0x2020UL, "+"    }, { 0x2021UL, "++"   },
+    { 0x00A7UL, "S."   }, { 0x00B6UL, "P."   },
+    { 0x00A1UL, "!"    }, { 0x00BFUL, "?"    },
+    { 0x2044UL, "/"    }, { 0x2215UL, "/"    },
+    { 0x2190UL, "<-"   }, { 0x2192UL, "->"   }, { 0x2194UL, "<->"  },
+    { 0x00D7UL, "x"    }, { 0x00F7UL, "/"    }, { 0x00B1UL, "+/-"  },
+    { 0x2264UL, "<="   }, { 0x2265UL, ">="   }, { 0x2260UL, "!="   },
+    { 0x221EUL, "inf"  }, { 0x2248UL, "~"    },
+    { 0x00B5UL, "u"    }, { 0x2030UL, "0/00" },
+    { 0x200BUL, ""     }, { 0x2060UL, ""     },
+    { 0x2028UL, " "    }, { 0x2029UL, " "    }, { 0x2005UL, " "    },
+    { 0x2004UL, " "    }, { 0x2006UL, " "    }, { 0x2008UL, " "    },
+    { 0x200AUL, " "    },
+
+    /*
+     * Currency. The symbols a Mac OS 9 reader cannot draw become their
+     * three-letter codes, which is what a wire service would have written
+     * before the symbols existed: "EUR 5 billion" reads, "? 5 billion" does
+     * not.
+     */
+    { 0x20ACUL, "EUR"  }, { 0x00A3UL, "GBP"  }, { 0x00A5UL, "JPY"  },
+    { 0x20B9UL, "INR"  }, { 0x20BDUL, "RUB"  }, { 0x20A9UL, "KRW"  },
+    { 0x20BAUL, "TRY"  }, { 0x20B4UL, "UAH"  }, { 0x20AAUL, "ILS"  },
+    { 0x20B1UL, "PHP"  }, { 0x0E3FUL, "THB"  }, { 0x20A6UL, "NGN"  },
+    { 0x00A2UL, "c"    }, { 0x00A4UL, "$"    },
+
+    /* Ligatures the range table below cannot express in one letter. */
+    { 0x0152UL, "OE"   }, { 0x0153UL, "oe"   },
+    { 0x0132UL, "IJ"   }, { 0x0133UL, "ij"   },
+    { 0xFB01UL, "fi"   }, { 0xFB02UL, "fl"   },
+    { 0x00DEUL, "Th"   }, { 0x00FEUL, "th"   },
+    { 0x00D0UL, "D"    }, { 0x00F0UL, "d"    },
 
     /* Lowercase with diacritics */
     { 0x00E1UL, "a" }, { 0x00E0UL, "a" }, { 0x00E2UL, "a" },
@@ -425,6 +470,40 @@ static const GzAsciiSub kAsciiSubs[] = {
     { 0x00DAUL, "U" }, { 0x00D9UL, "U" }, { 0x00DBUL, "U" }, { 0x00DCUL, "U" },
     { 0x00DDUL, "Y" }, { 0x00C7UL, "C" }, { 0x00D1UL, "N" }
 };
+
+/*
+ * Latin Extended-A, U+0100 to U+017F, as the plain letter each one is built
+ * on: one character per code point, in order. That block is where most of
+ * Europe's names live — Polish, Czech, Croatian, Hungarian, Turkish,
+ * Romanian, the Baltics — and a news feed is full of them. Spelling every
+ * entry out in the table above would be a hundred and twenty-eight lines to
+ * say "it is an s with something on it"; a string says it once.
+ *
+ * The four that are two letters rather than one — the OE and IJ ligatures —
+ * are in the table above and are found first.
+ */
+static const char kLatinExtA[] =
+    "AaAaAa"            /* 0100 */
+    "CcCcCcCc"          /* 0106 */
+    "DdDd"              /* 010E */
+    "EeEeEeEeEe"        /* 0112 */
+    "GgGgGgGg"          /* 011C */
+    "HhHh"              /* 0124 */
+    "IiIiIiIiIi"        /* 0128 */
+    "Ii"                /* 0132 */
+    "Jj"                /* 0134 */
+    "Kkk"               /* 0136 */
+    "LlLlLlLlLl"        /* 0139 */
+    "NnNnNnnNn"         /* 0143 */
+    "OoOoOoOo"          /* 014C */
+    "RrRrRr"            /* 0154 */
+    "SsSsSsSs"          /* 015A */
+    "TtTtTt"            /* 0162 */
+    "UuUuUuUuUuUu"      /* 0168 */
+    "Ww"                /* 0174 */
+    "YyY"               /* 0176 */
+    "ZzZzZz"            /* 0179 */
+    "s";                /* 017F */
 
 /*
  * Decode one UTF-8 sequence at src[*off]. Stores the code point and advances
@@ -505,6 +584,20 @@ size_t gz_utf8_to_ascii(const char *src, size_t len, char *out, size_t cap)
                 break;
             }
         }
+        /*
+         * Latin Extended-A falls back to its base letter rather than to a
+         * question mark. A name is still readable with its diacritics
+         * stripped; it is not readable as "?".
+         */
+        if (rep == NULL && cp >= 0x0100UL && cp <= 0x017FUL) {
+            char base = kLatinExtA[cp - 0x0100UL];
+
+            if (base != '\0') {
+                out[written++] = base;
+                continue;
+            }
+        }
+
         if (rep == NULL) {
             out[written++] = '?';
             continue;

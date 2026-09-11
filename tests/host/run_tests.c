@@ -246,6 +246,33 @@ static void TestAsciiText(void)
     }
 
     {
+        /* The euro is the one that started this: a currency symbol Geneva
+           cannot draw became a question mark, and "? 5 billion" is not a
+           sentence. The wire-service spelling is. */
+        const char *in = "\xE2\x82\xAC""5bn and \xC2\xA3""3bn";
+        gz_utf8_to_ascii(in, strlen(in), out, sizeof out);
+        CheckStr("currency symbols become their codes", out,
+                 "EUR5bn and GBP3bn");
+    }
+
+    {
+        /* Latin Extended-A falls back to the letter underneath rather than
+           to '?': a name with its diacritics stripped is still readable. */
+        const char *in = "Lech Wa\xC5\x82\xC4\x99sa, Novak \xC4\x90okovi\xC4\x87";
+        gz_utf8_to_ascii(in, strlen(in), out, sizeof out);
+        CheckStr("Latin Extended-A keeps its base letters", out,
+                 "Lech Walesa, Novak Dokovic");
+    }
+
+    {
+        /* The two-letter ligatures are found before the range table, which
+           could only ever give one letter. */
+        const char *in = "\xC5\x92uvre";
+        gz_utf8_to_ascii(in, strlen(in), out, sizeof out);
+        CheckStr("the OE ligature is two letters", out, "OEuvre");
+    }
+
+    {
         /* A truncated sequence must consume a byte and keep going rather
            than reading past the end of the buffer. */
         const char *in = "ab\xC3";

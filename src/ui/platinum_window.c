@@ -618,6 +618,32 @@ static void SelectRow(ListHandle list, int row, Boolean reveal)
     if (reveal) {
         LAutoScroll(list);
     }
+    RefreshFocusBorder(list);
+}
+
+/*
+ * Put the focus border back. A cell is drawn across the whole width of the
+ * view, so anything that redraws one — a selection moving, a click tracking
+ * through the rows — paints over the two pixels of border at either end of
+ * that row. Cheaper to restore it afterwards than to teach the list
+ * definition function to leave a margin.
+ */
+static void RefreshFocusBorder(ListHandle list)
+{
+    ControlRef control;
+    Rect       view;
+
+    if (gWindow == NULL || list == NULL) {
+        return;
+    }
+    control = (list == gSidebarList) ? gSidebarCtl
+            : (list == gArticleList) ? gArticleCtl : NULL;
+    if (control == NULL || GetControlValue(control) == 0) {
+        return;
+    }
+    SetPortWindowPort(gWindow);
+    ListView(list, &view);
+    DrawFocusBorder(&view, true);
 }
 
 static int SelectedListRow(ListHandle list)
@@ -1755,12 +1781,7 @@ static void DrawListPane(ControlRef control, ListHandle list, int rows,
     /* LUpdate greys the bar again on its way past, so this goes after it. */
     WakeScrollBar(list);
 
-    if (GetControlValue(control) != 0) {
-        Rect ring = view;
-
-        InsetRect(&ring, 1, 1);
-        (void)DrawThemeFocusRect(&ring, true);
-    }
+    DrawFocusBorder(&view, (Boolean)(GetControlValue(control) != 0));
 
     if (clip != NULL) {
         SetClip(clip);
@@ -1884,12 +1905,9 @@ static pascal void ReaderDraw(ControlRef control, SInt16 part)
 
     /* Round the text only, stopping short of the scroll bar — the same rule
        the two lists follow. */
-    if (gReaderCtl != NULL && GetControlValue(gReaderCtl) != 0) {
-        Rect ring = gReaderRect;
-
-        InsetRect(&ring, 1, 1);
-        (void)DrawThemeFocusRect(&ring, true);
-    }
+    DrawFocusBorder(&gReaderRect,
+                    (Boolean)(gReaderCtl != NULL &&
+                              GetControlValue(gReaderCtl) != 0));
 }
 
 static void DrawReader(void)
@@ -1899,6 +1917,46 @@ static void DrawReader(void)
     }
     SetPortWindowPort(gWindow);
     Draw1Control(gReaderCtl);
+}
+
+/*
+ * The focus border. Outlook Express marks the pane the keyboard is talking
+ * to with a two-pixel blue rectangle just inside the view's own edges —
+ * measured at (91,91,197), two pixels thick, sitting in the outermost two
+ * pixels of the rows area and stopping at the scroll bar's left edge rather
+ * than going round it.
+ *
+ * Not DrawThemeFocusRect, which draws Platinum's own focus ring *outside*
+ * the rectangle it is given and in the theme's highlight colour. This is
+ * OE's, and OE's is what was asked for.
+ */
+static void DrawFocusBorder(const Rect *view, Boolean on)
+{
+    RGBColor blue;
+    Rect     r = *view;
+    short    i;
+
+    if (view->right <= view->left || view->bottom <= view->top) {
+        return;
+    }
+
+    if (on) {
+        blue.red   = 91 * 257;
+        blue.green = 91 * 257;
+        blue.blue  = 197 * 257;
+        RGBForeColor(&blue);
+    } else {
+        /* Rubbing it out again: the same two pixels in whatever the view is
+           backed with, so the rows keep their own colour behind them. */
+        return;
+    }
+
+    PenNormal();
+    for (i = 0; i < 2; i++) {
+        FrameRect(&r);
+        InsetRect(&r, 1, 1);
+    }
+    ForeColor(blackColor);
 }
 
 /* One line of a groove, in the grey given. */
@@ -2364,6 +2422,7 @@ static void SidebarClicked(Point where, EventModifiers modifiers)
     }
 
     (void)LClick(where, modifiers, gSidebarList);
+    RefreshFocusBorder(gSidebarList);
 
     at = SelectedListRow(gSidebarList);
     if (at < 0) {
@@ -2481,6 +2540,7 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
     if (PtInRect(where, &gListPane)) {
         SetFocus(kRefList);
         (void)LClick(where, modifiers, gArticleList);
+        RefreshFocusBorder(gArticleList);
         {
             int row = SelectedListRow(gArticleList);
 
