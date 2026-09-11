@@ -749,21 +749,27 @@ static void Layout(void)
          * which left the line looking cut.
          */
         /*
-         * The headline header starts one pixel past the groove's black line
-         * rather than clear of the whole groove — glued to the border, the
-         * way OE's is, instead of floating two pixels off it.
+         * The headline header starts *on* the groove's black column, so its
+         * own left edge line falls on that black rather than beside it.
+         * One pixel further right and the two sat side by side, two black
+         * lines where the border should be one.
          */
         SetRect(&gSidebarHeader, (short)(bounds.left - 1), headTop,
                 split, headBot);
-        SetRect(&gListHeader, (short)(split + 6), headTop,
+        SetRect(&gListHeader, (short)(split + 5), headTop,
                 (short)(bounds.right + 1), headBot);
 
         SetRect(&gVDivider, split, bounds.top,
                 (short)(split + kVDividerWidth), contentBottom);
 
-        /* Flush to the divider on the right — the sidebar's scroll bar edge
-           is the groove's first black line — and to the status rule below. */
-        SetRect(&gSidebarPane, bounds.left, headBot, split,
+        /*
+         * A pane starts one pixel *inside* the header above it, so that its
+         * scroll bar's top edge lands on the header's own black rule rather
+         * than drawing a second line directly under it. Now that the header
+         * draws that rule, the two were stacking up two pixels thick
+         * wherever a bar met a header.
+         */
+        SetRect(&gSidebarPane, bounds.left, (short)(headBot - 1), split,
                 (short)(contentBottom + 1));
 
         rightLeft = gVDivider.right;
@@ -778,15 +784,8 @@ static void Layout(void)
             listBottom = (short)(contentBottom - kMinReader - kHDividerWidth);
         }
 
-        /*
-         * Two pixels further down than the rows need, so the scroll bar's
-         * bottom edge lands against the groove's first black line instead of
-         * leaving grey between them. OE's bar does the same: at the rows its
-         * splitter shows two pixels of grey before the black, at the bar
-         * none at all.
-         */
-        SetRect(&gListPane, rightLeft, headBot,
-                (short)(bounds.right + 1), (short)(listBottom + 2));
+        SetRect(&gListPane, rightLeft, (short)(headBot - 1),
+                (short)(bounds.right + 1), listBottom);
 
         /*
          * Starting on the vertical groove's own black column, so the two
@@ -803,12 +802,12 @@ static void Layout(void)
          * adding a third line under them. Measured: black, white, then
          * another black — that last one was this.
          */
-        SetRect(&gReaderHeader, (short)(split + 6),
+        SetRect(&gReaderHeader, (short)(split + 5),
                 (short)(gHDivider.bottom - 2),
                 (short)(bounds.right + 1),
                 (short)(gHDivider.bottom - 2 + gReaderHeaderHeight));
 
-        SetRect(&gReaderPane, rightLeft, gReaderHeader.bottom,
+        SetRect(&gReaderPane, rightLeft, (short)(gReaderHeader.bottom - 1),
                 (short)(bounds.right + 1), (short)(contentBottom + 1));
         SetRect(&gReaderRect, gReaderPane.left, gReaderPane.top,
                 (short)(gReaderPane.right - kScrollWidth),
