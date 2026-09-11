@@ -1906,17 +1906,69 @@ static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
     ForeColor(blackColor);
 }
 
+/*
+ * Draw a cell with the port clipped to the list's own view.
+ *
+ * The List Manager hands the definition function a rectangle it worked out
+ * from the view as it was, and that rectangle can outlive the view: drag a
+ * divider and the list is resized under it, so a row that was the last one
+ * on screen is now past the bottom — and it was still being drawn there,
+ * over the divider and into the pane below. Clipping here rather than
+ * trusting whoever called in means a row can never leave its list, however
+ * it was reached.
+ */
+static void ClipToList(ListHandle list, RgnHandle *saved)
+{
+    Rect view;
+
+    *saved = NewRgn();
+    if (*saved != NULL) {
+        GetClip(*saved);
+    }
+    ListView(list, &view);
+    if (view.right > view.left) {
+        Rect now;
+        RgnHandle rgn = NewRgn();
+
+        if (rgn != NULL) {
+            GetClip(rgn);
+            GetRegionBounds(rgn, &now);
+            DisposeRgn(rgn);
+
+            /* Narrow to whichever is smaller, so an update region that is
+               already tighter than the view is not widened. */
+            if (now.left   > view.left)   view.left   = now.left;
+            if (now.top    > view.top)    view.top    = now.top;
+            if (now.right  < view.right)  view.right  = now.right;
+            if (now.bottom < view.bottom) view.bottom = now.bottom;
+        }
+        ClipRect(&view);
+    }
+}
+
+static void UnclipList(RgnHandle saved)
+{
+    if (saved != NULL) {
+        SetClip(saved);
+        DisposeRgn(saved);
+    }
+}
+
 static pascal void SidebarLDEF(short message, Boolean isSelected, Rect *cellRect,
                                Cell cell, short dataOffset, short dataLen,
                                ListHandle list)
 {
+    RgnHandle saved = NULL;
+
     (void)dataOffset;
     (void)dataLen;
-    (void)list;
 
-    if (message == lDrawMsg || message == lHiliteMsg) {
-        DrawSidebarCell(cellRect, cell.v, isSelected);
+    if (message != lDrawMsg && message != lHiliteMsg) {
+        return;
     }
+    ClipToList(list, &saved);
+    DrawSidebarCell(cellRect, cell.v, isSelected);
+    UnclipList(saved);
 }
 
 /* A day's heading: the relative day, in the system font, grey. */
@@ -1959,26 +2011,20 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
     RowRect(full, &cellRect);
 
     if (row < 0 || row >= gHeadRowCount) {
-        EraseWith(cell, kThemeBrushWhite);
+        EraseWith(&cellRect, kThemeBrushWhite);
         return;
     }
 
     baseline = (short)(cell->top + gRowBaseline);
 
-    /*
-     * A heading sits on the same grey the feeds list is drawn on, so it
-     * reads as a band across the white rather than as an article that
-     * happens to be a date.
-     */
+    EraseWith(cell, kThemeBrushWhite);
+
     if (gHeadRows[row].kind == kHeadlineDate) {
-        EraseWith(cell, kThemeBrushListViewBackground);
         DrawDateHeading(cell, gHeadRows[row].article);
         TextFace(normal);
         ForeColor(blackColor);
         return;
     }
-
-    EraseWith(cell, kThemeBrushWhite);
 
     article = gHeadRows[row].article;
     a       = GazetteFeedsArticleAt(article);
@@ -2026,13 +2072,17 @@ static pascal void ArticleLDEF(short message, Boolean isSelected, Rect *cellRect
                                Cell cell, short dataOffset, short dataLen,
                                ListHandle list)
 {
+    RgnHandle saved = NULL;
+
     (void)dataOffset;
     (void)dataLen;
-    (void)list;
 
-    if (message == lDrawMsg || message == lHiliteMsg) {
-        DrawArticleCell(cellRect, cell.v, isSelected);
+    if (message != lDrawMsg && message != lHiliteMsg) {
+        return;
     }
+    ClipToList(list, &saved);
+    DrawArticleCell(cellRect, cell.v, isSelected);
+    UnclipList(saved);
 }
 
 /* ------------------------------------------------------------------ */
