@@ -346,13 +346,12 @@ static TEHandle gReaderTE;
 static char     gReaderText[2 * kGazetteExtractMax + 512];
 
 static void Layout(void);
+static void ListViewIn(const Rect *pane, Rect *view);
 static short ReaderHeaderHeightFor(short lines);
 static short ReaderTitleLineCount(void);
 static short ReaderTitleWidth(void);
 static ControlRef MakeControl(const Rect *bounds, short procID, short value);
 static void DrawFocusBorder(const Rect *view, Boolean on);
-static void FillFocusColour(const Rect *r);
-static void RestoreRowFocusEdges(const Rect *full, ControlRef owner);
 static void RefreshFocusBorder(ListHandle list);
 static void SetReaderText(void);
 static void SizeReader(void);
@@ -629,9 +628,7 @@ static short ReaderTitleLineCount(void)
     GetPort(&savePort);
     SetPortWindowPort(gWindow);
     UseSysFont();
-    TextFace(bold);
     n = WrapTitle(gArticleTitle, ReaderTitleWidth(), starts, lens);
-    TextFace(normal);
     SetPort(savePort);
 
     return (n < 1) ? 1 : n;
@@ -719,6 +716,56 @@ static void ListViewIn(const Rect *pane, Rect *view)
      */
     SetRect(view, pane->left, (short)(pane->top + 1),
             (short)(pane->right - kScrollWidth), pane->bottom);
+}
+
+/*
+ * Where the rows go: the frame, less the two pixels at every edge that the
+ * focus border is drawn in.
+ *
+ * The List Manager scrolls by copying pixels — ScrollRect over its own view
+ * rectangle — so anything drawn inside that rectangle travels with the rows.
+ * The border used to be drawn on the frame *and* handed to the List Manager
+ * as its view, so scrolling carried the blue top edge down into the middle
+ * of the list and left it there, under whatever row it landed on. Keeping
+ * the border outside the rectangle the List Manager knows about is the whole
+ * fix: it cannot scroll what it cannot see.
+ */
+static void ListRowsIn(const Rect *pane, Rect *view)
+{
+    ListViewIn(pane, view);
+    InsetRect(view, kFocusBorder, kFocusBorder);
+}
+
+/* The frame a list is drawn in — its rows, plus the border around them. */
+static void ListFrame(ListHandle list, Rect *frame)
+{
+    ListView(list, frame);
+    InsetRect(frame, (short)-kFocusBorder, (short)-kFocusBorder);
+}
+
+/*
+ * Put the scroll bar back where the frame says it goes. The List Manager
+ * hangs its bar off the view rectangle it was given, and that rectangle is
+ * now inset by the border — so left alone the bar would move in two pixels
+ * and come up short at both ends.
+ */
+static void PlaceListScrollBar(ListHandle list, const Rect *pane)
+{
+    ControlRef bar;
+    Rect       frame;
+    Rect       want;
+
+    if (list == NULL) {
+        return;
+    }
+    bar = GetListVerticalScrollBar(list);
+    if (bar == NULL) {
+        return;
+    }
+    ListViewIn(pane, &frame);
+    SetRect(&want, (short)(frame.right + 1), (short)(frame.top - 1),
+            (short)(frame.right + 1 + kScrollWidth), (short)(frame.bottom + 1));
+    SetControlBounds(bar, &want);
 }
 
 /* Does this pane wear the focus border? */
@@ -952,7 +999,7 @@ static void RefreshFocusBorder(ListHandle list)
         return;
     }
     SetPortWindowPort(gWindow);
-    ListView(list, &view);
+    ListFrame(list, &view);
     DrawFocusBorder(&view, true);
 }
 
@@ -1026,7 +1073,7 @@ static void SizeListPane(ControlRef control, ListHandle list,
     }
     LSetDrawingMode(false, list);
 
-    ListViewIn(bounds, &view);
+    ListRowsIn(bounds, &view);
     SetListViewBounds(list, &view);
     LSize((short)(view.right - view.left),
           (short)(view.bottom - view.top), list);
@@ -1036,6 +1083,7 @@ static void SizeListPane(ControlRef control, ListHandle list,
     if (cell.h > 0) {
         LCellSize(cell, list);
     }
+    PlaceListScrollBar(list, bounds);
     LSetDrawingMode(true, list);
     WakeScrollBar(list);
 }
@@ -1240,14 +1288,30 @@ static void Layout(void)
 /* a lie about what the pane is.                                       */
 /* ------------------------------------------------------------------ */
 
-/* The view is the pane less its margin. The destination rectangle is the
-   same box, and it is its top that moves when the article is scrolled. */
+/*
+ * The view is the pane less the focus border, and no less: text is clipped
+ * where the frame is, not short of it. Insetting the view by the margin
+ * instead cut a line of text off and then left a band of white between the
+ * cut and the border, which reads as the article stopping early rather than
+ * as it running on.
+ *
+ * The margin belongs to the destination rectangle: the first line starts a
+ * margin below the top of the view and the scrollable height carries a
+ * margin at each end, so the article has its air at top and bottom without
+ * the view giving any up.
+ */
 static void ReaderRects(Rect *view)
 {
     SetRect(view, (short)(gReaderRect.left + kTextInset),
-            (short)(gReaderRect.top + kReaderMargin),
+            (short)(gReaderRect.top + kFocusBorder),
             (short)(gReaderRect.right - kTextInset),
-            (short)(gReaderRect.bottom - kReaderMargin));
+            (short)(gReaderRect.bottom - kFocusBorder));
+}
+
+/* Where the first line of the article sits when it is scrolled to the top. */
+static short ReaderTextTop(const Rect *view)
+{
+    return (short)(view->top + kReaderMargin);
 }
 
 /* How far down the article the view has been scrolled, in pixels. Styled
@@ -1258,7 +1322,8 @@ static short ReaderOffset(void)
     if (gReaderTE == NULL) {
         return 0;
     }
-    return (short)((**gReaderTE).viewRect.top - (**gReaderTE).destRect.top);
+    return (short)(ReaderTextTop(&(**gReaderTE).viewRect) -
+                   (**gReaderTE).destRect.top);
 }
 
 static short ReaderMaxOffset(void)
@@ -1269,7 +1334,10 @@ static short ReaderMaxOffset(void)
     if (gReaderTE == NULL) {
         return 0;
     }
-    height = TEGetHeight((**gReaderTE).nLines, 0, gReaderTE);
+    /* The margin at each end scrolls with the article, so it counts towards
+       how far there is to scroll. */
+    height = TEGetHeight((**gReaderTE).nLines, 0, gReaderTE) +
+             2 * kReaderMargin;
     view   = (**gReaderTE).viewRect.bottom - (**gReaderTE).viewRect.top;
 
     if (height <= view) {
@@ -1339,6 +1407,15 @@ static void ScrollReaderTo(short offset)
         GetClip(save);
     }
     ClipRect(&gReaderRect);
+
+    /*
+     * Say what the strip coming into view is to be erased with. TEScroll
+     * erases it with the port's background, and the port's background is
+     * whatever the last thing to draw happened to leave behind — the
+     * sidebar's grey, if that was it — which is where the wrong colour
+     * behind a scrolled article came from.
+     */
+    SetThemeBackground(kThemeBrushWhite, 8, true);
 
     TEScroll(0, (short)(now - offset), gReaderTE);
 
@@ -1522,6 +1599,7 @@ static void SetReaderText(void)
     ReaderRects(&view);
     (**gReaderTE).viewRect = view;
     (**gReaderTE).destRect = view;
+    (**gReaderTE).destRect.top = ReaderTextTop(&view);
     TECalText(gReaderTE);
     SyncReaderScroll();
 
@@ -1554,6 +1632,7 @@ static void SizeReader(void)
     ReaderRects(&view);
     (**gReaderTE).viewRect = view;
     (**gReaderTE).destRect = view;
+    (**gReaderTE).destRect.top = ReaderTextTop(&view);
     TECalText(gReaderTE);
 
     max = ReaderMaxOffset();
@@ -1563,7 +1642,7 @@ static void SizeReader(void)
     if (was < 0) {
         was = 0;
     }
-    (**gReaderTE).destRect.top = (short)(view.top - was);
+    (**gReaderTE).destRect.top = (short)(ReaderTextTop(&view) - was);
 
     SyncReaderScroll();
     SetPort(savePort);
@@ -1955,17 +2034,14 @@ static void EraseWith(const Rect *r, ThemeBrush brush)
  * the only one that draws a triangle.
  */
 /*
- * A row never draws in the two pixels at either edge of the view, because
- * that is where the focus border lives. Redrawing it afterwards is not
- * enough: the List Manager repaints the row under the mouse over and over
- * while a click is held, so the border was being cut through for as long as
- * the button was down and only healed on release.
+ * A row occupies the whole of the rectangle it is given. It used to be inset
+ * to keep clear of the focus border, which was drawn inside the list's own
+ * view; the border is outside that view now, so there is nothing to keep
+ * clear of and a selection can fill the row end to end.
  */
 static void RowRect(const Rect *cell, Rect *out)
 {
     *out = *cell;
-    out->left  = (short)(out->left + kFocusBorder);
-    out->right = (short)(out->right - kFocusBorder);
 }
 
 static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
@@ -2220,14 +2296,12 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
     EraseWith(full, kThemeBrushWhite);
 
     if (row < 0 || row >= gHeadRowCount) {
-        RestoreRowFocusEdges(full, gArticleCtl);
         return;
     }
 
     baseline = (short)(cell->top + gRowBaseline);
 
     if (gHeadRows[row].kind == kHeadlineDate) {
-        RestoreRowFocusEdges(full, gArticleCtl);
         DrawDateHeading(cell, gHeadRows[row].article);
         TextFace(normal);
         ForeColor(blackColor);
@@ -2237,24 +2311,16 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
     article = gHeadRows[row].article;
     a       = GazetteFeedsArticleAt(article);
     if (a == NULL) {
-        RestoreRowFocusEdges(full, gArticleCtl);
         return;
     }
 
     /*
-     * A selected headline is filled end to end — the whole width of the row,
-     * not the part of it the text sits in. Down first, so the headline is
-     * drawn on top of it.
-     *
-     * That takes the focus border's two pixels with it at either end, so
-     * they go straight back: a row is redrawn on its own often enough that
-     * waiting for the pane to be redrawn would leave the border notched for
-     * as long as the mouse was down.
+     * A selected headline is filled end to end — the whole width of the row.
+     * Down first, so the headline is drawn on top of it.
      */
     if (selected) {
         FillHighlight(full);
     }
-    RestoreRowFocusEdges(full, gArticleCtl);
 
     /* The document icon every article carries, and then its headline. The
        date is gone from the row: it is in the heading above and, to the
@@ -2369,7 +2435,7 @@ static void DrawListPane(ControlRef control, ListHandle list, int rows,
     }
     SetPortWindowPort(gWindow);
     GetControlBounds(control, &pane);
-    ListView(list, &view);
+    ListFrame(list, &view);
     if (view.right <= view.left) {
         return;
     }
@@ -2572,42 +2638,6 @@ static void DrawReader(void)
  * the rectangle it is given and in the theme's highlight colour. This is
  * OE's, and OE's is what was asked for.
  */
-/*
- * Put back the two pixels of focus border a full-width row paints over. A
- * row is redrawn on its own often enough — a selection moving, a click
- * tracking — that waiting for the pane to be redrawn would leave the border
- * notched for as long as the mouse was down.
- */
-static void RestoreRowFocusEdges(const Rect *full, ControlRef owner)
-{
-    Rect edge;
-
-    if (!PaneHasFocus(owner)) {
-        return;
-    }
-    SetRect(&edge, full->left, full->top,
-            (short)(full->left + kFocusBorder), full->bottom);
-    FillFocusColour(&edge);
-    SetRect(&edge, (short)(full->right - kFocusBorder), full->top,
-            full->right, full->bottom);
-    FillFocusColour(&edge);
-}
-
-/* The focus border's colour, painted into a rectangle. */
-static void FillFocusColour(const Rect *r)
-{
-    RGBColor blue;
-    RGBColor save;
-
-    GetForeColor(&save);
-    blue.red   = 91 * 257;
-    blue.green = 91 * 257;
-    blue.blue  = 197 * 257;
-    RGBForeColor(&blue);
-    PaintRect(r);
-    RGBForeColor(&save);
-}
-
 static void DrawFocusBorder(const Rect *view, Boolean on)
 {
     RGBColor blue;
@@ -2767,7 +2797,6 @@ static void DrawReaderHeaderText(void)
     SetThemeTextColor(kThemeTextColorWindowHeaderActive, 8, true);
 
     UseSysFont();
-    TextFace(bold);
     lines = WrapTitle(gArticleTitle, width, starts, lens);
     for (i = 0; i < lines; i++) {
         MoveTo(left, (short)(gReaderHeader.top + gReaderLine1 +
@@ -2784,7 +2813,6 @@ static void DrawReaderHeaderText(void)
         lines = 1;
     }
 
-    TextFace(normal);
     UseViewFont();
     TextSize(gLabelSize);
     MoveTo(left, (short)(gReaderHeader.top + gReaderLine1 +
@@ -3791,7 +3819,7 @@ static Boolean MakeListPane(ListDefUPP defProc, const Rect *bounds,
     spec.defType    = kListDefUserProcType;
     spec.u.userProc = defProc;
 
-    ListViewIn(bounds, &view);
+    ListRowsIn(bounds, &view);
     SetRect(&data, 0, 0, 1, 0);         /* one column, no rows yet */
     cell.v = gRowHeight;
     cell.h = (short)(view.right - view.left);
@@ -3801,6 +3829,7 @@ static Boolean MakeListPane(ListDefUPP defProc, const Rect *bounds,
         *outList == NULL) {
         return false;
     }
+    PlaceListScrollBar(*outList, bounds);
 
     /* One row at a time, and no drag-selecting several. lOnlyOne is a
        negative constant in a byte-wide field, so it is masked rather than
