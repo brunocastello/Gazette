@@ -287,6 +287,8 @@ static char     gReaderText[2 * kGazetteExtractMax + 512];
 
 static void Layout(void);
 static ControlRef MakeControl(const Rect *bounds, short procID, short value);
+static void DrawFocusBorder(const Rect *view, Boolean on);
+static void RefreshFocusBorder(ListHandle list);
 static void SetReaderText(void);
 static void SizeReader(void);
 static void ChooseRow(const GazetteSidebarRow *row);
