@@ -95,6 +95,8 @@ enum {
     kGroupIndent    = 16,
     kIconSize       = 16,       /* the small icon beside a row's name */
     kIconGap        = 3,
+    kBadgePad       = 5,        /* inside the unread badge, either side */
+    kBadgeGap       = 4,        /* between the badge and the name */
 
     kMinSidebar    = 120,
     kMaxSidebarPad = 160,       /* how much room the right side must keep     */
@@ -1455,23 +1457,69 @@ static int GroupUnread(int group)
     return total;
 }
 
+/*
+ * The unread count, as a rounded badge pinned to the right hand end of the
+ * row — a shape rather than a number in brackets, so the eye finds it in a
+ * column instead of reading to the end of every name to see whether one is
+ * there.
+ *
+ * Answers how wide it is without drawing, so the name knows how much room
+ * it has to be truncated into; pass NULL for the rect to ask only.
+ */
+static short BadgeWidth(int count)
+{
+    char  text[16];
+    short len;
+
+    if (count <= 0) {
+        return 0;
+    }
+    snprintf(text, sizeof text, "%d", count);
+    len = (short)strlen(text);
+    return (short)(TextWidth(text, 0, len) + kBadgePad * 2 + kBadgeGap);
+}
+
+static void DrawBadge(short right, short baseline, int count)
+{
+    char     text[16];
+    short    len;
+    short    w;
+    Rect     pill;
+    RGBColor fill;
+    RGBColor save;
+
+    if (count <= 0) {
+        return;
+    }
+    snprintf(text, sizeof text, "%d", count);
+    len = (short)strlen(text);
+    w   = (short)TextWidth(text, 0, len);
+
+    pill.right  = right;
+    pill.left   = (short)(right - w - kBadgePad * 2);
+    pill.top    = (short)(baseline - gRowAscent);
+    pill.bottom = (short)(baseline + gRowDescent);
+
+    GetForeColor(&save);
+
+    /* A mid grey the count reads out of in white, which is what the badge
+       does everywhere it turns up and what keeps it quiet next to a name. */
+    fill.red = fill.green = fill.blue = 150 * 257;
+    RGBForeColor(&fill);
+    PaintRoundRect(&pill, (short)(pill.bottom - pill.top),
+                   (short)(pill.bottom - pill.top));
+
+    ForeColor(whiteColor);
+    TextFace(normal);
+    MoveTo((short)(pill.left + kBadgePad), baseline);
+    DrawText(text, 0, len);
+
+    RGBForeColor(&save);
+}
+
 /* "Name (12)", with the count only when there is one. Drawn as one string so
    the truncation takes the name and never the number — the count is the part
    that has to stay legible in a narrow sidebar. */
-/* ASCII upper-casing: the group names are already transliterated, so there
-   is nothing here for a locale to disagree with. */
-static void UpperCase(const char *in, char *out, size_t cap)
-{
-    size_t i = 0;
-
-    for (i = 0; i + 1 < cap && in[i] != '\0'; i++) {
-        char c = in[i];
-
-        out[i] = (char)((c >= 'a' && c <= 'z') ? (c - 'a' + 'A') : c);
-    }
-    out[i] = '\0';
-}
-
 /*
  * Compose "Name (12)" into out, truncated to fit maxWidth, and answer how
  * wide it came out. It has to be built and measured before anything is
@@ -1587,6 +1635,8 @@ static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
     short             textLeft;
     short             baseline;
     short             width;
+    short             badge;
+    int               unread = 0;
     Boolean           enabled = true;
 
     RowRect(full, &cellRect);
@@ -1605,27 +1655,32 @@ static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
     }
     textLeft = (short)(iconLeft + kIconSize + kIconGap);
 
-    /* The weight is decided before the label is measured, because a bold
-       name is wider than a plain one and the selection is drawn to fit. */
+    /*
+     * The weight is decided before the label is measured, because a bold
+     * name is wider than a plain one and the selection is drawn to fit.
+     *
+     * A category is bold; a feed never is. A feed with unread articles used
+     * to be bold as well, which said the same thing the badge says and the
+     * highlight says — three ways of saying "this one", where one will do.
+     */
     if (r.kind == kGazetteRowGroup) {
-        char caps[kGazetteTitleLen];
-
-        /* A category is set in capitals, the way a section head is. */
-        UpperCase(GazetteCoreGroupName(r.index), caps, sizeof caps);
         TextFace(bold);
-        width = BuildRowLabel(caps, GroupUnread(r.index),
-                              (short)(cell->right - kTextInset - textLeft),
-                              label, sizeof label, &labelLen);
+        unread = GroupUnread(r.index);
     } else {
-        int unread;
-
         enabled = GazetteCoreFeedEnabled(r.index);
         unread  = enabled ? FeedUnread(r.index) : 0;
-        TextFace((unread > 0) ? bold : normal);
-        width = BuildRowLabel(GazetteCoreFeedTitle(r.index), unread,
-                              (short)(cell->right - kTextInset - textLeft),
-                              label, sizeof label, &labelLen);
+        TextFace(normal);
     }
+
+    /* The badge is pinned right, so the name is truncated into what is left
+       rather than the two overlapping. */
+    badge = BadgeWidth(unread);
+    width = BuildRowLabel(r.kind == kGazetteRowGroup
+                              ? GazetteCoreGroupName(r.index)
+                              : GazetteCoreFeedTitle(r.index),
+                          0,
+                          (short)(cell->right - kTextInset - textLeft - badge),
+                          label, sizeof label, &labelLen);
 
     /*
      * The selection goes down first, so the name is drawn on top of it
@@ -1664,6 +1719,8 @@ static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
         MoveTo(textLeft, baseline);
         DrawText(label, 0, labelLen);
     }
+
+    DrawBadge((short)(cell->right - kTextInset), baseline, unread);
 
     TextFace(normal);
     ForeColor(blackColor);
