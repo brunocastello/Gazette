@@ -109,6 +109,8 @@ enum {
      */
     kPaneInset     = 2,
     kMaxTitleLines = 3,         /* a headline wraps, but not without end   */
+    kHeadlineLines = 2,         /* and in the list, always exactly two     */
+    kHeadlinePad   = 5,         /* above the first line, below the second  */
 
     /* The focus border's thickness, and therefore how far a row has to keep
        clear of the edge of the view it is in. */
@@ -287,8 +289,10 @@ static short gStatusSize = 10;            /* the strip along the bottom  */
 
 static short gRowHeight    = kRowHeight;
 static short gRowBaseline  = kBaseline;
-static short gHeadRowHeight   = kRowHeight;   /* the headline list's own */
-static short gHeadRowBaseline = kBaseline;
+static short gHeadRowHeight    = kRowHeight;  /* the headline list's own */
+static short gHeadRowBaseline  = kBaseline;   /* a headline's first line  */
+static short gHeadContBaseline = kBaseline;   /* and its second           */
+static short gHeadingBaseline  = kBaseline;   /* a date heading, centred  */
 static short gRowAscent    = 9;
 static short gRowDescent   = 3;
 
@@ -487,28 +491,37 @@ static void MeasureFonts(void)
                            ((gRowHeight - info.ascent - info.descent) / 2));
 
     /*
-     * The headline list's rows are tighter than the sidebar's. The sidebar
-     * is a handful of names with room to breathe; the headline list is a
-     * column of them, and a headline that wraps takes a row per line — at
-     * the sidebar's pitch the two lines of one headline stood further apart
-     * than two separate headlines did.
+     * Every headline in the list is two rows tall, whether it needs the
+     * second line or not. That is what buys the padding: with each article
+     * the same height, the space above the first line, the gap down to the
+     * second and the space below it can be chosen separately — a block of
+     * one or two uniform rows could only ever have one number for all three.
      *
-     * The four pixels of air are what puts the rule clear of the text: the
-     * cells are uniform, so the space above a line and the space below it
-     * are the same number, and that number is also the gap between the two
-     * lines of a wrapped headline. Eight splits the difference — enough to
-     * stand the rule off the words above and below it, not so much that a
-     * headline reads as two.
-     *
-     * Still no shorter than the icon, which is what sets the floor.
+     * The two lines sit a plain line-height apart, as tight as the font
+     * reads, and the block carries kHeadlinePad above and below it with the
+     * rule in the space underneath.
      */
-    gHeadRowHeight = (short)(info.ascent + info.descent + info.leading + 8);
-    if (gHeadRowHeight < kIconSize + 1) {
-        gHeadRowHeight = (short)(kIconSize + 1);
+    {
+        short step  = (short)(info.ascent + info.descent + info.leading);
+        short block = (short)(2 * kHeadlinePad + info.ascent + info.descent +
+                              step + 1);
+
+        gHeadRowHeight = (short)((block + 1) / 2);
+        if (gHeadRowHeight < kIconSize + 1) {
+            gHeadRowHeight = (short)(kIconSize + 1);   /* the icon's floor */
+        }
+
+        /* The first line sits a pad below the top of its row. The second is
+           a line-height below the first, which lands above the top of its
+           own row — hence the subtraction. */
+        gHeadRowBaseline  = (short)(kHeadlinePad + info.ascent);
+        gHeadContBaseline = (short)(gHeadRowBaseline + step - gHeadRowHeight);
+
+        /* A date heading is a row on its own, so it is simply centred. */
+        gHeadingBaseline  = (short)(info.ascent +
+                                    ((gHeadRowHeight - info.ascent -
+                                      info.descent) / 2));
     }
-    gHeadRowBaseline = (short)(info.ascent +
-                               ((gHeadRowHeight - info.ascent -
-                                 info.descent) / 2));
     /* The headings are the system font too, so they measure in it. */
     UseSysFont();
     GetFontInfo(&info);
@@ -581,8 +594,8 @@ static void MeasureFonts(void)
  *
  * The font has to be set before calling: the fit is measured, not guessed.
  */
-static short WrapTitle(const char *text, short width, short *starts,
-                       short *lens)
+static short WrapTitle(const char *text, short width, short maxLines,
+                       short *starts, short *lens)
 {
     short len;
     short at = 0;
@@ -593,7 +606,7 @@ static short WrapTitle(const char *text, short width, short *starts,
     }
     len = (short)strlen(text);
 
-    while (at < len && n < kMaxTitleLines) {
+    while (at < len && n < maxLines) {
         short fit   = -1;       /* end of the last whole word that fitted   */
         short first = -1;       /* end of the first, fits or not            */
         short k     = at;
@@ -662,7 +675,8 @@ static short ReaderTitleLineCount(void)
     GetPort(&savePort);
     SetPortWindowPort(gWindow);
     UseSysFont();
-    n = WrapTitle(gArticleTitle, ReaderTitleWidth(), starts, lens);
+    n = WrapTitle(gArticleTitle, ReaderTitleWidth(), kMaxTitleLines,
+                  starts, lens);
     SetPort(savePort);
 
     return (n < 1) ? 1 : n;
@@ -905,21 +919,41 @@ static void BuildHeadlineRows(void)
             have = 1;
         }
 
-        lines = WrapTitle(a->title, width, starts, lens);
+        lines = WrapTitle(a->title, width, kHeadlineLines, starts, lens);
         if (lines < 1) {
             lines     = 1;
             starts[0] = 0;
             lens[0]   = (short)strlen(a->title);
         }
+        (void)n;
 
-        for (n = 0; n < lines; n++) {
-            gHeadRows[gHeadRowCount].kind    = (short)(n == 0 ? kHeadlineArticle
-                                                              : kHeadlineCont);
-            gHeadRows[gHeadRowCount].article = (short)i;
-            gHeadRows[gHeadRowCount].start   = starts[n];
-            gHeadRows[gHeadRowCount].len     = lens[n];
-            gHeadRowCount++;
+        /*
+         * Two rows whether or not the headline fills them. A list where a
+         * one-line headline is half the height of a two-line one reads as
+         * ragged; every article the same height reads as a list.
+         */
+        gHeadRows[gHeadRowCount].kind    = kHeadlineArticle;
+        gHeadRows[gHeadRowCount].article = (short)i;
+        gHeadRows[gHeadRowCount].start   = starts[0];
+        gHeadRows[gHeadRowCount].len     = lens[0];
+        gHeadRowCount++;
+
+        /*
+         * The second row is drawn from its start to the end of the headline
+         * rather than from its slice, so a headline too long for two lines
+         * ends in an ellipsis. Where it fitted on one, the start is the end
+         * of the string and nothing is drawn.
+         */
+        gHeadRows[gHeadRowCount].kind    = kHeadlineCont;
+        gHeadRows[gHeadRowCount].article = (short)i;
+        if (lines >= 2) {
+            gHeadRows[gHeadRowCount].start = starts[1];
+            gHeadRows[gHeadRowCount].len   = lens[1];
+        } else {
+            gHeadRows[gHeadRowCount].start = (short)strlen(a->title);
+            gHeadRows[gHeadRowCount].len   = 0;
         }
+        gHeadRowCount++;
     }
 
     if (gWindow != NULL) {
@@ -2518,7 +2552,7 @@ static void DrawDateHeading(const Rect *cell, int article)
     RGBForeColor(&grey);
 
     MoveTo((short)(cell->left + kTextInset + 2),
-           (short)(cell->top + gHeadRowBaseline));
+           (short)(cell->top + gHeadingBaseline));
     DrawTruncated(label, (short)(cell->right - cell->left - kTextInset * 2));
 
     RGBForeColor(&save);
@@ -2544,7 +2578,9 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
         return;
     }
 
-    baseline = (short)(cell->top + gHeadRowBaseline);
+    baseline = (short)(cell->top +
+                       ((gHeadRows[row].kind == kHeadlineCont)
+                            ? gHeadContBaseline : gHeadRowBaseline));
 
     if (gHeadRows[row].kind == kHeadlineDate) {
         DrawDateHeading(cell, gHeadRows[row].article);
@@ -2617,11 +2653,16 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
     ForeColor(blackColor);
 
     MoveTo(textLeft, baseline);
-    {
+    if (gHeadRows[row].kind == kHeadlineCont) {
+        /* The rest of the headline, truncated — this is the line that ends
+           in an ellipsis when two were not enough for it. */
+        DrawTruncated(a->title + gHeadRows[row].start,
+                      (short)(cell->right - kTextInset - textLeft));
+    } else {
         /*
-         * Truncated as well as sliced, so that a wrap left over from the
-         * width the column used to be is clipped at the cell rather than
-         * running out of it.
+         * Just this line's words. Truncated as well as sliced, so that a
+         * wrap left over from the width the column used to be is clipped at
+         * the cell rather than running out of it.
          */
         char  line[kGazetteTitleLen];
         short len = gHeadRows[row].len;
@@ -3066,7 +3107,7 @@ static void DrawReaderHeaderText(void)
     SetThemeTextColor(kThemeTextColorWindowHeaderActive, 8, true);
 
     UseSysFont();
-    lines = WrapTitle(gArticleTitle, width, starts, lens);
+    lines = WrapTitle(gArticleTitle, width, kMaxTitleLines, starts, lens);
     for (i = 0; i < lines; i++) {
         MoveTo(left, (short)(gReaderHeader.top + gReaderLine1 +
                              i * gReaderLineStep));
