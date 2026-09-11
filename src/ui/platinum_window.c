@@ -1467,17 +1467,32 @@ static int GroupUnread(int group)
  * Answers how wide it is without drawing, so the name knows how much room
  * it has to be truncated into; pass NULL for the rect to ask only.
  */
+/* The badge's own font: a size down from the names beside it, and bold, so
+   a small number still reads out of a filled shape. */
+static void UseBadgeFont(void)
+{
+    TextFont(gViewFont);
+    TextSize(gLabelSize);
+    TextFace(bold);
+}
+
 static short BadgeWidth(int count)
 {
     char  text[16];
     short len;
+    short w;
 
     if (count <= 0) {
         return 0;
     }
     snprintf(text, sizeof text, "%d", count);
     len = (short)strlen(text);
-    return (short)(TextWidth(text, 0, len) + kBadgePad * 2 + kBadgeGap);
+
+    UseBadgeFont();
+    w = (short)TextWidth(text, 0, len);
+    UseViewFont();              /* the caller is about to measure a name */
+
+    return (short)(w + kBadgePad * 2 + kBadgeGap);
 }
 
 static void DrawBadge(short right, short baseline, int count)
@@ -1494,11 +1509,13 @@ static void DrawBadge(short right, short baseline, int count)
     }
     snprintf(text, sizeof text, "%d", count);
     len = (short)strlen(text);
-    w   = (short)TextWidth(text, 0, len);
+
+    UseBadgeFont();
+    w = (short)TextWidth(text, 0, len);
 
     pill.right  = right;
     pill.left   = (short)(right - w - kBadgePad * 2);
-    pill.top    = (short)(baseline - gRowAscent);
+    pill.top    = (short)(baseline - gRowAscent + 1);
     pill.bottom = (short)(baseline + gRowDescent);
 
     GetForeColor(&save);
@@ -1511,11 +1528,11 @@ static void DrawBadge(short right, short baseline, int count)
                    (short)(pill.bottom - pill.top));
 
     ForeColor(whiteColor);
-    TextFace(normal);
     MoveTo((short)(pill.left + kBadgePad), baseline);
     DrawText(text, 0, len);
 
     RGBForeColor(&save);
+    UseViewFont();
 }
 
 /* "Name (12)", with the count only when there is one. Drawn as one string so
@@ -1643,6 +1660,18 @@ static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
     RowRect(full, &cellRect);
 
     EraseWith(cell, kThemeBrushListViewBackground);
+
+    /*
+     * A white line along the bottom of every row. Both Newsstand and
+     * Outlook Express rule one — measured at each list's own row pitch, a
+     * single white pixel as the last row of each cell — and it is what stops
+     * a column of names reading as one block of text.
+     */
+    ForeColor(whiteColor);
+    MoveTo(cell->left, (short)(cell->bottom - 1));
+    LineTo((short)(cell->right - 1), (short)(cell->bottom - 1));
+    ForeColor(blackColor);
+
     if (!GazetteCoreSidebarRowAt(row, &r)) {
         return;
     }
