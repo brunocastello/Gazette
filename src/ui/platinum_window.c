@@ -82,7 +82,6 @@ enum {
      * black, white.
      */
     kVDividerWidth = 8,
-    kHDividerWidth = 8,
     kTextInset     = 4,
     kBaseline      = 10,        /* likewise, until gRowBaseline is worked out */
 
@@ -97,9 +96,8 @@ enum {
     kCountGap       = 8,        /* between the name and its unread count */
 
     kMinSidebar    = 120,
-    kMaxSidebarPad = 160,       /* how much room the right side must keep     */
-    kMinListHeight = 3 * kRowHeight,
-    kMinReader     = 3 * kReaderLead + 34,  /* the article's header, too */
+    kMinList       = 220,       /* divider to divider, the middle column      */
+    kMinReader     = 200,       /* what is left for the article               */
     kReaderMargin  = 6,         /* above the first line and below the last */
 
     /*
@@ -232,11 +230,10 @@ static Rect gReaderPane;        /* the body, bar included */
 static Rect gReaderRect;        /* the text inside it, bar excluded */
 static Rect gStatusRect;
 static Rect gVDivider;          /* between sidebar and the right side */
-static Rect gHDivider;          /* between headlines and the article  */
+static Rect gVDivider2;         /* between headlines and the article  */
 
-static short gSidebarWidth = 200;
-static short gListShare    = 45;    /* percent of the right side given to the
-                                       headline list; the article gets the rest */
+static short gSidebarWidth = 180;
+static short gListWidth    = 300;   /* divider to divider: the middle column */
 
 static int gSelectedFeed    = 0;
 static int gSelectedArticle = -1;
@@ -330,16 +327,19 @@ static short gReaderTitleLines   = 1;
  */
 enum {
     kHeadlineDate    = 0,
-    kHeadlineArticle = 1
+    kHeadlineArticle = 1,       /* a headline's first line, with the icon  */
+    kHeadlineCont    = 2        /* and the rest of it, under the first     */
 };
 
 typedef struct {
     short kind;
-    short article;              /* for kHeadlineArticle */
+    short article;              /* for kHeadlineArticle and kHeadlineCont */
+    short start;                /* this line's slice of the headline      */
+    short len;
 } HeadlineRow;
 
 /* Every article, plus at most one heading each. */
-static HeadlineRow gHeadRows[kGazetteMaxArticles * 2];
+static HeadlineRow gHeadRows[kGazetteMaxArticles * (kMaxTitleLines + 1)];
 static int         gHeadRowCount;
 
 static TEHandle gReaderTE;
@@ -347,6 +347,10 @@ static char     gReaderText[2 * kGazetteExtractMax + 512];
 
 static void Layout(void);
 static void ListViewIn(const Rect *pane, Rect *view);
+static int  RowForArticle(int article);
+static void SetRowCount(ListHandle list, int count);
+static void SelectRow(ListHandle list, int row, Boolean reveal);
+static void ReflowHeadlines(void);
 static void ListView(ListHandle list, Rect *view);
 static void PlaceListScrollBar(ListHandle list, const Rect *pane);
 static void DrawListScrollBar(ListHandle list, ControlRef paneCtl);
@@ -796,25 +800,64 @@ static Boolean PaneHasFocus(ControlRef control)
  * a heading is needed wherever the day changes and nowhere else — one pass,
  * no sorting.
  */
+/*
+ * How much width a headline has to wrap inside: the row, less the icon's
+ * column on the left and the inset on either side. Every line of a headline
+ * gets the same width, because every line starts where the first one does —
+ * the second line lines up with the words above it, not under the icon.
+ */
+static short HeadlineTextWidth(void)
+{
+    Rect  frame;
+    short width;
+
+    ListViewIn(&gListPane, &frame);
+    width = (short)(frame.right - frame.left -
+                    (kFocusBorder + kTextInset + kIconSize + kIconGap) -
+                    (kFocusBorder + kTextInset));
+    return (width > 0) ? width : 0;
+}
+
+/* Where a row's text begins, measured from the row's left edge. */
+static short HeadlineTextInset(void)
+{
+    return (short)(kTextInset + kIconSize + kIconGap);
+}
+
 static void BuildHeadlineRows(void)
 {
-    long now  = UnixNow();
-    long last = 0;
-    int  have = 0;
-    int  i;
-    int  count = GazetteFeedsArticleCount();
+    long  now   = UnixNow();
+    long  last  = 0;
+    int   have  = 0;
+    int   i;
+    int   count = GazetteFeedsArticleCount();
+    short width = HeadlineTextWidth();
+    int   room  = (int)(sizeof gHeadRows / sizeof gHeadRows[0]);
 
     (void)now;
     gHeadRowCount = 0;
 
+    /* Measured in the face a headline is drawn in, and in the heavier of its
+       two weights: an unread headline is bold, and wrapping it to the plain
+       width would let it run past the row when it was marked unread. */
+    if (gWindow != NULL) {
+        SetPortWindowPort(gWindow);
+        UseViewFont();
+        TextFace(bold);
+    }
+
     for (i = 0; i < count; i++) {
         const GazetteArticle *a = GazetteFeedsArticleAt(i);
+        short                 starts[kMaxTitleLines];
+        short                 lens[kMaxTitleLines];
+        short                 lines;
+        short                 n;
         long                  day;
 
         if (a == NULL) {
             break;
         }
-        if (gHeadRowCount + 2 > (int)(sizeof gHeadRows / sizeof gHeadRows[0])) {
+        if (gHeadRowCount + kMaxTitleLines + 1 > room) {
             break;
         }
 
@@ -822,15 +865,52 @@ static void BuildHeadlineRows(void)
         if (!have || day != last) {
             gHeadRows[gHeadRowCount].kind    = kHeadlineDate;
             gHeadRows[gHeadRowCount].article = (short)i;
+            gHeadRows[gHeadRowCount].start   = 0;
+            gHeadRows[gHeadRowCount].len     = 0;
             gHeadRowCount++;
             last = day;
             have = 1;
         }
 
-        gHeadRows[gHeadRowCount].kind    = kHeadlineArticle;
-        gHeadRows[gHeadRowCount].article = (short)i;
-        gHeadRowCount++;
+        lines = WrapTitle(a->title, width, starts, lens);
+        if (lines < 1) {
+            lines     = 1;
+            starts[0] = 0;
+            lens[0]   = (short)strlen(a->title);
+        }
+
+        for (n = 0; n < lines; n++) {
+            gHeadRows[gHeadRowCount].kind    = (short)(n == 0 ? kHeadlineArticle
+                                                              : kHeadlineCont);
+            gHeadRows[gHeadRowCount].article = (short)i;
+            gHeadRows[gHeadRowCount].start   = starts[n];
+            gHeadRows[gHeadRowCount].len     = lens[n];
+            gHeadRowCount++;
+        }
     }
+
+    if (gWindow != NULL) {
+        TextFace(normal);
+    }
+}
+
+/*
+ * Rebuild the rows for the width the list is now. Called when the column has
+ * finished changing width rather than while it is changing: wrapping every
+ * headline costs a measurement per word, and a divider drag would pay it
+ * once a pixel. In between, a row's text is drawn truncated to the cell, so
+ * a stale wrap is clipped rather than spilling.
+ */
+static void ReflowHeadlines(void)
+{
+    if (gWindow == NULL || gArticleList == NULL) {
+        return;
+    }
+    BuildHeadlineRows();
+    LSetDrawingMode(false, gArticleList);
+    SetRowCount(gArticleList, gHeadRowCount);
+    SelectRow(gArticleList, RowForArticle(gSelectedArticle), false);
+    LSetDrawingMode(true, gArticleList);
 }
 
 /* The article a row shows, or -1 for a heading. */
@@ -839,7 +919,9 @@ static int ArticleAtRow(int row)
     if (row < 0 || row >= gHeadRowCount) {
         return -1;
     }
-    if (gHeadRows[row].kind != kHeadlineArticle) {
+    /* A continuation line belongs to its headline as much as the first line
+       does: clicking the second half of a title selects that article. */
+    if (gHeadRows[row].kind == kHeadlineDate) {
         return -1;
     }
     return gHeadRows[row].article;
@@ -1165,7 +1247,6 @@ static void SizeListPane(ControlRef control, ListHandle list,
 static void Layout(void)
 {
     Rect  bounds;
-    short listBottom;
     short contentBottom;
 
     if (gWindow == NULL) {
@@ -1176,13 +1257,31 @@ static void Layout(void)
 
     contentBottom = (short)(bounds.bottom - gStatusHeight);
 
-    /* The sidebar keeps its width until the window gets too narrow to give
-       the right-hand side anything useful. */
-    if (gSidebarWidth > bounds.right - bounds.left - kMaxSidebarPad) {
-        gSidebarWidth = (short)(bounds.right - bounds.left - kMaxSidebarPad);
-    }
-    if (gSidebarWidth < kMinSidebar) {
-        gSidebarWidth = kMinSidebar;
+    /*
+     * Three columns side by side, so two widths to settle and a minimum for
+     * each of the three. The sidebar gives way first and the article last:
+     * the article is what the window is for, and the sidebar is the column
+     * whose contents are shortest.
+     */
+    {
+        short room = (short)(bounds.right - bounds.left);
+        short most;
+
+        most = (short)(room - kMinList - kMinReader);
+        if (gSidebarWidth > most) {
+            gSidebarWidth = most;
+        }
+        if (gSidebarWidth < kMinSidebar) {
+            gSidebarWidth = kMinSidebar;
+        }
+
+        most = (short)(room - gSidebarWidth - kMinReader);
+        if (gListWidth > most) {
+            gListWidth = most;
+        }
+        if (gListWidth < kMinList) {
+            gListWidth = kMinList;
+        }
     }
 
     /*
@@ -1201,6 +1300,7 @@ static void Layout(void)
      */
     {
         short split   = (short)(bounds.left + gSidebarWidth);
+        short split2  = (short)(split + gListWidth);
         short headTop = (short)(bounds.top - 1);
         short headBot = (short)(bounds.top + gHeaderHeight);
 
@@ -1219,11 +1319,12 @@ static void Layout(void)
          */
         SetRect(&gSidebarHeader, (short)(bounds.left - 1), headTop,
                 split, headBot);
-        SetRect(&gListHeader, (short)(split + 5), headTop,
-                (short)(bounds.right + 1), headBot);
+        SetRect(&gListHeader, (short)(split + 5), headTop, split2, headBot);
 
         SetRect(&gVDivider, split, bounds.top,
                 (short)(split + kVDividerWidth), contentBottom);
+        SetRect(&gVDivider2, split2, bounds.top,
+                (short)(split2 + kVDividerWidth), contentBottom);
 
         /*
          * A pane starts one pixel *inside* the header above it, so that its
@@ -1248,54 +1349,38 @@ static void Layout(void)
         SetRect(&gSidebarPane, bounds.left, (short)(headBot - 1),
                 (short)(split - 1), contentBottom);
 
-        listBottom = (short)(headBot +
-                             (long)(contentBottom - headBot) *
-                             gListShare / 100);
-        if (listBottom < headBot + kMinListHeight) {
-            listBottom = (short)(headBot + kMinListHeight);
-        }
-        if (listBottom > contentBottom - kMinReader - kHDividerWidth) {
-            listBottom = (short)(contentBottom - kMinReader - kHDividerWidth);
-        }
-
         /*
          * Starting one pixel past the groove's black, so the rows meet the
          * border with nothing between. The groove's own trailing two pixels
          * of grey are covered by the pane, which is what takes the grey
          * edge off the inside of the view.
+         *
+         * It ends a pixel short of the second groove for the same reason the
+         * sidebar does: that is where the bar's own black column has to
+         * land, on the line the header above it draws. This used to reach
+         * bounds.right + 1 and was right only because the extra column fell
+         * off the edge of the window.
          */
         SetRect(&gListPane, (short)(split + 6), (short)(headBot - 1),
-                (short)(bounds.right + 1), listBottom);
+                (short)(split2 - 1), contentBottom);
 
         /*
-         * Starting on the vertical groove's own black column, so the two
-         * borders meet and turn a corner rather than stopping short of each
-         * other with a gap between.
+         * The article's header is as tall as its headline needs and the
+         * other two are one line, so the three do not end level. They start
+         * level, which is what the eye follows.
          */
-        SetRect(&gHDivider, (short)(split + 5), listBottom,
+        SetRect(&gReaderHeader, (short)(split2 + 5), headTop,
                 (short)(bounds.right + 1),
-                (short)(listBottom + kHDividerWidth));
-
-        /*
-         * Two pixels up, so the header control's own top line and highlight
-         * fall exactly on the groove's closing black and white rather than
-         * adding a third line under them. Measured: black, white, then
-         * another black — that last one was this.
-         */
-        SetRect(&gReaderHeader, (short)(split + 5),
-                (short)(gHDivider.bottom - 2),
-                (short)(bounds.right + 1),
-                (short)(gHDivider.bottom - 2 + gReaderHeaderHeight));
+                (short)(headTop + gReaderHeaderHeight));
 
         /* How tall the bar is depends on how wide it is, because the
            headline wraps rather than being cut off. Left and right are set
            just above, and the count needs only those. */
         gReaderTitleLines    = ReaderTitleLineCount();
         gReaderHeaderHeight  = ReaderHeaderHeightFor(gReaderTitleLines);
-        gReaderHeader.bottom = (short)(gHDivider.bottom - 2 +
-                                       gReaderHeaderHeight);
+        gReaderHeader.bottom = (short)(headTop + gReaderHeaderHeight);
 
-        SetRect(&gReaderPane, (short)(split + 6),
+        SetRect(&gReaderPane, (short)(split2 + 6),
                 (short)(gReaderHeader.bottom - 1),
                 (short)(bounds.right + 1), (short)(contentBottom + 1));
 
@@ -2441,21 +2526,30 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
     }
 
     /*
-     * A selected headline is filled end to end — the whole width of the row,
-     * frame to frame, not the part of it the text sits in. Down first, so
-     * the headline is drawn on top of it; and the border's two pixels go
-     * straight back over either end.
+     * A headline that wrapped occupies more than one row, so whether this
+     * row is part of the selection is a question about the article rather
+     * than about the row — the List Manager only ever selects one cell, and
+     * a selection that covered the first line of a headline and not the
+     * second would read as a drawing fault.
      */
-    if (selected) {
+    (void)selected;
+    if (article == gSelectedArticle) {
+        /* Filled end to end — the whole width of the row, frame to frame,
+           not the part the text sits in. Down first, so the headline is
+           drawn on top of it; and the border's two pixels go straight back
+           over either end. */
         FillHighlight(full);
     }
     RestoreRowFocusEdges(full, gArticleCtl);
 
-    /* The document icon every article carries, and then its headline. The
-       date is gone from the row: it is in the heading above and, to the
-       minute, in the article itself. */
-    DrawRowIcon(cell, (short)(cell->left + kTextInset), gDocIcon, true);
-    textLeft = (short)(cell->left + kTextInset + kIconSize + kIconGap);
+    /* The document icon goes on the first line only, and the rest of the
+       headline lines up with the words above it rather than sliding under
+       the icon. The date is gone from the row: it is in the heading above
+       and, to the minute, in the article itself. */
+    if (gHeadRows[row].kind == kHeadlineArticle) {
+        DrawRowIcon(cell, (short)(cell->left + kTextInset), gDocIcon, true);
+    }
+    textLeft = (short)(cell->left + HeadlineTextInset());
 
     /*
      * The same face the feed names are set in, and always black: bold while
@@ -2467,7 +2561,25 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
     ForeColor(blackColor);
 
     MoveTo(textLeft, baseline);
-    DrawTruncated(a->title, (short)(cell->right - kTextInset - textLeft));
+    {
+        /*
+         * Truncated as well as sliced, so that a wrap left over from the
+         * width the column used to be is clipped at the cell rather than
+         * running out of it.
+         */
+        char  line[kGazetteTitleLen];
+        short len = gHeadRows[row].len;
+
+        if (len < 0) {
+            len = 0;
+        }
+        if (len > (short)(sizeof line - 1)) {
+            len = (short)(sizeof line - 1);
+        }
+        memcpy(line, a->title + gHeadRows[row].start, (size_t)len);
+        line[len] = '\0';
+        DrawTruncated(line, (short)(cell->right - kTextInset - textLeft));
+    }
 
     TextFace(normal);
     ForeColor(blackColor);
@@ -2825,28 +2937,6 @@ static void DrawVDivider(const Rect *r)
     ForeColor(blackColor);
 }
 
-static void DrawHDivider(const Rect *r)
-{
-    short i;
-
-    EraseWith(r, kThemeBrushDialogBackgroundActive);
-
-    /* Black on the first row, so the rows and the scroll bar above end
-       against it rather than on two pixels of grey. */
-    for (i = 0; i < 2; i++) {
-        short y = (short)(r->top + (i ? 6 : 0));
-
-        GreyPen(0);
-        MoveTo(r->left, y);
-        LineTo((short)(r->right - 1), y);
-
-        GreyPen(255);
-        MoveTo(r->left, (short)(y + 1));
-        LineTo((short)(r->right - 1), (short)(y + 1));
-    }
-    ForeColor(blackColor);
-}
-
 /*
  * The dotted grab handle that says a border can be dragged, measured off
  * Outlook Express: five dots four pixels apart, each one a dark pixel with
@@ -3042,9 +3132,9 @@ void GazetteUIUpdate(void)
        horizontal one carries the row of dots Outlook Express puts in a
        splitter to say that it can be dragged. */
     DrawVDivider(&gVDivider);
-    DrawHDivider(&gHDivider);
+    DrawVDivider(&gVDivider2);
     DrawGrabHandle(&gVDivider, true);
-    DrawGrabHandle(&gHDivider, false);
+    DrawGrabHandle(&gVDivider2, true);
 
     /* The whole control hierarchy in one call — the two lists with their
        frames, scroll bars and focus rings, the two window headers, the
@@ -3145,7 +3235,12 @@ static void SelectArticle(int index)
  * button comes up, and no network work is pending while a mouse button is
  * held anyway.
  */
-static void TrackDivider(Point where, Boolean vertical)
+/*
+ * Drag one of the two grooves. Both are vertical now, so the only difference
+ * between them is which width the mouse is setting; Layout does the clamping,
+ * so the rule about what each column may not go below lives in one place.
+ */
+static void TrackDivider(Point where, Boolean second)
 {
     Rect  bounds;
     Point pt;
@@ -3156,39 +3251,29 @@ static void TrackDivider(Point where, Boolean vertical)
     while (StillDown()) {
         GetMouse(&pt);
 
-        if (vertical) {
-            short want = pt.h;
+        if (second) {
+            short want = (short)(pt.h - bounds.left - gSidebarWidth);
 
-            if (want < kMinSidebar) {
-                want = kMinSidebar;
+            if (want != gListWidth) {
+                gListWidth = want;
+                Layout();
+                GazetteUIUpdate();
             }
-            if (want > bounds.right - kMaxSidebarPad) {
-                want = (short)(bounds.right - kMaxSidebarPad);
-            }
+        } else {
+            short want = (short)(pt.h - bounds.left);
+
             if (want != gSidebarWidth) {
                 gSidebarWidth = want;
                 Layout();
                 GazetteUIUpdate();
             }
-        } else {
-            short usable = (short)(bounds.bottom - gStatusHeight -
-                                   bounds.top - gHeaderHeight);
-            short share;
-
-            if (usable <= 0) {
-                break;
-            }
-            share = (short)((long)(pt.v - bounds.top - gHeaderHeight) * 100 /
-                            usable);
-            if (share < 10)  share = 10;
-            if (share > 90)  share = 90;
-            if (share != gListShare) {
-                gListShare = share;
-                Layout();
-                GazetteUIUpdate();
-            }
         }
     }
+
+    /* Now that it has stopped moving, the headlines are wrapped to the width
+       they actually have. */
+    ReflowHeadlines();
+    GazetteUIUpdate();
 }
 
 /* ------------------------------------------------------------------ */
@@ -3380,11 +3465,11 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
      * win there or it could never be grabbed.
      */
     if (PtInRect(where, &gVDivider)) {
-        TrackDivider(where, true);
+        TrackDivider(where, false);
         return;
     }
-    if (PtInRect(where, &gHDivider)) {
-        TrackDivider(where, false);
+    if (PtInRect(where, &gVDivider2)) {
+        TrackDivider(where, true);
         return;
     }
 
@@ -3747,6 +3832,7 @@ void GazetteUIResized(void)
         return;
     }
     Layout();
+    ReflowHeadlines();
     SetPortWindowPort(gWindow);
     GetWindowPortBounds(gWindow, &bounds);
     InvalWindowRect(gWindow, &bounds);
