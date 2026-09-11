@@ -349,6 +349,7 @@ static void Layout(void);
 static void ListViewIn(const Rect *pane, Rect *view);
 static void ListView(ListHandle list, Rect *view);
 static void PlaceListScrollBar(ListHandle list, const Rect *pane);
+static void DrawListScrollBar(ListHandle list, ControlRef paneCtl);
 static short ReaderHeaderHeightFor(short lines);
 static short ReaderTitleLineCount(void);
 static short ReaderTitleWidth(void);
@@ -782,6 +783,9 @@ static void PlaceListScrollBar(ListHandle list, const Rect *pane)
 }
 
 /* Does this pane wear the focus border? */
+/* Is the window the one in front? A bar is only greyed because of this. */
+static Boolean gActive = true;
+
 static Boolean PaneHasFocus(ControlRef control)
 {
     return (Boolean)(control != NULL && control == gFocusPane);
@@ -931,6 +935,59 @@ static void WakeScrollBar(ListHandle list)
      * bar — and a redraw that is clipped away still counts as done.
      */
     HiliteControl(bar, 0);
+}
+
+/*
+ * Draw a list's scroll bar, from scratch, taking nothing on trust.
+ *
+ * Leaving this to DrawControls did not survive the window losing the front:
+ * the update that follows erases the whole window and then expects the
+ * hierarchy to put itself back, and the bar did not come back with it. So
+ * everything it depends on is stated here rather than assumed — where it
+ * sits, that it is visible, that it is not still greyed from the deactivate,
+ * and that the clip in force is the window rather than whatever the last
+ * thing to draw narrowed it to.
+ */
+static void DrawListScrollBar(ListHandle list, ControlRef paneCtl)
+{
+    ControlRef bar;
+    Rect       pane;
+    Rect       bounds;
+    RgnHandle  save = NULL;
+
+    if (gWindow == NULL || list == NULL || paneCtl == NULL) {
+        return;
+    }
+    bar = GetListVerticalScrollBar(list);
+    if (bar == NULL) {
+        return;
+    }
+
+    SetPortWindowPort(gWindow);
+    GetControlBounds(paneCtl, &pane);
+    PlaceListScrollBar(list, &pane);
+
+    /* Greyed only because the window is not in front. Nothing to scroll is
+       not a reason: Platinum's answer to that is an empty track with its
+       arrows still on it. */
+    if (gActive && GetControlHilite(bar) == 255) {
+        HiliteControl(bar, 0);
+    }
+
+    save = NewRgn();
+    if (save != NULL) {
+        GetClip(save);
+    }
+    GetWindowPortBounds(gWindow, &bounds);
+    ClipRect(&bounds);
+
+    ShowControl(bar);
+    Draw1Control(bar);
+
+    if (save != NULL) {
+        SetClip(save);
+        DisposeRgn(save);
+    }
 }
 
 /*
@@ -2551,17 +2608,7 @@ static void DrawListPane(ControlRef control, ListHandle list, int rows,
      * it goes after that and the redraw after both.
      */
     WakeScrollBar(list);
-    {
-        ControlRef bar = GetListVerticalScrollBar(list);
-
-        if (bar != NULL) {
-            /* Placed again rather than only at sizing time: the List Manager
-               re-derives its bar from its view whenever it feels the need,
-               and its view is not where the bar goes. */
-            PlaceListScrollBar(list, &pane);
-            Draw1Control(bar);
-        }
-    }
+    DrawListScrollBar(list, control);
 }
 
 static pascal void PaneDraw(ControlRef control, SInt16 part)
@@ -3037,6 +3084,12 @@ void GazetteUIUpdate(void)
     if (gHeadRowCount == 0) {
         DrawArticlePane();
     }
+
+    /* The bars last and by name. The erase at the top of this took them with
+       everything else, and coming back through DrawControls did not put them
+       back. */
+    DrawListScrollBar(gSidebarList, gSidebarCtl);
+    DrawListScrollBar(gArticleList, gArticleCtl);
 }
 
 /* ------------------------------------------------------------------ */
@@ -3633,6 +3686,7 @@ void GazetteUIActivate(Boolean active)
     if (gWindow == NULL) {
         return;
     }
+    gActive = active;
 
     /* The lists grey their own scroll bars and selections. */
     if (gSidebarList != NULL) {
@@ -3676,8 +3730,8 @@ void GazetteUIActivate(Boolean active)
      * launch and gone the first time the window came back to the front.
      */
     if (active) {
-        DrawSidebarPane();
-        DrawArticlePane();
+        DrawListScrollBar(gSidebarList, gSidebarCtl);
+        DrawListScrollBar(gArticleList, gArticleCtl);
     }
 }
 
