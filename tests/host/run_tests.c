@@ -93,7 +93,7 @@ static void TestPrefsText(void)
         "# a comment = not a setting\n"
         "; nor is this one\n"
         "refresh-minutes = 15\n"
-        "Full-Text: 1\n"
+        "Sort-Oldest-First: 1\n"
         "empty =\n"
         "no separator here\n"
         "feed = one\n"
@@ -107,7 +107,7 @@ static void TestPrefsText(void)
     CheckStr("get returns the trimmed value", buf, "15");
 
     CheckTrue("keys are case-insensitive",
-              gz_prefs_get(text, len, "full-text", buf, sizeof buf));
+              gz_prefs_get(text, len, "Sort-Oldest-First", buf, sizeof buf));
     CheckStr("':' works as a separator too", buf, "1");
 
     CheckLong("comments are not settings",
@@ -359,7 +359,6 @@ static void TestPrefsModel(void)
     CheckLong("defaults ship one feed", p.feedCount, 1);
     CheckLong("default refresh", p.refreshMinutes, 30);
     CheckLong("default max articles", p.maxArticles, 100);
-    CheckLong("full text is on and is no longer a choice", p.fullText, 1);
     CheckLong("newest on top by default", p.oldestFirst, 0);
     CheckLong("nothing is hidden by default", p.hideReadArticles, 0);
     CheckLong("nor are read feeds", p.hideReadFeeds, 0);
@@ -444,7 +443,6 @@ static void TestPrefsParse(void)
     static const char text[] =
         "refresh-minutes = 5\r"
         "max-articles = 25\r"
-        "full-text = 1\r"
         "feed = https://a.example/rss | Feed A\r"
         "feed-off = https://b.example/rss | Feed B\r"
         "feed = https://c.example/rss\r";
@@ -454,7 +452,6 @@ static void TestPrefsParse(void)
               GazettePrefsParse(text, sizeof text - 1, &p), 3);
     CheckLong("parse reads refresh-minutes", p.refreshMinutes, 5);
     CheckLong("parse reads max-articles", p.maxArticles, 25);
-    CheckLong("parse reads full-text", p.fullText, 1);
 
     /* File order, exactly — including the disabled one, which keeps its place
        rather than being sorted to the end. The order of the lines is the order
@@ -522,7 +519,6 @@ static void TestPrefsRoundTrip(void)
     GazettePrefsAddFeed(&before, "https://d.example/rss", "Feed D", 1);
     before.refreshMinutes = 45;
     before.maxArticles    = 12;
-    before.fullText       = 1;
     before.oldestFirst      = 1;
     before.hideReadArticles = 1;
     before.hideReadFeeds    = 1;
@@ -544,7 +540,6 @@ static void TestPrefsRoundTrip(void)
     CheckLong("round-trip keeps refresh-minutes",
               after.refreshMinutes, before.refreshMinutes);
     CheckLong("round-trip keeps max-articles", after.maxArticles, before.maxArticles);
-    CheckLong("round-trip keeps full-text", after.fullText, before.fullText);
     CheckLong("round-trip keeps the sort order",
               after.oldestFirst, before.oldestFirst);
     CheckLong("round-trip keeps hide-read-articles",

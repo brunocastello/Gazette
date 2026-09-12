@@ -1202,6 +1202,42 @@ int GazetteFeedsCurrentSmart(void)
     return gCurrentSmart;
 }
 
+/* Counting, for the number beside "Today" in the sidebar. Nothing is kept. */
+static void EmitCountToday(const GazetteArticle *a, void *ctx)
+{
+    if (a->date != 0 &&
+        GazetteDayNumber(GazetteFeedsLocalTime(a->date)) == gSmartToday) {
+        (*(int *)ctx)++;
+    }
+}
+
+/*
+ * How many articles are dated today, across every enabled feed.
+ *
+ * This one has to be counted, and counting it means reading every cache: a
+ * feed's file says what is in it, and what is in it changes meaning at
+ * midnight, so there is nothing that could be written down and read back.
+ * The other two views' numbers are free — the index already keeps an unread
+ * count per feed and a starred set — which is why only this one is a
+ * function and why it is asked once when the sidebar's rows are rebuilt
+ * rather than once per row drawn.
+ */
+int GazetteFeedsCountToday(void)
+{
+    int total = 0;
+    int i;
+
+    gSmartToday = GazetteDayNumber(UnixNow());
+
+    for (i = 0; i < GazetteCoreFeedCount(); i++) {
+        if (GazetteCoreFeedEnabled(i)) {
+            ScanCache(GazetteCoreFeedURL(i), i, EmitCountToday, &total,
+                      NULL, 0, NULL);
+        }
+    }
+    return total;
+}
+
 int GazetteFeedsLoadGroup(int group, long maxArticles)
 {
     int cap = kGazetteMaxArticles;

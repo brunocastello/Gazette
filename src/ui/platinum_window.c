@@ -100,6 +100,14 @@ enum {
     kMinReader     = 200,       /* what is left for the article               */
     kReaderMargin  = 6,         /* above the first line and below the last */
     /*
+     * And down either side of it. Wider than kTextInset, which is what a list
+     * row uses: a row is a line of a table and wants to start near its edge,
+     * whereas a column of prose read at length wants air between the words
+     * and the frame. It is also what the rule under the byline is drawn to,
+     * so the two stay in step.
+     */
+    kReaderSide    = 10,
+    /*
      * The empty line the article carries between its byline and its text,
      * with the rule across the middle of it, is set this much above the
      * body's size: the rule wants air on both sides of it, and an empty
@@ -260,6 +268,11 @@ static int gSelectedGroup   = -1;
 /* Which of the three standing views is open, or -1 when the sidebar's
    selection is a feed or a group. */
 static int gSelectedSmart   = -1;
+
+/* What goes in the count column beside each of them. Worked out when the
+   sidebar's rows are rebuilt — see CountSmartRows — because one of the three
+   costs a read of every cache and a drawing routine is no place for that. */
+static int gSmartCount[kGazetteSmartCount];
 
 
 static char gStatus[192];
@@ -1567,9 +1580,9 @@ static void Layout(void)
  */
 static void ReaderRects(Rect *view)
 {
-    SetRect(view, (short)(gReaderRect.left + kTextInset),
+    SetRect(view, (short)(gReaderRect.left + kReaderSide),
             (short)(gReaderRect.top + kFocusBorder),
-            (short)(gReaderRect.right - kTextInset),
+            (short)(gReaderRect.right - kReaderSide),
             (short)(gReaderRect.bottom - kFocusBorder));
 }
 
@@ -2536,16 +2549,9 @@ static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
     }
     textLeft = (short)(iconLeft + kIconSize + kIconGap);
 
-    /*
-     * A standing view is a question about everything rather than a place
-     * articles are kept, so there is no count to put beside it: "All Unread"
-     * could carry the sum the sidebar already shows feed by feed, and the
-     * other two would need every cache opened to answer at all. One of three
-     * carrying a number would read as the other two having none rather than
-     * as their not having one.
-     */
     if (r.kind == kGazetteRowSmart) {
-        unread = 0;
+        unread = (r.index >= 0 && r.index < kGazetteSmartCount)
+                     ? gSmartCount[r.index] : 0;
     } else if (r.kind == kGazetteRowFeed) {
         enabled = GazetteCoreFeedEnabled(r.index);
         unread  = enabled ? FeedUnread(r.index) : 0;
@@ -4411,10 +4417,40 @@ static void ApplyFeedVisibility(void)
     }
 }
 
+/*
+ * What goes beside the three standing views.
+ *
+ * Two of the three are free. The index keeps an unread count for every feed —
+ * which is where the number beside a feed comes from already — and it knows
+ * how many articles are starred. Only "Today" has to be counted, and counting
+ * it means reading every cache, so it is done here, once, when the rows are
+ * rebuilt, and not in the drawing routine that runs once a row.
+ *
+ * The starred number is the whole set, which can be a little ahead of what
+ * the Starred view would show: an article stays starred after the feed it
+ * came from is removed. That is the right way round for it to be wrong.
+ */
+static void CountSmartRows(void)
+{
+    int total = 0;
+    int i;
+
+    for (i = 0; i < GazetteCoreFeedCount(); i++) {
+        if (GazetteCoreFeedEnabled(i)) {
+            total += FeedUnread(i);
+        }
+    }
+
+    gSmartCount[kGazetteSmartToday]   = GazetteFeedsCountToday();
+    gSmartCount[kGazetteSmartUnread]  = total;
+    gSmartCount[kGazetteSmartStarred] = GazetteIndexStarredCount();
+}
+
 /* The sidebar's rows, after whatever has just changed what is in them. */
 static void SyncSidebarRows(void)
 {
     ApplyFeedVisibility();
+    CountSmartRows();
 
     if (gSidebarList == NULL) {
         return;

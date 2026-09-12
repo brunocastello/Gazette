@@ -41,14 +41,6 @@ Boolean GazetteCoreInit(void)
        or unreadable file leaves a perfectly usable configuration behind. */
     GazettePrefsParse(found ? text : NULL, found ? (size_t)len : 0, &gPrefs);
 
-    /*
-     * An article is read in full or it is read in summary, and the summary
-     * was never what anyone wanted. It stopped being a choice when "Full
-     * Article Text" left the menu; forcing it here rather than only in the
-     * defaults is what reaches a preferences file that still says otherwise.
-     */
-    gPrefs.fullText = 1;
-
     /* Nothing is hidden until the window has counted what is unread. */
     GazettePrefsShowAll(&gPrefs);
 
@@ -211,15 +203,6 @@ Boolean GazetteCoreSetFeedURL(int index, const char *url)
     }
     gPrefsDirty = true;
     return true;
-}
-
-void GazetteCoreSetFullText(Boolean on)
-{
-    if (!gInited || gPrefs.fullText == (on ? 1 : 0)) {
-        return;
-    }
-    gPrefs.fullText = on ? 1 : 0;
-    gPrefsDirty     = true;
 }
 
 /* ------------------------------------------------------------------ */

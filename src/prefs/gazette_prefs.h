@@ -12,7 +12,6 @@
  *     # Gazette Preferences
  *     refresh-minutes = 30
  *     max-articles    = 100
- *     full-text       = 0
  *     country         = US
  *
  *     feed = https://example.com/daily.xml | Something Ungrouped
@@ -112,7 +111,6 @@ typedef struct {
 
     long refreshMinutes;    /* 0 = manual refresh only */
     long maxArticles;       /* per feed; bounds the cache and the list */
-    int  fullText;          /* 1 = fetch and strip the article page too */
     char country[kGazetteCountryLen];   /* for Google News URLs */
 
     /*

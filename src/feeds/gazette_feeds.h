@@ -256,6 +256,19 @@ int GazetteFeedsLoadSmart(int which, long maxArticles);
 /* Which standing view the store is showing, or -1. */
 int GazetteFeedsCurrentSmart(void);
 
+/*
+ * How many articles are dated today, across every enabled feed — the number
+ * the sidebar puts beside "Today".
+ *
+ * It reads every cache, because what counts as today changes at midnight and
+ * so there is nothing that could be written down and read back. The other two
+ * views' numbers cost nothing — the index keeps an unread count per feed and
+ * knows how many are starred — so this is the only one that is a function,
+ * and it is meant to be asked when the sidebar's rows are rebuilt rather than
+ * when a row is drawn.
+ */
+int GazetteFeedsCountToday(void);
+
 /* ------------------------------------------------------------------ */
 /* The clock                                                           */
 /*                                                                     */
@@ -286,9 +299,10 @@ void GazetteFeedsForgetCache(const char *url);
 /* ------------------------------------------------------------------ */
 /* Full article text                                                   */
 /*                                                                     */
-/* The feed's own summary is what the reader pane shows. With the      */
-/* full-text preference on, opening an article also fetches the page   */
-/* it links to and extracts the prose from it.                         */
+/* Opening an article fetches the page it links to and extracts the    */
+/* prose from it. Always: the feed's own summary is what stands on     */
+/* screen until that lands, and what it falls back to when the page    */
+/* cannot be had, but it is never what was wanted.                     */
 /*                                                                     */
 /* Lazy and one article at a time on purpose. Fetching every page a    */
 /* refresh brought in would be a hundred connections and several       */

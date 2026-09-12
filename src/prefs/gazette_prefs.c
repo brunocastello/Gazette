@@ -129,9 +129,6 @@ void GazettePrefsSetDefaults(GazettePrefs *p)
 
     p->refreshMinutes = kDefaultRefreshMinutes;
     p->maxArticles    = kDefaultMaxArticles;
-    /* An article is read in full or it is read in summary, and the summary
-       was never the thing anyone wanted. It is no longer a choice. */
-    p->fullText       = 1;
     gz_copy_n(p->country, sizeof p->country, "US", 2);
 
     /* Newest on top, everything shown, the sidebar out: what the window looks
@@ -708,8 +705,6 @@ int GazettePrefsParse(const char *text, size_t len, GazettePrefs *p)
                                          p->refreshMinutes);
     p->maxArticles    = gz_prefs_get_num(text, len, "max-articles",
                                          p->maxArticles);
-    p->fullText       = gz_prefs_get_num(text, len, "full-text",
-                                         p->fullText) ? 1 : 0;
     (void)gz_prefs_get(text, len, "country", p->country, sizeof p->country);
 
     p->oldestFirst      = gz_prefs_get_num(text, len, "sort-oldest-first",
@@ -867,10 +862,6 @@ size_t GazettePrefsSerialize(const GazettePrefs *p, char *out, size_t cap)
 
     Append(out, cap, &len, "max-articles    = ");
     AppendNum(out, cap, &len, p->maxArticles);
-    Append(out, cap, &len, "\r");
-
-    Append(out, cap, &len, "full-text       = ");
-    AppendNum(out, cap, &len, p->fullText ? 1 : 0);
     Append(out, cap, &len, "\r");
 
     Append(out, cap, &len, "country         = ");

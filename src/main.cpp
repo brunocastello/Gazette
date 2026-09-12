@@ -88,6 +88,7 @@ static void    HandleRemove(void);
 static void    HandleToggleEnabled(void);
 static void    HandleMoveToGroup(short item);
 static void    ShowSmart(int which);
+static void    TryPendingFullText(void);
 static void    HandleMarkRead(void);
 static void    HandleMarkAllRead(void);
 static void    HandleMarkRange(Boolean below);
@@ -128,6 +129,17 @@ static int gQueueGroup = -1;       /* -1 when no group refresh is running */
    with Today, All Unread or Starred selected fetches every enabled feed —
    there is no one feed behind the view — and then asks the question again. */
 static int gQueueSmart = -1;
+
+/*
+ * The article whose own page still has to be fetched, because the one
+ * connection was busy when it was opened. -1 when there is nothing waiting.
+ *
+ * Gazette always reads the full article now — that stopped being a preference
+ * when "Full Article Text" left the menu — so "the connection was busy" can
+ * no longer mean "settle for the summary". It means "in a moment": the idle
+ * loop asks again as soon as the refresh that was holding the line is done.
+ */
+static int gWantFullText = -1;
 
 /*
  * The feed a discovery attempt is still owed, or -1.
@@ -556,6 +568,7 @@ static void RunGazette(void)
                cooperating, not just Gazette. */
             PumpRefresh();
             PumpFullText();
+            TryPendingFullText();
             CheckAutoRefresh();
         }
     }
@@ -1650,35 +1663,74 @@ static void ShowFeed(int feedIndex)
 }
 
 /*
- * An article has been opened. With the full-text preference on, that is when
+ * An article has been opened. That is when
  * its own page is fetched: lazily, one at a time, and only for something the
  * user is actually looking at.
  */
 static void ShowArticle(int articleIndex)
 {
-    const GazettePrefs   *prefs = GazetteCoreGetPrefs();
     const GazetteArticle *article;
 
     /* Whatever was held is for the article that was open a moment ago. */
     GazetteFeedsFullTextCancel();
+    gWantFullText = -1;
 
-    if (prefs == nil || !prefs->fullText) {
-        return;
-    }
     article = GazetteFeedsArticleAt(articleIndex);
     if (article == nil || article->link[0] == '\0') {
-        return;
+        return;                     /* nothing to fetch: no address */
     }
     if (!gNetUp) {
         return;                     /* the summary is already on screen */
     }
-    /* A refresh has the connection. The summary stands; asking again is a
-       click away. */
+
+    /*
+     * A refresh has the one connection. The full article is not optional, so
+     * this is remembered rather than dropped and the idle loop picks it up
+     * the moment the line is free — which it did not do before, and which is
+     * why opening an article during a refresh used to leave the summary on
+     * screen until it was clicked a second time.
+     */
     if (GazetteFeedsRefreshGetState() == kGazetteRefreshRunning) {
+        gWantFullText = articleIndex;
         return;
     }
 
     if (GazetteFeedsFullTextStart(articleIndex, article->link)) {
+        GazetteUISetStatus("Reading the full article\311");
+    }
+}
+
+/*
+ * Ask again for a page that could not be fetched when its article was opened.
+ * From the idle loop, so it costs a comparison a pass and starts the moment
+ * whatever was holding the connection lets go.
+ */
+static void TryPendingFullText(void)
+{
+    const GazetteArticle *article;
+    int                   want = gWantFullText;
+
+    if (want < 0) {
+        return;
+    }
+    if (!gNetUp ||
+        GazetteFeedsRefreshGetState() == kGazetteRefreshRunning ||
+        GazetteFeedsFullTextGetState() == kGazetteRefreshRunning) {
+        return;                     /* still busy; ask again next pass */
+    }
+
+    /* The reader has moved on, or the store has been replaced under it. The
+       article that was waiting is not the one on screen, so it is no longer
+       wanted. */
+    gWantFullText = -1;
+    if (want != GazetteUISelectedArticle()) {
+        return;
+    }
+    article = GazetteFeedsArticleAt(want);
+    if (article == nil || article->link[0] == '\0') {
+        return;
+    }
+    if (GazetteFeedsFullTextStart(want, article->link)) {
         GazetteUISetStatus("Reading the full article\311");
     }
 }
