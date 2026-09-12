@@ -23,11 +23,11 @@ Macintosh 256-colour system palette, where the index is r*36 + g*6 + b on the
 descending 0..5 scale, with black the one exception at 255. See
 tools/generate_icon.py, which this file deliberately mirrors.
 
-The 1-bit members matter more here than they do for a Finder icon, because a
-sidebar row draws at whatever depth the screen is set to. Anything lighter
-than mid-grey drops out of them, so each shape carries a dark rim: in black
-and white the sun and the star come out as outlines and the unread disc comes
-out solid, which is three silhouettes that still tell each other apart.
+Each shape is one flat colour, with no rim and no shading: that is what the
+reference art is, and it is what sixteen pixels square can actually hold. The
+1-bit members are therefore the silhouette rather than the dark parts of the
+drawing — see family() — so a black and white screen gets three solid shapes
+that still tell each other apart by outline alone.
 """
 
 import argparse
@@ -53,10 +53,14 @@ def mac8(rgb):
 
 CLEAR = None
 
-GOLD = (255, 204, 0)                # the sun's face and the star
-GOLD_D = (204, 102, 0)              # their rim, dark enough to survive 1-bit
-BLUE = (51, 102, 255)               # the unread disc
-BLUE_D = (0, 51, 153)               # its rim
+# Sampled off the reference art and moved to the nearest colour on the cube:
+# (255,118,0) -> (255,102,0), (84,148,243) -> (51,153,255) and
+# (248,191,46) -> (255,204,51). Each shape is one flat colour with no rim and
+# no shading, which is what the reference is and what sixteen pixels square
+# can actually hold.
+ORANGE = (255, 102, 0)              # the sun
+BLUE = (51, 153, 255)               # the unread ring and its centre
+GOLD = (255, 204, 51)               # the star
 
 
 def luminance(c):
@@ -92,6 +96,17 @@ def disc(px, cx, cy, r, colour):
             dy = y + 0.5 - cy
             if dx * dx + dy * dy <= r * r:
                 px[y][x] = colour
+
+
+def hollow(px, cx, cy, r):
+    """Clear a circle back out again — the inside of a ring."""
+    size = len(px)
+    for y in range(size):
+        for x in range(size):
+            dx = x + 0.5 - cx
+            dy = y + 0.5 - cy
+            if dx * dx + dy * dy <= r * r:
+                px[y][x] = CLEAR
 
 
 def polygon(px, points, colour):
@@ -130,67 +145,47 @@ def star_points(cx, cy, outer, inner):
     return out
 
 
-def rim(px, fill_colour, rim_colour):
-    """
-    Turn the outermost ring of a filled shape into its rim.
-
-    Done afterwards rather than by stroking the outline, because a stroked
-    outline at this size lands half a pixel off the fill and leaves the shape
-    a pixel wider on one side than the other. A pixel is on the rim when it is
-    filled and at least one of its four neighbours is not.
-    """
-    size = len(px)
-    edge = []
-    for y in range(size):
-        for x in range(size):
-            if px[y][x] != fill_colour:
-                continue
-            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                nx, ny = x + dx, y + dy
-                if (not (0 <= nx < size and 0 <= ny < size) or
-                        px[ny][nx] != fill_colour):
-                    edge.append((x, y))
-                    break
-    for x, y in edge:
-        px[y][x] = rim_colour
-
-
 # --- The four icons ---------------------------------------------------------
 
 def draw_today():
-    """A sun: a disc with eight rays, for the articles of the current day."""
+    """A sun: a face with eight rays around it, clear of it on every side."""
     px = blank(16)
 
     # The face: rows and columns 4 through 11, symmetrical about the seam
     # between pixels 7 and 8, which is where a sixteen-wide canvas has its
     # middle. There is no centre pixel, so nothing here may be one pixel wide.
-    disc(px, 8.0, 8.0, 4.4, GOLD)
-    rim(px, GOLD, GOLD_D)
+    disc(px, 8.0, 8.0, 4.0, ORANGE)
 
     # The rays, placed by hand rather than by trigonometry. Two problems with
     # working them out from an angle at this size: a cosine that ought to be
     # zero comes back as 1e-16 and the rounding sends the ray a pixel to one
-    # side, and rays of one length come out visibly longer on the diagonals,
+    # side, and a ray of a given length comes out visibly longer on a diagonal,
     # where a pixel covers half as much again of the ground.
     #
-    # So: the four on the axes are two pixels long and two wide, straddling
-    # the seam; the four on the corners are a single pixel. Each is clear of
-    # the face by a pixel, which is what makes the sun read as shining rather
-    # than as a cogwheel.
-    fill(px, 7, 0, 8, 1, GOLD_D)            # up
-    fill(px, 7, 14, 8, 15, GOLD_D)          # down
-    fill(px, 0, 7, 1, 8, GOLD_D)            # left
-    fill(px, 14, 7, 15, 8, GOLD_D)          # right
-    for x, y in ((2, 2), (13, 2), (2, 13), (13, 13)):
-        put(px, x, y, GOLD_D)
+    # So the four on the axes are two pixels long and two wide, straddling the
+    # seam, and the four on the corners are a two-pixel staircase reaching the
+    # same distance. Each is clear of the face by a pixel, which is what makes
+    # the sun read as shining rather than as a cogwheel.
+    fill(px, 7, 0, 8, 1, ORANGE)            # up
+    fill(px, 7, 14, 8, 15, ORANGE)          # down
+    fill(px, 0, 7, 1, 8, ORANGE)            # left
+    fill(px, 14, 7, 15, 8, ORANGE)          # right
+    for x, y in ((2, 2), (3, 3), (13, 2), (12, 3),
+                 (2, 13), (3, 12), (13, 13), (12, 12)):
+        put(px, x, y, ORANGE)
     return px
 
 
 def draw_unread():
-    """A blue disc — the mark every reader already reads as "not yet read"."""
+    """
+    A ring with a disc inside it, the way the reference draws "unread": the
+    gap between the two is what keeps it from reading as a plain bullet, and
+    it is the one shape here that needs three radii rather than one.
+    """
     px = blank(16)
-    disc(px, 8.0, 8.0, 6.4, BLUE)
-    rim(px, BLUE, BLUE_D)
+    disc(px, 8.0, 8.0, 7.2, BLUE)
+    hollow(px, 8.0, 8.0, 6.1)
+    disc(px, 8.0, 8.0, 4.0, BLUE)
     return px
 
 
@@ -202,7 +197,6 @@ def draw_star(cy, outer, inner):
     """
     px = blank(16)
     polygon(px, star_points(8.0, cy, outer, inner), GOLD)
-    rim(px, GOLD, GOLD_D)
     return px
 
 
@@ -231,8 +225,17 @@ def bitmap(px, predicate):
 
 
 def family(px, res_id, name):
-    ink = bitmap(px, lambda c: c is not CLEAR and luminance(c) < 150)
-    mask = bitmap(px, lambda c: c is not CLEAR)
+    """
+    The 1-bit member is the shape's silhouette rather than its dark parts.
+    Each icon here is one flat colour, and two of the three are light enough
+    that a luminance threshold would ink nothing at all and leave a blank
+    square on a black and white screen. A solid silhouette is also what the
+    system's own small icons did before colour, and the gaps — the sun's rays,
+    the ring round the unread disc — survive it, which is what keeps the three
+    telling each other apart.
+    """
+    ink = bitmap(px, lambda c: c is not CLEAR)
+    mask = ink
     ics8 = bytes(mac8(c) if c is not CLEAR else 0 for row in px for c in row)
 
     return ("data 'ics#' (%d, \"%s\", purgeable) {\n%s\n};\n\n"
@@ -286,7 +289,7 @@ def main():
         # list marks an article with sits in a text line and is drawn smaller
         # so that it does not out-shout the headline beside it.
         (130, "Starred", draw_star(8.4, 7.4, 3.8)),
-        (131, "Starred Article", draw_star(8.6, 6.0, 3.0)),
+        (131, "Starred Article", draw_star(8.6, 6.0, 3.1)),
     ]
 
     if args.ascii:

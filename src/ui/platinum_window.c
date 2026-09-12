@@ -396,6 +396,7 @@ static void DrawStatus(void);
 static void DrawStatusText(void);
 static void DrawHeaderTitle(const Rect *r, const char *text);
 static void DrawReaderRule(void);
+static void ReaderHiliteColours(void);
 static void SyncSidebarRows(void);
 
 /* ------------------------------------------------------------------ */
@@ -1677,9 +1678,10 @@ static void ScrollReaderTo(short offset)
      * erases it with the port's background, and the port's background is
      * whatever the last thing to draw happened to leave behind — the
      * sidebar's grey, if that was it — which is where the wrong colour
-     * behind a scrolled article came from.
+     * behind a scrolled article came from. It also redraws any selection in
+     * that strip, which wants the same background for the same reason.
      */
-    SetThemeBackground(kThemeBrushWhite, 8, true);
+    ReaderHiliteColours();
 
     TEScroll(0, (short)(now - offset), gReaderTE);
 
@@ -3196,6 +3198,7 @@ static pascal void ReaderDraw(ControlRef control, SInt16 part)
         Rect view = (**gReaderTE).viewRect;   /* not a pointer into the
                                                  handle, which can move */
 
+        ReaderHiliteColours();
         TEUpdate(&view, gReaderTE);
     }
     DrawReaderRule();
@@ -3721,6 +3724,39 @@ static void SidebarClicked(Point where, EventModifiers modifiers)
  * the pane scrolls it, which TEAutoView(false) — set because the scroll
  * offset is this file's to know — takes away from TEClick.
  */
+/*
+ * Say what the article is drawn on, and in what colour a selection in it is
+ * to be marked, before TextEdit draws either.
+ *
+ * This is why a selection could be made and not seen. TextEdit marks one by
+ * inverting, and a QuickDraw invert with the hilite bit clear changes only
+ * the pixels that match the port's **background** colour — those become the
+ * port's hilite colour, and every other pixel is left exactly as it was.
+ *
+ * EraseWith deliberately leaves whichever brush drew last sitting in the
+ * port; that is the whole point of it, and it is documented where it is
+ * defined. So by the time a click reaches the article the background is
+ * whatever drew most recently, which is nearly always the headline list's
+ * grey — and inverting an article that is drawn on white against a
+ * background colour of grey matches nothing, changes nothing, and leaves a
+ * selection that is really there and completely invisible.
+ *
+ * It is the same trap FillHighlight exists to step round in the two lists,
+ * arrived at from the other direction.
+ */
+static void ReaderHiliteColours(void)
+{
+    RGBColor hilite;
+
+    SetThemeBackground(kThemeBrushWhite, 8, true);
+
+    /* And the colour to mark it in, rather than trusting whatever the port
+       was born with. LMGetHiliteRGB is what the Appearance control panel's
+       highlight colour arrives as, and it is what the lists already use. */
+    LMGetHiliteRGB(&hilite);
+    HiliteColor(&hilite);
+}
+
 static void ReaderClick(Point where, EventModifiers modifiers)
 {
     TEHandle te = gReaderTE;
@@ -3734,6 +3770,7 @@ static void ReaderClick(Point where, EventModifiers modifiers)
         return;
     }
     SetPortWindowPort(gWindow);
+    ReaderHiliteColours();
     view = (**te).viewRect;
     if (view.right <= view.left) {
         return;
@@ -3791,7 +3828,16 @@ static void ReaderClick(Point where, EventModifiers modifiers)
 
     if ((**te).selStart == (**te).selEnd) {
         TEDeactivate(te);
+        return;
     }
+
+    /*
+     * Drawn again from scratch now that the drag has finished: the pane is
+     * erased white and TEUpdate lays the text and the highlight down
+     * together, so whatever the running invert left behind, what is on screen
+     * at the end is what TextEdit says the selection is.
+     */
+    DrawReader();
 }
 
 /* The user pane's tracking procedure: a click that HandleControlClick has
@@ -3823,7 +3869,10 @@ static pascal ControlPartCode ReaderFocus(ControlRef control,
             gFocusPane = NULL;
         }
         if (gReaderTE != NULL) {
+            /* Taking a highlight away is the same invert as putting it
+               there, so it wants the same background under it. */
             SetPortWindowPort(gWindow);
+            ReaderHiliteColours();
             TEDeactivate(gReaderTE);
             TESetSelect(0, 0, gReaderTE);
         }
