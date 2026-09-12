@@ -102,11 +102,13 @@ enum {
     kMinReader     = 200,       /* what is left for the article               */
     kReaderMargin  = 6,         /* above the first line and below the last */
     /*
-     * The article's headline is set a size above the system font's own,
-     * which is what makes it read as the piece's title rather than as the
-     * first line of it.
+     * The empty line the article carries between its byline and its text,
+     * with the rule across the middle of it, is set this much above the
+     * body's size: the rule wants air on both sides of it, and an empty
+     * line's height is the only thing that can give it any. Nothing is
+     * drawn in it — only its metrics are ever used.
      */
-    kReaderTitleBump = 2,
+    kReaderRuleAir = 4,
 
     kMaxTitleLines = 3,         /* a headline wraps, but not without end   */
     kHeadlineLines = 2,         /* and in the list, always exactly two     */
@@ -314,12 +316,13 @@ static short gStatusHeight = kStatusHeight;
 static short gStatusBase   = 13;
 
 /*
- * The body font's own metrics. TextEdit lays the article out, so these are
- * wanted for one thing only: placing the rule between the headline and the
- * text, which sits in the empty line the article carries between them.
+ * Two line heights, and nothing else: the body's, and the taller empty line
+ * the article carries between its byline and its text. TextEdit lays the
+ * article out — these are wanted only to place the rule in the middle of
+ * that empty line.
  */
-static short gReaderAscent = 10;
-static short gReaderLine   = 14;
+static short gReaderLine = 16;
+static short gReaderGap  = 21;
 
 /* Where the body starts in gReaderText, which is the character the rule is
    placed from. Zero when there is no article open. */
@@ -589,13 +592,17 @@ static void MeasureFonts(void)
      */
     {
         FontInfo body;
+        FontInfo gap;
 
         TextFont(gReadFont);
         TextSize(gReadSize);
         GetFontInfo(&body);
 
-        gReaderAscent = body.ascent;
-        gReaderLine   = (short)(body.ascent + body.descent + body.leading);
+        TextSize((short)(gReadSize + kReaderRuleAir));
+        GetFontInfo(&gap);
+
+        gReaderLine = (short)(body.ascent + body.descent + body.leading);
+        gReaderGap  = (short)(gap.ascent + gap.descent + gap.leading);
 
         TextFont(gViewFont);
         TextSize(gViewSize);
@@ -1450,8 +1457,15 @@ static void Layout(void)
          * from the top of the content region — level with where the other
          * two columns' headers begin — down to the status strip, with
          * nothing ruled across it.
+         *
+         * It starts at headTop, a pixel above the content region, for the
+         * reason the two lists start a pixel inside their headers: the
+         * scroll bar draws its own black edge along the pane's first row,
+         * and the window frame already rules a black line there. Starting at
+         * bounds.top put the bar's edge directly under that line and the top
+         * of the article's scroll bar came out two pixels thick.
          */
-        SetRect(&gReaderPane, (short)(split2 + 6), bounds.top,
+        SetRect(&gReaderPane, (short)(split2 + 6), headTop,
                 (short)(bounds.right + 1), (short)(contentBottom + 1));
 
         /*
@@ -1464,10 +1478,12 @@ static void Layout(void)
          * redraws the reader alone, so the border simply vanished until
          * something else repainted the window.
          *
-         * At the top there is nothing left to keep clear of: the pixel used
-         * to be the header's own black rule, and the header is gone.
+         * The top pixel is the window frame's own rule, which the pane
+         * reaches over so the scroll bar's edge can land on it. The text
+         * must not: erasing from the pane's top would paint that line white.
          */
-        SetRect(&gReaderRect, gReaderPane.left, gReaderPane.top,
+        SetRect(&gReaderRect, gReaderPane.left,
+                (short)(gReaderPane.top + 1),
                 (short)(gReaderPane.right - kScrollWidth),
                 (short)(gReaderPane.bottom - 1));
     }
@@ -1753,6 +1769,7 @@ static void SetReaderText(void)
     size_t  used     = 0;
     size_t  titleEnd = 0;
     size_t  byline   = 0;
+    size_t  gap      = 0;
     char    when[64];
 
     if (gWindow == NULL || gReaderTE == NULL) {
@@ -1835,6 +1852,7 @@ static void SetReaderText(void)
         byline   = used;
         used     = AppendChar(used, '\r');
         gReaderBodyStart = (short)used;
+        gap              = used;
 
         if (body[0] != '\0') {
             used = AppendBody(used, body);
@@ -1854,10 +1872,11 @@ static void SetReaderText(void)
          * style on it and the return is the last thing on the line.
          */
         ApplyRunStyle(0, (long)used, normal, gReadSize);
-        ApplyRunFont(0, (long)titleEnd, gSysFont, normal,
-                     (short)(gSysSize + kReaderTitleBump));
+        ApplyRunFont(0, (long)titleEnd, gSysFont, normal, gSysSize);
         ApplyRunFont((long)titleEnd, (long)byline, gViewFont, normal,
                      gLabelSize);
+        ApplyRunFont((long)byline, (long)gap, gReadFont, normal,
+                     (short)(gReadSize + kReaderRuleAir));
     }
 
     TESetSelect(0, 0, gReaderTE);
@@ -2990,10 +3009,17 @@ static void DrawReaderRule(void)
         return;
     }
 
-    /* Back off the body's ascent for the top of its first line, and half a
-       line again for the empty one above it: the middle of the gap. */
+    /*
+     * TEGetPoint answers with the *bottom* of the line the character is on —
+     * measured against a screenshot rather than taken from Inside Macintosh,
+     * which does not say which end it means and where the two differ by a
+     * descent. So: back off the body's own line for the top of it, back off
+     * the empty line above that, and the rule goes across that line's
+     * middle. Which is what makes the space above the rule and the space
+     * below it the same.
+     */
     where = TEGetPoint(gReaderBodyStart, gReaderTE);
-    top   = (short)(where.v - gReaderAscent - gReaderLine / 2);
+    top   = (short)(where.v - gReaderLine - gReaderGap + gReaderGap / 2);
 
     if (top < view.top || top >= view.bottom) {
         return;                 /* scrolled out of the pane */
