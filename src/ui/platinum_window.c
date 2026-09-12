@@ -1861,6 +1861,12 @@ static void SetReaderText(void)
          * the feed's summary otherwise. The store answers which article the
          * held text belongs to, so switching articles cannot show the last
          * one's body under this one's headline.
+         *
+         * And while the page is still coming, neither: the pane says it is
+         * reading and shows nothing else. The summary is what an article
+         * falls back to when its page is behind a paywall or cannot be had —
+         * it is not a first draft, and laying it out only to replace it a
+         * second later is the flicker this avoids.
          */
         if (GazetteFeedsFullTextArticle() == gSelectedArticle) {
             const char *full = GazetteFeedsFullText();
@@ -1868,6 +1874,8 @@ static void SetReaderText(void)
             if (full[0] != '\0') {
                 body = full;
             }
+        } else if (GazetteFeedsFullTextComing(gSelectedArticle)) {
+            body = NULL;
         }
 
         /*
@@ -1888,7 +1896,11 @@ static void SetReaderText(void)
         gReaderBodyStart = (short)used;
         gap              = used;
 
-        if (body[0] != '\0') {
+        if (body == NULL) {
+            static const char kWaiting[] = "Reading the full article\311";
+
+            used = AppendText(used, kWaiting, sizeof kWaiting - 1);
+        } else if (body[0] != '\0') {
             used = AppendBody(used, body);
         } else {
             static const char kNone[] = "(This feed carries no summary for "
@@ -3516,18 +3528,24 @@ static void SelectArticle(int index)
     }
 
     SelectRow(gArticleList, RowForArticle(gSelectedArticle), true);
+
+    /*
+     * The shell first, and then the text. It is the shell that goes and asks
+     * for the article's own page, and whether it has is what decides what the
+     * pane puts on screen — so asking it afterwards, which is what this used
+     * to do, meant the summary was always laid out once before anything could
+     * say it was not wanted.
+     */
+    if (gSelectedArticle >= 0 && gOnArticleChosen != NULL) {
+        gOnArticleChosen(gSelectedArticle);
+    }
+
     SetReaderText();
 
     DrawArticlePane();
     DrawReader();
     if (gReaderScroll != NULL) {
         Draw1Control(gReaderScroll);
-    }
-
-    /* Last, so the pane is already showing the summary when the shell decides
-       whether to go and fetch anything better. */
-    if (gSelectedArticle >= 0 && gOnArticleChosen != NULL) {
-        gOnArticleChosen(gSelectedArticle);
     }
 }
 
@@ -4326,16 +4344,19 @@ void GazetteUIArticlesChanged(void)
     LSetDrawingMode(true, gArticleList);
 
     Layout();
-    SetReaderText();
     if (gSelectedArticle >= 0) {
         GazetteFeedsMarkRead(gSelectedArticle, 1);
     }
-    GazetteUIUpdate();
 
-    /* The first article is open now, exactly as if it had been clicked. */
+    /* The first article is open now, exactly as if it had been clicked —
+       which means the shell is asked before the text is composed, for the
+       reason SelectArticle gives. */
     if (gSelectedArticle >= 0 && gOnArticleChosen != NULL) {
         gOnArticleChosen(gSelectedArticle);
     }
+
+    SetReaderText();
+    GazetteUIUpdate();
 }
 
 void GazetteUIArticleTextChanged(void)

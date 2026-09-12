@@ -90,6 +90,21 @@ static GazetteFetch       *gFullFetch;
 static GazetteRefreshState gFullState = kGazetteRefreshIdle;
 static int                 gFullArticle = -1;      /* what gFullText is for */
 static int                 gPendingFullArticle = -1;
+
+/*
+ * The page that still has to be got, and where from. Set the moment one is
+ * asked for and cleared only when it arrives or is given up on — so it stands
+ * through a fetch running, through a request held back because the refresh
+ * had the connection, and through a refresh taking the connection away from a
+ * fetch that had already started.
+ *
+ * That is what makes one question answer all three: GazetteFeedsFullTextComing
+ * is this and nothing else. Reading the full article is not optional, so
+ * "busy" never means "settle for the summary" — it means "in a moment", and
+ * GazetteFeedsFullTextResume is what comes back for it.
+ */
+static int                 gWantArticle = -1;
+static char                gWantURL[kGazetteArticleLinkLen];
 static char                gFullText[kGazetteExtractMax];
 static char                gFullError[192];
 
@@ -127,6 +142,11 @@ enum { kMacToUnixEpoch = 2082844800L };
 static const char kCacheMagic[] = "GAZETTE-CACHE 5";
 
 static void SaveCache(const char *url, long fetchedAt);
+
+/* The full-text job's three halves: begin the fetch for whatever is in the
+   held request, and give the connection up without giving the request up. */
+static int  BeginFullText(void);
+static void PauseFullText(void);
 
 static long UnixNow(void)
 {
@@ -519,9 +539,9 @@ int GazetteFeedsRefreshStart(int feedIndex, const char *url, long maxArticles,
         return 0;
     }
 
-    /* There is one connection, and headlines outrank the body of an article
-       that is already readable in summary. */
-    GazetteFeedsFullTextCancel();
+    /* There is one connection and headlines outrank an article's page — but
+       the page is postponed, not abandoned. See PauseFullText. */
+    PauseFullText();
 
     ReleaseRefresh();
     gError[0] = '\0';
@@ -671,6 +691,40 @@ void GazetteFeedsFullTextCancel(void)
     gFullError[0]       = '\0';
     gFullArticle        = -1;
     gPendingFullArticle = -1;
+    gWantArticle        = -1;
+    gWantURL[0]         = '\0';
+    gFullState          = kGazetteRefreshIdle;
+}
+
+/*
+ * Start the page that was asked for while the line was busy. Called from the
+ * idle loop, so it costs a comparison a pass and begins the moment whatever
+ * was holding the connection lets go. Returns 1 if a fetch started.
+ */
+int GazetteFeedsFullTextResume(void)
+{
+    if (gWantArticle < 0 || gState == kGazetteRefreshRunning ||
+        gFullState == kGazetteRefreshRunning) {
+        return 0;
+    }
+    return BeginFullText();
+}
+
+int GazetteFeedsFullTextComing(int articleIndex)
+{
+    return (articleIndex >= 0 && gWantArticle == articleIndex);
+}
+
+/*
+ * Give the connection up without giving the article up. A refresh outranks an
+ * article's page — headlines are what the window is for — but abandoning the
+ * page would leave the pane saying it was still reading with nothing on its
+ * way. The request stands and Resume comes back for it.
+ */
+static void PauseFullText(void)
+{
+    ReleaseFullText();
+    gPendingFullArticle = -1;
     gFullState          = kGazetteRefreshIdle;
 }
 
@@ -706,11 +760,40 @@ static int FullTextSink(const char *data, size_t len, void *context)
     return GazetteExtractFeed(gExtract, data, len);
 }
 
+/*
+ * Open the connection for the page already named in gWantArticle / gWantURL.
+ * Both entry points below go through here, so starting and resuming are the
+ * same act and cannot drift apart.
+ */
+static int BeginFullText(void)
+{
+    gExtract = (GazetteExtract *)NewPtrClear((Size)sizeof(GazetteExtract));
+    if (gExtract == NULL) {
+        snprintf(gFullError, sizeof gFullError,
+                 "Not enough memory to read the article.");
+        gWantArticle = -1;          /* given up on, not merely postponed */
+        gFullState   = kGazetteRefreshFailed;
+        return 0;
+    }
+    GazetteExtractInit(gExtract);
+
+    gFullFetch = GazetteFetchStart(gWantURL, FullTextSink, NULL);
+    if (gFullFetch == NULL) {
+        snprintf(gFullError, sizeof gFullError,
+                 "Could not open the article's page.");
+        ReleaseFullText();
+        gWantArticle = -1;
+        gFullState   = kGazetteRefreshFailed;
+        return 0;
+    }
+
+    gPendingFullArticle = gWantArticle;
+    gFullState          = kGazetteRefreshRunning;
+    return 1;
+}
+
 int GazetteFeedsFullTextStart(int articleIndex, const char *url)
 {
-    if (gState == kGazetteRefreshRunning) {
-        return 0;                   /* the refresh has the connection */
-    }
     if (url == NULL || url[0] == '\0') {
         return 0;
     }
@@ -722,27 +805,18 @@ int GazetteFeedsFullTextStart(int articleIndex, const char *url)
        flight is for one the user has already moved on from. */
     GazetteFeedsFullTextCancel();
 
-    gExtract = (GazetteExtract *)NewPtrClear((Size)sizeof(GazetteExtract));
-    if (gExtract == NULL) {
-        snprintf(gFullError, sizeof gFullError,
-                 "Not enough memory to read the article.");
-        gFullState = kGazetteRefreshFailed;
-        return 0;
-    }
-    GazetteExtractInit(gExtract);
+    gWantArticle = articleIndex;
+    gz_copy_n(gWantURL, sizeof gWantURL, url, strlen(url));
 
-    gFullFetch = GazetteFetchStart(url, FullTextSink, NULL);
-    if (gFullFetch == NULL) {
-        snprintf(gFullError, sizeof gFullError,
-                 "Could not open the article's page.");
-        ReleaseFullText();
-        gFullState = kGazetteRefreshFailed;
-        return 0;
+    /*
+     * The refresh has the connection. Answered 1 all the same, because the
+     * page *is* coming — the reader pane asks this before it decides whether
+     * to lay out the summary, and "in a moment" is not "no".
+     */
+    if (gState == kGazetteRefreshRunning) {
+        return 1;
     }
-
-    gPendingFullArticle = articleIndex;
-    gFullState          = kGazetteRefreshRunning;
-    return 1;
+    return BeginFullText();
 }
 
 GazetteRefreshState GazetteFeedsFullTextPump(void)
@@ -760,7 +834,8 @@ GazetteRefreshState GazetteFeedsFullTextPump(void)
         snprintf(gFullError, sizeof gFullError, "%s",
                  GazetteFetchErrorText(gFullFetch));
         ReleaseFullText();
-        gFullState = kGazetteRefreshFailed;
+        gWantArticle = -1;          /* settled: it is not coming */
+        gFullState   = kGazetteRefreshFailed;
         return gFullState;
     }
 
@@ -781,7 +856,8 @@ GazetteRefreshState GazetteFeedsFullTextPump(void)
         snprintf(gFullError, sizeof gFullError,
                  "That page had no article text in it.");
         ReleaseFullText();
-        gFullState = kGazetteRefreshFailed;
+        gWantArticle = -1;          /* settled: the summary is what there is */
+        gFullState   = kGazetteRefreshFailed;
         return gFullState;
     }
 
@@ -789,7 +865,8 @@ GazetteRefreshState GazetteFeedsFullTextPump(void)
     gFullArticle = gPendingFullArticle;
 
     ReleaseFullText();
-    gFullState = kGazetteRefreshDone;
+    gWantArticle = -1;              /* settled: it is here */
+    gFullState   = kGazetteRefreshDone;
     return gFullState;
 }
 

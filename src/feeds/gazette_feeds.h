@@ -316,6 +316,22 @@ void GazetteFeedsForgetCache(const char *url);
  */
 int GazetteFeedsFullTextStart(int articleIndex, const char *url);
 
+/*
+ * Whether this article's own page is still to come — a fetch running for it,
+ * or one held back because the refresh has the connection.
+ *
+ * The reader pane asks before it composes anything. While the answer is yes
+ * it says so rather than laying out the summary: the summary is what the
+ * article falls back to, not what it starts as, and swapping one for the
+ * other under the reader's eyes a second after they opened it is worse than
+ * the wait it was meant to spare them.
+ */
+int GazetteFeedsFullTextComing(int articleIndex);
+
+/* Start a page that was asked for while the line was busy. From the idle
+   branch; returns 1 if a fetch actually started. */
+int GazetteFeedsFullTextResume(void);
+
 /* One slice, from the event loop's idle branch, exactly like the refresh. */
 GazetteRefreshState GazetteFeedsFullTextPump(void);
 GazetteRefreshState GazetteFeedsFullTextGetState(void);
