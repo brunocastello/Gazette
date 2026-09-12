@@ -193,6 +193,19 @@ long GazetteParseDate(const char *s, size_t len);
 size_t GazetteFormatDate(long seconds, long nowSeconds, char *out, size_t cap);
 
 /*
+ * Format a date the long way, for the byline inside an article:
+ * "Saturday, September 12, 2026 5:01 am". The seconds handed in are whatever
+ * clock the caller wants read back — the reader adds the machine's GMT
+ * offset first, because a feed's timestamps are UTC and the time under a
+ * headline should be the time the reader's own clock would have shown.
+ *
+ * Writes "" for 0, or when the buffer is too small to hold the longest form
+ * ("Wednesday, September 12, 2026 12:01 am" is 38 characters); 64 is enough
+ * for every date there is.
+ */
+size_t GazetteFormatLongDate(long seconds, char *out, size_t cap);
+
+/*
  * The heading a day's articles are gathered under: "Today", "Yesterday",
  * "3 days ago", "1 week ago", and so on up through months and years.
  * Writes "Undated" for 0.

@@ -603,6 +603,94 @@ static size_t Literal(const char *text, char *out, size_t cap)
     return len;
 }
 
+/*
+ * The long form, for the byline inside an article: the weekday, the month
+ * written out, the day, the year and the time of day on a twelve-hour clock.
+ *
+ * No lookup for the weekday: 1970-01-01 was a Thursday, so the day number
+ * counted from the epoch gives it directly — which also means a date before
+ * 1970, where the day number is negative, needs the modulus biased back into
+ * range rather than trusted.
+ */
+size_t GazetteFormatLongDate(long seconds, char *out, size_t cap)
+{
+    static const char *const kDays[] = {
+        "Sunday", "Monday", "Tuesday", "Wednesday",
+        "Thursday", "Friday", "Saturday"
+    };
+    static const char *const kLongMonths[] = {
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+    };
+
+    long   days, secs, y, m, d, hh, mm, hour12;
+    int    pm;
+    size_t len = 0;
+
+    if (out == NULL || cap == 0) {
+        return 0;
+    }
+    out[0] = '\0';
+    /* "Wednesday, September 12, 2026 12:01 am" and its terminator. */
+    if (seconds == 0 || cap < 39) {
+        return 0;
+    }
+
+    /* Floor division, the same as GazetteFormatDate's and for the same
+       reason: a date before 1970 must not round towards zero. */
+    days = seconds / 86400L;
+    secs = seconds % 86400L;
+    if (secs < 0) {
+        secs += 86400L;
+        days--;
+    }
+
+    CivilFromDays(days, &y, &m, &d);
+    if (m < 1 || m > 12 || y < 0 || y > 9999) {
+        return 0;
+    }
+
+    /* Day 0 is a Thursday, which is index 4 with Sunday first; the extra
+       seven keeps the modulus positive for dates before the epoch. */
+    len += Literal(kDays[((days % 7) + 11) % 7], out + len, cap - len);
+    out[len++] = ',';
+    out[len++] = ' ';
+    len += Literal(kLongMonths[m - 1], out + len, cap - len);
+    out[len++] = ' ';
+    if (d >= 10) {
+        out[len++] = (char)('0' + (d / 10) % 10);
+    }
+    out[len++] = (char)('0' + d % 10);
+    out[len++] = ',';
+    out[len++] = ' ';
+    out[len++] = (char)('0' + (y / 1000) % 10);
+    out[len++] = (char)('0' + (y / 100) % 10);
+    out[len++] = (char)('0' + (y / 10) % 10);
+    out[len++] = (char)('0' + y % 10);
+    out[len++] = ' ';
+
+    hh = secs / 3600L;
+    mm = (secs / 60L) % 60L;
+    pm = (hh >= 12);
+    hour12 = hh % 12;
+    if (hour12 == 0) {
+        hour12 = 12;            /* midnight is 12 am, noon is 12 pm */
+    }
+    if (hour12 >= 10) {
+        out[len++] = (char)('0' + (hour12 / 10) % 10);
+    }
+    out[len++] = (char)('0' + hour12 % 10);
+    out[len++] = ':';
+    out[len++] = (char)('0' + (mm / 10) % 10);
+    out[len++] = (char)('0' + mm % 10);
+    out[len++] = ' ';
+    out[len++] = pm ? 'p' : 'a';
+    out[len++] = 'm';
+
+    out[len] = '\0';
+    return len;
+}
+
 size_t GazetteRelativeDay(long seconds, long nowSeconds, char *out, size_t cap)
 {
     long days;

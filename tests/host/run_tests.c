@@ -1162,6 +1162,47 @@ static void TestDates(void)
         GazetteFormatDate(0L, 1788816600L, out, sizeof out);
         CheckStr("an unknown date formats to nothing", out, "");
     }
+
+    {
+        char out[64];
+
+        /* 2026-09-12 05:01:00 — the example the byline was written for. */
+        GazetteFormatLongDate(1789189260L, out, sizeof out);
+        CheckStr("the long form names the day and the month", out,
+                 "Saturday, September 12, 2026 5:01 am");
+
+        /* Noon and midnight are the two the twelve-hour clock gets wrong. */
+        GazetteFormatLongDate(1789214400L, out, sizeof out);
+        CheckStr("noon is 12 pm", out,
+                 "Saturday, September 12, 2026 12:00 pm");
+
+        GazetteFormatLongDate(1789171200L, out, sizeof out);
+        CheckStr("midnight is 12 am", out,
+                 "Saturday, September 12, 2026 12:00 am");
+
+        /* A single-digit day of the month carries no leading zero. */
+        GazetteFormatLongDate(1788816600L, out, sizeof out);
+        CheckStr("a single-digit day is not padded", out,
+                 "Monday, September 7, 2026 9:30 pm");
+
+        /* Before the epoch the day number is negative, and the weekday has
+           to come out of it anyway: 1969-07-20 was a Sunday. */
+        GazetteFormatLongDate(-14182980L, out, sizeof out);
+        CheckStr("a date before 1970 still names its weekday", out,
+                 "Sunday, July 20, 1969 8:17 pm");
+
+        GazetteFormatLongDate(0L, out, sizeof out);
+        CheckStr("an unknown date formats to nothing", out, "");
+
+        /* A buffer that cannot hold the longest form writes nothing rather
+           than a date cut in half. */
+        {
+            char small[20];
+
+            GazetteFormatLongDate(1789189260L, small, sizeof small);
+            CheckStr("too small a buffer writes nothing", small, "");
+        }
+    }
 }
 
 /* ------------------------------------------------------------------ */

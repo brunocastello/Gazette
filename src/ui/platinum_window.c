@@ -52,9 +52,11 @@
 #include <Fonts.h>
 #include <Icons.h>
 #include <Lists.h>
+#include <OSUtils.h>   /* MachineLocation, which ReadLocation fills in */
 #include <Quickdraw.h>
 #include <QuickdrawText.h>
 #include <Scrap.h>
+#include <Script.h>
 #include <TextEdit.h>
 
 #include <stdio.h>
@@ -99,18 +101,26 @@ enum {
     kMinList       = 220,       /* divider to divider, the middle column      */
     kMinReader     = 200,       /* what is left for the article               */
     kReaderMargin  = 6,         /* above the first line and below the last */
-
     /*
-     * Measured off a screenshot of Outlook Express 5.0.6 rather than
-     * guessed at. Every content area in it — both lists and the message
-     * pane — sits two pixels in from the window's edges and from each
-     * divider, on the window's own grey, and has no frame of any kind. The
-     * two pixels of grey *are* the separation.
+     * The article's headline is set a size above the system font's own,
+     * which is what makes it read as the piece's title rather than as the
+     * first line of it.
      */
-    kPaneInset     = 2,
+    kReaderTitleBump = 2,
+
     kMaxTitleLines = 3,         /* a headline wraps, but not without end   */
     kHeadlineLines = 2,         /* and in the list, always exactly two     */
-    kHeadlinePad   = 5,         /* above the first line, below the second  */
+    kHeadlinePad   = 5,         /* the least air above the first line and
+                                   below the second; the row's own height
+                                   usually leaves more — see MeasureFonts  */
+
+    /*
+     * (221,221,221): the band a date heading is drawn on, and the rule
+     * between the article's title and its text. A shade under the list-view
+     * background the rows sit on, which is what makes a heading read as a
+     * band rather than as a gap, and there is no Appearance brush for it.
+     */
+    kBandGrey      = 221,
 
     /* The focus border's thickness, and therefore how far a row has to keep
        clear of the edge of the view it is in. */
@@ -179,7 +189,6 @@ static ListDefUPP gArticleLDEF;
    times. */
 static ControlRef gSidebarHeaderCtl;
 static ControlRef gListHeaderCtl;
-static ControlRef gReaderHeaderCtl;
 
 /* The reader is a user pane control, so that it draws through the hierarchy,
    takes the keyboard focus like the two lists and gets a real focus ring
@@ -220,15 +229,16 @@ static Rect gSidebarHeader;
 static Rect gListPane;
 static Rect gListHeader;
 /*
- * The article's own header, the way OE's message pane has one: a grey bar
- * carrying the headline and the byline, and the white body underneath. The
- * TextEdit record holds the body alone now.
+ * The article's headline and its byline, staged here on the way into the
+ * TextEdit record. They are the first two paragraphs of the article itself
+ * — there is no header bar over the reader any more — so they scroll with
+ * the text, a selection can take them, and the column of white runs from
+ * the top of the window to the status strip without a rule across it.
  */
-static Rect gReaderHeader;
 static char gArticleTitle[kGazetteTitleLen];
-static char gArticleByline[192];
+static char gArticleByline[256];
 
-static Rect gReaderPane;        /* the body, bar included */
+static Rect gReaderPane;        /* the article, scroll bar included */
 static Rect gReaderRect;        /* the text inside it, bar excluded */
 static Rect gStatusRect;
 static Rect gVDivider;          /* between sidebar and the right side */
@@ -304,16 +314,16 @@ static short gStatusHeight = kStatusHeight;
 static short gStatusBase   = 13;
 
 /*
- * The headline, which wraps onto as many lines as it needs up to a limit,
- * and the byline under it. So the bar's height is not fixed: it is the first
- * baseline, plus a line for each line of headline, plus the tail below the
- * byline.
+ * The body font's own metrics. TextEdit lays the article out, so these are
+ * wanted for one thing only: placing the rule between the headline and the
+ * text, which sits in the empty line the article carries between them.
  */
-static short gReaderHeaderHeight = 34;
-static short gReaderLine1        = 13;
-static short gReaderLineStep     = 13;
-static short gReaderTail         = 8;
-static short gReaderTitleLines   = 1;
+static short gReaderAscent = 10;
+static short gReaderLine   = 14;
+
+/* Where the body starts in gReaderText, which is the character the rule is
+   placed from. Zero when there is no article open. */
+static short gReaderBodyStart;
 
 
 /*
@@ -361,9 +371,6 @@ static void ReflowHeadlines(void);
 static void ListView(ListHandle list, Rect *view);
 static void PlaceListScrollBar(ListHandle list, const Rect *pane);
 static void DrawListScrollBar(ListHandle list, ControlRef paneCtl);
-static short ReaderHeaderHeightFor(short lines);
-static short ReaderTitleLineCount(void);
-static short ReaderTitleWidth(void);
 static ControlRef MakeControl(const Rect *bounds, short procID, short value);
 static void DrawFocusBorder(const Rect *view, Boolean on);
 static void RefreshFocusBorder(ListHandle list);
@@ -380,6 +387,7 @@ static void DrawReader(void);
 static void DrawStatus(void);
 static void DrawStatusText(void);
 static void DrawHeaderTitle(const Rect *r, const char *text);
+static void DrawReaderRule(void);
 
 /* ------------------------------------------------------------------ */
 /* Small helpers                                                       */
@@ -497,31 +505,46 @@ static void MeasureFonts(void)
      * second and the space below it can be chosen separately — a block of
      * one or two uniform rows could only ever have one number for all three.
      *
-     * The two lines sit a line-height and a couple of pixels apart, and the
-     * block carries kHeadlinePad above and below it with the rule in the
-     * space underneath. The row height follows from those: it is half the
-     * block, so loosening the lines makes each article taller.
+     * The two lines sit a line-height and a couple of pixels apart, with the
+     * rule in the space under the second.
+     *
+     * The row is the sidebar's row height and not a number of its own, so a
+     * date heading — which is one row — comes out exactly as tall as a feed
+     * in the list beside it and sits on the same baseline. An article is two
+     * of those rows, and the air above its first line and below its second
+     * is whatever the two lines leave over, shared between them. kHeadlinePad
+     * is that air's floor rather than its value: a view font tall enough to
+     * fill the sidebar's row on its own pushes the row taller instead.
      */
     {
         short step  = (short)(info.ascent + info.descent + info.leading + 2);
-        short block = (short)(2 * kHeadlinePad + info.ascent + info.descent +
-                              step + 1);
+        short lines = (short)(info.ascent + info.descent + step + 1);
+        short least = (short)((lines + 2 * kHeadlinePad + 1) / 2);
+        short pad;
 
-        gHeadRowHeight = (short)((block + 1) / 2);
+        gHeadRowHeight = gRowHeight;
+        if (gHeadRowHeight < least) {
+            gHeadRowHeight = least;
+        }
         if (gHeadRowHeight < kIconSize + 1) {
             gHeadRowHeight = (short)(kIconSize + 1);   /* the icon's floor */
+        }
+
+        pad = (short)((2 * gHeadRowHeight - lines) / 2);
+        if (pad < kHeadlinePad) {
+            pad = kHeadlinePad;
         }
 
         /* The first line sits a pad below the top of its row. The second is
            a line-height below the first, which lands above the top of its
            own row — hence the subtraction. */
-        gHeadRowBaseline  = (short)(kHeadlinePad + info.ascent);
+        gHeadRowBaseline  = (short)(pad + info.ascent);
         gHeadContBaseline = (short)(gHeadRowBaseline + step - gHeadRowHeight);
 
-        /* A date heading is a row on its own, so it is simply centred. */
-        gHeadingBaseline  = (short)(info.ascent +
-                                    ((gHeadRowHeight - info.ascent -
-                                      info.descent) / 2));
+        /* A date heading is a row on its own, set in the same face at the
+           same size as a feed name, so it takes the sidebar's baseline and
+           lands level with one. */
+        gHeadingBaseline  = gRowBaseline;
     }
     /* The headings are the system font too, so they measure in it. */
     UseSysFont();
@@ -559,30 +582,23 @@ static void MeasureFonts(void)
     }
 
     /*
-     * The article's header: the headline in the large system font, and the
-     * byline a size down under it. The headline's own metrics set the first
-     * baseline and the step between wrapped lines; the byline's descent is
-     * what the bar has to leave room for underneath.
+     * The article's body font. TextEdit wraps and stacks the article itself,
+     * headline and byline included, so the only measurement wanted here is
+     * the one the rule between them is placed by: an empty line's height,
+     * and the ascent that says where the line after it begins.
      */
     {
-        FontInfo title;
-        FontInfo label;
+        FontInfo body;
 
-        TextFont(gSysFont);
-        TextSize(gSysSize);
-        GetFontInfo(&title);
+        TextFont(gReadFont);
+        TextSize(gReadSize);
+        GetFontInfo(&body);
+
+        gReaderAscent = body.ascent;
+        gReaderLine   = (short)(body.ascent + body.descent + body.leading);
 
         TextFont(gViewFont);
-        TextSize(gLabelSize);
-        GetFontInfo(&label);
         TextSize(gViewSize);
-
-        gReaderLine1    = (short)(kPaneInset + 2 + title.ascent);
-        gReaderLineStep = (short)(title.ascent + title.descent +
-                                  title.leading);
-        gReaderTail     = (short)(label.descent + kPaneInset + 3);
-
-        gReaderHeaderHeight = ReaderHeaderHeightFor(1);
     }
 }
 
@@ -655,43 +671,6 @@ static short WrapTitle(const char *text, short width, short maxLines,
     return n;
 }
 
-/* The width a headline has to wrap inside — the same one it is drawn in. */
-static short ReaderTitleWidth(void)
-{
-    return (short)(gReaderHeader.right - kTextInset - kScrollWidth -
-                   gReaderHeader.left - kTextInset - 2);
-}
-
-/* How many lines this headline takes at the bar's present width. */
-static short ReaderTitleLineCount(void)
-{
-    short   starts[kMaxTitleLines];
-    short   lens[kMaxTitleLines];
-    GrafPtr savePort;
-    short   n;
-
-    if (gWindow == NULL) {
-        return 1;
-    }
-    GetPort(&savePort);
-    SetPortWindowPort(gWindow);
-    UseSysFont();
-    n = WrapTitle(gArticleTitle, ReaderTitleWidth(), kMaxTitleLines,
-                  starts, lens);
-    SetPort(savePort);
-
-    return (n < 1) ? 1 : n;
-}
-
-/* What the header bar has to be, to hold a headline that many lines long. */
-static short ReaderHeaderHeightFor(short lines)
-{
-    if (lines < 1) {
-        lines = 1;
-    }
-    return (short)(gReaderLine1 + lines * gReaderLineStep + gReaderTail);
-}
-
 /*
  * Draw text clipped to a width, ending in an ellipsis when it does not fit.
  * A headline is nearly always too long for its column, and a hard clip mid
@@ -735,6 +714,36 @@ static long UnixNow(void)
 
     GetDateTime(&macNow);
     return (long)macNow - kMacToUnixEpoch;
+}
+
+/*
+ * Seconds east of GMT, as the Date & Time control panel has it. A feed
+ * timestamps its articles in UTC and the Macintosh clock keeps local time,
+ * so this is what stands between the two.
+ *
+ * gmtDelta shares a long with the daylight saving flag and is only three
+ * bytes wide, which is why it is masked and sign-extended by hand rather
+ * than read straight out. A machine that has never been told where it is
+ * answers zero, which is the right answer for a machine keeping UTC.
+ */
+static long LocalGMTDelta(void)
+{
+    MachineLocation loc;
+    long            delta;
+
+    ReadLocation(&loc);
+    delta = loc.u.gmtDelta & 0x00FFFFFFL;
+    if (delta >= 0x00800000L) {
+        delta -= 0x01000000L;       /* the three-byte field's sign */
+    }
+    return delta;
+}
+
+/* An article's timestamp read on the reader's own clock. Zero means "no
+   date" everywhere else in the application, so it stays zero here. */
+static long LocalTime(long seconds)
+{
+    return (seconds == 0) ? 0 : seconds + LocalGMTDelta();
 }
 
 /* ------------------------------------------------------------------ */
@@ -909,7 +918,10 @@ static void BuildHeadlineRows(void)
             break;
         }
 
-        day = GazetteDayNumber(a->date);
+        /* Grouped by the day the reader's clock would call it, which is the
+           day the article's own byline says — not the UTC one the feed
+           happened to stamp it with. */
+        day = GazetteDayNumber(LocalTime(a->date));
         if (!have || day != last) {
             gHeadRows[gHeadRowCount].kind    = kHeadlineDate;
             gHeadRows[gHeadRowCount].article = (short)i;
@@ -1433,48 +1445,29 @@ static void Layout(void)
                 (short)(split2 - 1), contentBottom);
 
         /*
-         * The article's header is as tall as its headline needs and the
-         * other two are one line, so the three do not end level. They start
-         * level, which is what the eye follows.
+         * The article has no header over it. Its headline and its byline are
+         * the first two paragraphs of the text, so the column of white runs
+         * from the top of the content region — level with where the other
+         * two columns' headers begin — down to the status strip, with
+         * nothing ruled across it.
          */
-        SetRect(&gReaderHeader, (short)(split2 + 5), headTop,
-                (short)(bounds.right + 1),
-                (short)(headTop + gReaderHeaderHeight));
-
-        /* How tall the bar is depends on how wide it is, because the
-           headline wraps rather than being cut off. Left and right are set
-           just above, and the count needs only those. */
-        gReaderTitleLines    = ReaderTitleLineCount();
-        gReaderHeaderHeight  = ReaderHeaderHeightFor(gReaderTitleLines);
-        gReaderHeader.bottom = (short)(headTop + gReaderHeaderHeight);
-
-        SetRect(&gReaderPane, (short)(split2 + 6),
-                (short)(gReaderHeader.bottom - 1),
+        SetRect(&gReaderPane, (short)(split2 + 6), bounds.top,
                 (short)(bounds.right + 1), (short)(contentBottom + 1));
 
         /*
-         * The text starts a pixel inside the pane, the way a list's rows do.
-         * Erasing from the pane's own top wiped out the header's black rule
-         * across the whole width — the bar's top edge needs to land on that
-         * rule, but the article's white must not be painted over it.
-         */
-        /*
-         * A pixel short of the pane at *both* ends, and for two different
-         * reasons.
+         * A pixel short of the pane at the bottom, and no longer at the top.
          *
-         * At the top the pixel is the header's black rule: the scroll bar's
-         * top edge lands on it and the article's white must not paint over
-         * it.
+         * The bottom pixel is the *status strip's* rule. The pane reaches a
+         * row past it so the scroll bar's bottom edge lands there, but the
+         * text must not — erasing the pane's full height painted the rule
+         * white, and only a full window update put it back. Changing article
+         * redraws the reader alone, so the border simply vanished until
+         * something else repainted the window.
          *
-         * At the bottom the pixel is the *status strip's* rule. The pane
-         * reaches a row past it so the scroll bar's bottom edge lands there,
-         * but the text must not — erasing the pane's full height painted the
-         * rule white, and only a full window update put it back. Changing
-         * article redraws the reader alone, so the border simply vanished
-         * until something else repainted the window.
+         * At the top there is nothing left to keep clear of: the pixel used
+         * to be the header's own black rule, and the header is gone.
          */
-        SetRect(&gReaderRect, gReaderPane.left,
-                (short)(gReaderPane.top + 1),
+        SetRect(&gReaderRect, gReaderPane.left, gReaderPane.top,
                 (short)(gReaderPane.right - kScrollWidth),
                 (short)(gReaderPane.bottom - 1));
     }
@@ -1492,9 +1485,6 @@ static void Layout(void)
     }
     if (gListHeaderCtl != NULL) {
         SetControlBounds(gListHeaderCtl, &gListHeader);
-    }
-    if (gReaderHeaderCtl != NULL) {
-        SetControlBounds(gReaderHeaderCtl, &gReaderHeader);
     }
     if (gReaderCtl != NULL) {
         SetControlBounds(gReaderCtl, &gReaderPane);
@@ -1659,6 +1649,15 @@ static void ScrollReaderTo(short offset)
 
     TEScroll(0, (short)(now - offset), gReaderTE);
 
+    /*
+     * TEScroll blits what was already on screen, rule included, and redraws
+     * only the strip that has come into view — and it redraws it as text,
+     * which the rule is not. So it goes back on afterwards: over the blitted
+     * copy it is a no-op, and in the new strip it is the only thing that
+     * puts it there.
+     */
+    DrawReaderRule();
+
     if (save != NULL) {
         SetClip(save);
         DisposeRgn(save);
@@ -1715,14 +1714,15 @@ static size_t AppendBody(size_t used, const char *body)
    is already in the record. Setting a style on an insertion point and
    trusting the next TEInsert to pick it up is documented but delicate;
    styling text that is already there cannot be misread. */
-static void ApplyRunStyle(long start, long end, short face, short size)
+static void ApplyRunFont(long start, long end, short font, short face,
+                         short size)
 {
     TextStyle style;
 
     if (gReaderTE == NULL || end <= start) {
         return;
     }
-    style.tsFont = gReadFont;
+    style.tsFont = font;
     style.tsFace = face;
     style.tsSize = size;
     style.tsColor.red   = 0;
@@ -1731,6 +1731,12 @@ static void ApplyRunStyle(long start, long end, short face, short size)
 
     TESetSelect(start, end, gReaderTE);
     TESetStyle(doFont | doFace | doSize, &style, false, gReaderTE);
+}
+
+/* The body's own face, which is what most of an article is set in. */
+static void ApplyRunStyle(long start, long end, short face, short size)
+{
+    ApplyRunFont(start, end, gReadFont, face, size);
 }
 
 /*
@@ -1744,9 +1750,10 @@ static void SetReaderText(void)
     const GazetteArticle *a;
     GrafPtr savePort;
     Rect    view;
-    size_t  used   = 0;
-    Boolean relaid = false;
-    char    when[16];
+    size_t  used     = 0;
+    size_t  titleEnd = 0;
+    size_t  byline   = 0;
+    char    when[64];
 
     if (gWindow == NULL || gReaderTE == NULL) {
         return;
@@ -1759,6 +1766,7 @@ static void SetReaderText(void)
     gReaderText[0]    = '\0';
     gArticleTitle[0]  = '\0';
     gArticleByline[0] = '\0';
+    gReaderBodyStart  = 0;
 
     a = GazetteFeedsArticleAt(gSelectedArticle);
     if (a == NULL) {
@@ -1771,13 +1779,16 @@ static void SetReaderText(void)
         const char *from = a->source;
         const char *body = a->body;
 
-        /* The headline and the byline go on the header bar, not into the
-           text: OE puts its Subject: and From: lines on one and the message
-           itself underneath, and the two scroll separately for it. */
+        /* The headline and the byline are the article's own first two
+           paragraphs rather than a bar above it: they are set in the text
+           and they scroll with it. */
         (void)gz_copy_n(gArticleTitle, sizeof gArticleTitle,
                         a->title, strlen(a->title));
 
-        GazetteFormatDate(a->date, UnixNow(), when, sizeof when);
+        /* Written out in full, and on the reader's clock: a feed stamps its
+           articles in UTC and the hour under a headline should be the hour
+           the reader's own Macintosh would have shown. */
+        GazetteFormatLongDate(LocalTime(a->date), when, sizeof when);
 
         /* In a group view the articles come from several feeds, so which one
            this is from is worth saying. The feed's own name stands in when
@@ -1785,11 +1796,11 @@ static void SetReaderText(void)
         if (from[0] == '\0' && GazetteFeedsCurrentGroup() >= 0) {
             from = GazetteCoreFeedTitle(a->feed);
         }
-        if (from[0] != '\0' && when[0] != '\0') {
-            snprintf(gArticleByline, sizeof gArticleByline, "%s - %s",
-                     from, when);
+        if (when[0] != '\0' && from[0] != '\0') {
+            snprintf(gArticleByline, sizeof gArticleByline, "%s by %s",
+                     when, from);
         } else if (from[0] != '\0') {
-            snprintf(gArticleByline, sizeof gArticleByline, "%s", from);
+            snprintf(gArticleByline, sizeof gArticleByline, "by %s", from);
         } else {
             snprintf(gArticleByline, sizeof gArticleByline, "%s", when);
         }
@@ -1808,31 +1819,48 @@ static void SetReaderText(void)
             }
         }
 
+        /*
+         * Headline, byline, an empty line, then the article. The empty line
+         * is what the rule between the headline and the text is drawn
+         * across: TextEdit has no way to put a line between two paragraphs,
+         * so the article carries the space and DrawReaderRule fills it —
+         * which is also what makes the rule travel with the text when the
+         * pane is scrolled.
+         */
+        used     = AppendText(0, gArticleTitle, strlen(gArticleTitle));
+        used     = AppendChar(used, '\r');
+        titleEnd = used;
+        used     = AppendText(used, gArticleByline, strlen(gArticleByline));
+        used     = AppendChar(used, '\r');
+        byline   = used;
+        used     = AppendChar(used, '\r');
+        gReaderBodyStart = (short)used;
+
         if (body[0] != '\0') {
-            used = AppendBody(0, body);
+            used = AppendBody(used, body);
         } else {
             static const char kNone[] = "(This feed carries no summary for "
                                         "this article.)";
 
-            used = AppendText(0, kNone, sizeof kNone - 1);
+            used = AppendText(used, kNone, sizeof kNone - 1);
         }
 
         TESetText(gReaderText, (long)used, gReaderTE);
+
+        /*
+         * The body's face over the whole of it first, and then the two
+         * paragraphs that are not the body. Each paragraph's own carriage
+         * return is styled with it, because a line's height is the tallest
+         * style on it and the return is the last thing on the line.
+         */
         ApplyRunStyle(0, (long)used, normal, gReadSize);
+        ApplyRunFont(0, (long)titleEnd, gSysFont, normal,
+                     (short)(gSysSize + kReaderTitleBump));
+        ApplyRunFont((long)titleEnd, (long)byline, gViewFont, normal,
+                     gLabelSize);
     }
 
     TESetSelect(0, 0, gReaderTE);
-
-    /*
-     * A headline that wraps onto a different number of lines than the last
-     * one makes the header taller or shorter, and everything below it moves.
-     * Lay out again before the text is measured, or it is measured for a
-     * pane it is no longer in.
-     */
-    if (ReaderTitleLineCount() != gReaderTitleLines) {
-        Layout();
-        relaid = true;
-    }
 
     /* Back to the top, and the wrap and the bar back in step with the new
        length. */
@@ -1844,10 +1872,6 @@ static void SetReaderText(void)
     SyncReaderScroll();
 
     SetPort(savePort);
-
-    if (relaid) {
-        GazetteUIUpdate();
-    }
 }
 
 /* The pane has moved or changed width, so the text has to be laid out again
@@ -2268,6 +2292,24 @@ static void EraseWith(const Rect *r, ThemeBrush brush)
 }
 
 /*
+ * A flat fill in one grey, for the band and the rule that are not any theme
+ * brush. Painted rather than erased: erasing would leave the port holding a
+ * background colour nothing else wants, which is the trap EraseWith exists
+ * to make explicit.
+ */
+static void PaintGrey(const Rect *r, short grey)
+{
+    RGBColor c;
+    RGBColor save;
+
+    GetForeColor(&save);
+    c.red = c.green = c.blue = (unsigned short)(grey * 257);
+    RGBForeColor(&c);
+    PaintRect(r);
+    RGBForeColor(&save);
+}
+
+/*
  * One row of the sidebar, laid out the way Outlook Express lays its folder
  * list out: the disclosure triangle's column, then a small icon, then the
  * name. A feed inside a group is indented by one step; a group's own row is
@@ -2542,7 +2584,7 @@ static void DrawDateHeading(const Rect *cell, int article)
     if (a == NULL) {
         return;
     }
-    GazetteRelativeDay(a->date, UnixNow(), label, sizeof label);
+    GazetteRelativeDay(LocalTime(a->date), UnixNow(), label, sizeof label);
     if (label[0] == '\0') {
         return;
     }
@@ -2575,21 +2617,29 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
      * just lost its selection keeps two stripes of highlight where the focus
      * border sits.
      *
-     * A date heading is banded in the grey the sidebar's rows are drawn on,
-     * so the two lists answer each other; everything else is on white.
+     * The rows are on the list-view background the sidebar's are on, so the
+     * two lists read as one pair rather than as a grey column beside a white
+     * one. A date heading is banded a shade darker again, which is the only
+     * thing in either list that is not a theme brush.
      */
     if (row < 0 || row >= gHeadRowCount) {
-        EraseWith(full, kThemeBrushWhite);
+        EraseWith(full, kThemeBrushListViewBackground);
         return;
     }
-    EraseWith(full, (gHeadRows[row].kind == kHeadlineDate)
-                        ? kThemeBrushListViewBackground : kThemeBrushWhite);
+    if (gHeadRows[row].kind == kHeadlineDate) {
+        PaintGrey(full, kBandGrey);
+    } else {
+        EraseWith(full, kThemeBrushListViewBackground);
+    }
 
     baseline = (short)(cell->top +
                        ((gHeadRows[row].kind == kHeadlineCont)
                             ? gHeadContBaseline : gHeadRowBaseline));
 
     if (gHeadRows[row].kind == kHeadlineDate) {
+        /* The band is painted end to end like every other row, so the two
+           columns of focus border go back over it. */
+        RestoreRowFocusEdges(full, gArticleCtl);
         DrawDateHeading(cell, gHeadRows[row].article);
         TextFace(normal);
         ForeColor(blackColor);
@@ -2610,22 +2660,20 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
      * second would read as a drawing fault.
      */
     /*
-     * A light rule under the last line of each headline — under the whole
+     * A white rule under the last line of each headline — under the whole
      * of it, not between the lines of one, which is what tells a headline
-     * that wrapped apart from two that did not. The sidebar rules its rows
-     * white; on the headline list's white a pale grey is what shows.
+     * that wrapped apart from two that did not. The same line the sidebar
+     * rules its feeds apart with, drawn the same way and at the same pitch,
+     * now that the two lists share a background.
      *
      * Before the highlight, so a selected headline covers its own rule
      * rather than having a line drawn across it.
      */
     if (row + 1 >= gHeadRowCount || gHeadRows[row + 1].kind != kHeadlineCont) {
-        Rect line;
-
-        /* Erased rather than drawn, so that it is exactly the brush the
-           sidebar is filled with rather than a grey picked to look like it. */
-        SetRect(&line, cell->left, (short)(cell->bottom - 1), cell->right,
-                cell->bottom);
-        EraseWith(&line, kThemeBrushListViewBackground);
+        ForeColor(whiteColor);
+        MoveTo(cell->left, (short)(cell->bottom - 1));
+        LineTo((short)(cell->right - 1), (short)(cell->bottom - 1));
+        ForeColor(blackColor);
     }
 
     (void)selected;
@@ -2712,7 +2760,7 @@ static pascal void ArticleLDEF(short message, Boolean isSelected, Rect *cellRect
     if (RowFullyVisible(list, cellRect)) {
         DrawArticleCell(cellRect, cell.v, isSelected);
     } else {
-        EraseWith(cellRect, kThemeBrushWhite);
+        EraseWith(cellRect, kThemeBrushListViewBackground);
     }
     UnclipList(saved);
 }
@@ -2838,7 +2886,7 @@ static pascal void PaneDraw(ControlRef control, SInt16 part)
                      kThemeBrushListViewBackground);
     } else if (control == gArticleCtl) {
         DrawListPane(control, gArticleList, gHeadRowCount,
-                     kThemeBrushWhite);
+                     kThemeBrushListViewBackground);
     }
 }
 
@@ -2915,6 +2963,46 @@ static void DrawArticlePane(void)
 }
 
 /*
+ * The rule between the article's headline and its text.
+ *
+ * Drawn rather than set: TextEdit has nothing that puts a line between two
+ * paragraphs, so the article carries an empty line there and this goes
+ * across the middle of it. Placed off the body's first character, which is
+ * the one thing TextEdit will answer about where a line has ended up — so
+ * it follows the text when the pane scrolls instead of standing still while
+ * the article moves under it.
+ *
+ * Not end to end: it spans the text's own measure and stops where a line of
+ * the article would, which leaves the margin on either side of it clear.
+ */
+static void DrawReaderRule(void)
+{
+    Rect  view;
+    Rect  line;
+    Point where;
+    short top;
+
+    if (gReaderTE == NULL || gReaderBodyStart <= 0) {
+        return;
+    }
+    view = (**gReaderTE).viewRect;
+    if (view.right <= view.left) {
+        return;
+    }
+
+    /* Back off the body's ascent for the top of its first line, and half a
+       line again for the empty one above it: the middle of the gap. */
+    where = TEGetPoint(gReaderBodyStart, gReaderTE);
+    top   = (short)(where.v - gReaderAscent - gReaderLine / 2);
+
+    if (top < view.top || top >= view.bottom) {
+        return;                 /* scrolled out of the pane */
+    }
+    SetRect(&line, view.left, top, view.right, (short)(top + 1));
+    PaintGrey(&line, kBandGrey);
+}
+
+/*
  * The reader's contents. This is the user pane control's drawing procedure,
  * so the Control Manager calls it — from DrawControls, from Draw1Control and
  * whenever the focus ring has to change.
@@ -2944,6 +3032,7 @@ static pascal void ReaderDraw(ControlRef control, SInt16 part)
 
         TEUpdate(&view, gReaderTE);
     }
+    DrawReaderRule();
 
     if (clip != NULL) {
         SetClip(clip);
@@ -3086,68 +3175,6 @@ static void DrawGrabHandle(const Rect *divider, Boolean vertical)
     ForeColor(blackColor);
 }
 
-/*
- * The article's headline and byline, drawn on the header bar under the
- * splitter. The headline is in the large system font and wraps onto as many
- * lines as it needs, rather than ending in an ellipsis — a headline is the
- * one line of an article you always want in full. The byline is a size down,
- * which is what a label is.
- */
-static void DrawReaderHeaderText(void)
-{
-    short starts[kMaxTitleLines];
-    short lens[kMaxTitleLines];
-    short left;
-    short width;
-    short lines;
-    short i;
-
-    if (gWindow == NULL) {
-        return;
-    }
-    SetPortWindowPort(gWindow);
-    left  = (short)(gReaderHeader.left + kTextInset + 2);
-    width = ReaderTitleWidth();
-
-    SetThemeTextColor(kThemeTextColorWindowHeaderActive, 8, true);
-
-    UseSysFont();
-    lines = WrapTitle(gArticleTitle, width, kMaxTitleLines, starts, lens);
-    for (i = 0; i < lines; i++) {
-        MoveTo(left, (short)(gReaderHeader.top + gReaderLine1 +
-                             i * gReaderLineStep));
-        if (i == lines - 1) {
-            /* The last line carries anything the wrap ran out of room for,
-               so it is the one that may still need cutting. */
-            DrawTruncated(gArticleTitle + starts[i], width);
-        } else {
-            DrawText(gArticleTitle, starts[i], lens[i]);
-        }
-    }
-    if (lines < 1) {
-        lines = 1;
-    }
-
-    UseViewFont();
-    TextSize(gLabelSize);
-    MoveTo(left, (short)(gReaderHeader.top + gReaderLine1 +
-                         lines * gReaderLineStep));
-    DrawTruncated(gArticleByline, width);
-
-    ForeColor(blackColor);
-}
-
-/* The bar and the text on it, for when the article has changed. */
-static void DrawReaderHeader(void)
-{
-    if (gWindow == NULL || gReaderHeaderCtl == NULL) {
-        return;
-    }
-    SetPortWindowPort(gWindow);
-    Draw1Control(gReaderHeaderCtl);
-    DrawReaderHeaderText();
-}
-
 /* Just the text. The strip under it is the window's own background. */
 static void DrawStatusText(void)
 {
@@ -3247,7 +3274,6 @@ void GazetteUIUpdate(void)
        have no text of their own. */
     DrawHeaderTitle(&gSidebarHeader, "Feeds");
     DrawHeaderTitle(&gListHeader, header);
-    DrawReaderHeaderText();
     DrawStatusText();
 
     /*
@@ -3314,7 +3340,6 @@ static void SelectArticle(int index)
     SetReaderText();
 
     DrawArticlePane();
-    DrawReaderHeader();
     DrawReader();
     if (gReaderScroll != NULL) {
         Draw1Control(gReaderScroll);
@@ -3997,7 +4022,6 @@ void GazetteUIArticleTextChanged(void)
         return;
     }
     SetReaderText();
-    DrawReaderHeader();
     DrawReader();
 
     /* The scroll bar's own frame is outside the pane DrawReader repaints. */
@@ -4262,8 +4286,6 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
                                     kControlWindowHeaderProc, 0);
     gListHeaderCtl    = MakeControl(&gListHeader,
                                     kControlWindowHeaderProc, 0);
-    gReaderHeaderCtl  = MakeControl(&gReaderHeader,
-                                    kControlWindowHeaderProc, 0);
 
     if (!MakeListPane(gSidebarLDEF, &gSidebarPane, gRowHeight, &gSidebarCtl,
                       &gSidebarList) ||
@@ -4362,7 +4384,6 @@ void GazetteUIClose(void)
     gArticleCtl        = NULL;
     gSidebarHeaderCtl  = NULL;
     gListHeaderCtl     = NULL;
-    gReaderHeaderCtl   = NULL;
     gReaderCtl         = NULL;
     gFocusPane         = NULL;
     gRootControl       = NULL;
