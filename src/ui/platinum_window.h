@@ -40,9 +40,15 @@ typedef void (*GazetteUIArticleChosen)(int articleIndex);
    article in it. */
 typedef void (*GazetteUIGroupChosen)(int groupIndex);
 
+/* Called when the user picks one of the three standing views at the top of
+   the sidebar — Today, All Unread, Starred. See kGazetteSmartToday and its
+   neighbours in prefs/gazette_prefs.h. */
+typedef void (*GazetteUISmartChosen)(int which);
+
 Boolean   GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
                         GazetteUIArticleChosen onArticleChosen,
-                        GazetteUIGroupChosen onGroupChosen);
+                        GazetteUIGroupChosen onGroupChosen,
+                        GazetteUISmartChosen onSmartChosen);
 void      GazetteUIClose(void);
 WindowRef GazetteUIWindow(void);
 
@@ -126,6 +132,10 @@ void GazetteUISelectFeed(int index);
  */
 Boolean GazetteUISelection(int *kind, int *index);
 void    GazetteUISelectGroup(int index);
+
+/* Open one of the three standing views, as if its row had been clicked.
+   This is what the Article menu's Today, All Unread and Starred do. */
+void    GazetteUISelectSmart(int which);
 
 #ifdef __cplusplus
 }

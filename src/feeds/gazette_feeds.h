@@ -16,6 +16,7 @@
 #include <stddef.h>
 
 #include "feeds/gazette_feed_parse.h"
+#include "prefs/gazette_prefs.h"        /* kGazetteSmartCount and its names */
 
 #ifdef __cplusplus
 extern "C" {
@@ -136,6 +137,11 @@ int  GazetteFeedsUnreadCount(void);
 void GazetteFeedsMarkRead(int index, int read);
 void GazetteFeedsMarkAllRead(void);
 
+/* The same command turned round, for when there is nothing left unread and
+   the menu item has become "Mark All as Unread". Not an undo: it does not
+   remember which were read before. */
+void GazetteFeedsMarkAllUnread(void);
+
 /* Everything before this article in the list, or everything after it, marked
    read. "Before" and "after" are the list's own order, so they follow the
    sort rather than the store. */
@@ -232,6 +238,43 @@ int GazetteFeedsLoadGroup(int group, long maxArticles);
 
 /* Which group the store is showing, or -1 when it is showing one feed. */
 int GazetteFeedsCurrentGroup(void);
+
+/* ------------------------------------------------------------------ */
+/* The standing views                                                  */
+/*                                                                     */
+/* Today, All Unread and Starred: one question asked of every enabled  */
+/* feed's cache rather than of one feed. Gathered exactly the way a    */
+/* group is, and the question is asked as each article arrives — the   */
+/* merge keeps only the newest kGazetteMaxArticles, so a starred       */
+/* article from last month would be dropped before anything looked at  */
+/* it if the filtering came afterwards.                                */
+/* ------------------------------------------------------------------ */
+
+/* Gather one. Returns how many articles it found. */
+int GazetteFeedsLoadSmart(int which, long maxArticles);
+
+/* Which standing view the store is showing, or -1. */
+int GazetteFeedsCurrentSmart(void);
+
+/* ------------------------------------------------------------------ */
+/* The clock                                                           */
+/*                                                                     */
+/* A feed timestamps its articles in UTC and the Macintosh clock keeps */
+/* local time. Everything shown to the reader goes through this, and   */
+/* it lives here because this is the file that already owns Gazette's  */
+/* idea of what time it is.                                            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Seconds east of GMT, and an article's date read on the reader's clock.
+ *
+ * One direction only: the Macintosh clock already keeps local time, so it is
+ * the article that is converted and never "now". Adding the offset to both
+ * sides counts it twice, and the mistake shows up as dates that are right in
+ * London and an hour out everywhere else.
+ */
+long GazetteFeedsGMTDelta(void);
+long GazetteFeedsLocalTime(long seconds);
 
 /* When the loaded feed was last fetched, in seconds since 1970, or 0. Read
    from the cache; the auto-refresh timer uses it to decide what is stale. */

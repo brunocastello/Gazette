@@ -1895,6 +1895,12 @@ static void TestGroups(void)
 /* The rows the sidebar would draw, as a comma-joined list with group lines
    in brackets. That reads as the pane itself, which is the point: the window
    draws exactly this sequence and can only be checked by eye. */
+/* The three standing views lead every sidebar, so every expectation below
+   starts with them. Spelled out rather than skipped: that they are always
+   there, always first and always in this order is part of what is being
+   checked. */
+#define SMART "<Today>,<All Unread>,<Starred>,"
+
 static void CheckRows(const char *what, const GazettePrefs *p, const char *want)
 {
     char got[512];
@@ -1912,7 +1918,11 @@ static void CheckRows(const char *what, const GazettePrefs *p, const char *want)
         if (i > 0) {
             strcat(got, ",");
         }
-        if (row.kind == kGazetteRowGroup) {
+        if (row.kind == kGazetteRowSmart) {
+            strcat(got, "<");
+            strcat(got, GazettePrefsSmartName(row.index));
+            strcat(got, ">");
+        } else if (row.kind == kGazetteRowGroup) {
             strcat(got, "[");
             strcat(got, p->groups[row.index].name);
             strcat(got, "]");
@@ -1937,35 +1947,42 @@ static void TestSidebarRows(void)
     GazettePrefsAddFeed(&p, "https://e/b1", "B1", 1);
 
     CheckRows("the tree flattens to what is drawn", &p,
-              "Top,[News],N1,N2,[Blogs],B1");
-    CheckLong("one row per line", GazettePrefsRowCount(&p), 6);
+              SMART "Top,[News],N1,N2,[Blogs],B1");
+    CheckLong("one row per line, after the standing views",
+              GazettePrefsRowCount(&p), 6 + kGazetteSmartCount);
+
+    CheckLong("Today is the first row",
+              GazettePrefsRowForSmart(kGazetteSmartToday), 0);
+    CheckLong("Starred is the third",
+              GazettePrefsRowForSmart(kGazetteSmartStarred), 2);
 
     CheckLong("a top-level feed is its own row",
-              GazettePrefsRowForFeed(&p, 0), 0);
-    CheckLong("a group's line", GazettePrefsRowForGroup(&p, 0), 1);
-    CheckLong("its first feed", GazettePrefsRowForFeed(&p, 1), 2);
-    CheckLong("the second group's line", GazettePrefsRowForGroup(&p, 1), 4);
-    CheckLong("and its feed", GazettePrefsRowForFeed(&p, 3), 5);
+              GazettePrefsRowForFeed(&p, 0), 3);
+    CheckLong("a group's line", GazettePrefsRowForGroup(&p, 0), 4);
+    CheckLong("its first feed", GazettePrefsRowForFeed(&p, 1), 5);
+    CheckLong("the second group's line", GazettePrefsRowForGroup(&p, 1), 7);
+    CheckLong("and its feed", GazettePrefsRowForFeed(&p, 3), 8);
 
     /* Shutting a group hides its feeds and nothing else: the group keeps its
        own line, and everything below closes up. */
     p.groups[0].collapsed = 1;
-    CheckRows("a shut group keeps its line only", &p, "Top,[News],[Blogs],B1");
-    CheckLong("the rows below it move up", GazettePrefsRowForGroup(&p, 1), 2);
+    CheckRows("a shut group keeps its line only", &p,
+              SMART "Top,[News],[Blogs],B1");
+    CheckLong("the rows below it move up", GazettePrefsRowForGroup(&p, 1), 5);
     CheckLong("a feed inside it is drawn nowhere",
               GazettePrefsRowForFeed(&p, 1), -1);
     CheckLong("but its feed below still has a row",
-              GazettePrefsRowForFeed(&p, 3), 3);
+              GazettePrefsRowForFeed(&p, 3), 6);
 
     p.groups[0].collapsed = 0;
 
     /* An empty group is a line with nothing under it, open or shut. */
     GazettePrefsAddGroup(&p, "Empty");
     CheckRows("an empty group is still a line", &p,
-              "Top,[News],N1,N2,[Blogs],B1,[Empty]");
+              SMART "Top,[News],N1,N2,[Blogs],B1,[Empty]");
 
     CheckLong("a row past the end is not a row",
-              GazettePrefsRowAt(&p, 7, &row), 0);
+              GazettePrefsRowAt(&p, 7 + kGazetteSmartCount, &row), 0);
     CheckLong("nor is a negative one", GazettePrefsRowAt(&p, -1, &row), 0);
     CheckLong("a feed that is not there has no row",
               GazettePrefsRowForFeed(&p, 99), -1);
@@ -1980,8 +1997,9 @@ static void TestSidebarRows(void)
         memset(&q, 0, sizeof q);
         GazettePrefsAddFeed(&q, "https://e/1", "One", -1);
         GazettePrefsAddFeed(&q, "https://e/2", "Two", -1);
-        CheckRows("a flat list is still a flat list", &q, "One,Two");
-        CheckLong("row for row", GazettePrefsRowCount(&q), q.feedCount);
+        CheckRows("a flat list is still a flat list", &q, SMART "One,Two");
+        CheckLong("row for row", GazettePrefsRowCount(&q),
+                  q.feedCount + kGazetteSmartCount);
     }
 }
 
@@ -2004,38 +2022,43 @@ static void TestHiddenRows(void)
     GazettePrefsAddFeed(&p, "https://e/b1", "B1", 1);
 
     CheckRows("everything shown to begin with", &p,
-              "Top,Top2,[News],N1,N2,[Blogs],B1");
+              SMART "Top,Top2,[News],N1,N2,[Blogs],B1");
 
     /* A hidden top-level feed takes no row and the ones after it move up. */
     p.feeds[0].hidden = 1;
     CheckRows("a hidden top-level feed is not a row", &p,
-              "Top2,[News],N1,N2,[Blogs],B1");
+              SMART "Top2,[News],N1,N2,[Blogs],B1");
     CheckLong("and has no row of its own", GazettePrefsRowForFeed(&p, 0), -1);
-    CheckLong("the feed after it is the first row",
-              GazettePrefsRowForFeed(&p, 1), 0);
+    CheckLong("the feed after it is the first row after the views",
+              GazettePrefsRowForFeed(&p, 1), 3);
     CheckLong("the first group moves up",
-              GazettePrefsRowForGroup(&p, 0), 1);
+              GazettePrefsRowForGroup(&p, 0), 4);
 
     /* One inside a group, likewise, without disturbing the group's line. */
     p.feeds[2].hidden = 1;
     CheckRows("a hidden feed inside a group closes up", &p,
-              "Top2,[News],N2,[Blogs],B1");
-    CheckLong("its sibling takes its row", GazettePrefsRowForFeed(&p, 3), 2);
+              SMART "Top2,[News],N2,[Blogs],B1");
+    CheckLong("its sibling takes its row", GazettePrefsRowForFeed(&p, 3), 5);
 
     /* A hidden group takes its feeds with it, open or not. */
     p.groups[0].hidden = 1;
     CheckRows("a hidden group takes its feeds with it", &p,
-              "Top2,[Blogs],B1");
+              SMART "Top2,[Blogs],B1");
     CheckLong("the hidden group has no row",
               GazettePrefsRowForGroup(&p, 0), -1);
     CheckLong("nor does a feed inside it",
               GazettePrefsRowForFeed(&p, 3), -1);
     CheckLong("the group below it moves up",
-              GazettePrefsRowForGroup(&p, 1), 1);
+              GazettePrefsRowForGroup(&p, 1), 4);
+
+    /* Nothing hides the standing views: they are not subscriptions and there
+       is no sense in which one of them has been read. */
+    CheckLong("the standing views are still there",
+              GazettePrefsRowForSmart(kGazetteSmartStarred), 2);
 
     GazettePrefsShowAll(&p);
     CheckRows("showing all puts every line back", &p,
-              "Top,Top2,[News],N1,N2,[Blogs],B1");
+              SMART "Top,Top2,[News],N1,N2,[Blogs],B1");
 }
 
 static void TestGroupParsing(void)

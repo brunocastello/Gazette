@@ -69,6 +69,12 @@ Boolean GazetteCoreSidebarRowAt(int row, GazetteSidebarRow *out);
 int     GazetteCoreSidebarRowForFeed(int feed);
 int     GazetteCoreSidebarRowForGroup(int group);
 
+/* The three standing views at the top of the sidebar — Today, All Unread,
+   Starred. They are rows, not subscriptions: see kGazetteSmartToday and its
+   neighbours in prefs/gazette_prefs.h. */
+int         GazetteCoreSidebarRowForSmart(int which);
+const char *GazetteCoreSmartName(int which);
+
 /* Every mutator marks the preferences dirty, so the next save writes them and
    quitting is enough to make a change permanent. */
 

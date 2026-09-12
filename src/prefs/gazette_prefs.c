@@ -313,9 +313,24 @@ static int GroupShown(const GazettePrefs *p, int g)
     return !p->groups[g].hidden;
 }
 
+int GazettePrefsRowForSmart(int which)
+{
+    return (which >= 0 && which < kGazetteSmartCount) ? which : -1;
+}
+
+const char *GazettePrefsSmartName(int which)
+{
+    switch (which) {
+        case kGazetteSmartToday:   return "Today";
+        case kGazetteSmartUnread:  return "All Unread";
+        case kGazetteSmartStarred: return "Starred";
+        default:                   return "";
+    }
+}
+
 int GazettePrefsRowCount(const GazettePrefs *p)
 {
-    int n = 0;
+    int n = kGazetteSmartCount;     /* the three standing views come first */
     int i;
     int g;
 
@@ -352,6 +367,13 @@ int GazettePrefsRowAt(const GazettePrefs *p, int row, GazetteSidebarRow *out)
     if (p == NULL || out == NULL || row < 0) {
         return 0;
     }
+
+    if (row < kGazetteSmartCount) {
+        out->kind  = kGazetteRowSmart;
+        out->index = row;
+        return 1;
+    }
+    row -= kGazetteSmartCount;
 
     for (i = 0; i < p->feedCount && p->feeds[i].group < 0; i++) {
         if (!FeedShown(p, i)) {
@@ -395,7 +417,7 @@ int GazettePrefsRowAt(const GazettePrefs *p, int row, GazetteSidebarRow *out)
    better here than one indirect one. */
 int GazettePrefsRowForGroup(const GazettePrefs *p, int group)
 {
-    int row = 0;
+    int row = kGazetteSmartCount;
     int i;
     int g;
 
@@ -441,7 +463,7 @@ int GazettePrefsRowForFeed(const GazettePrefs *p, int feed)
 
     group = p->feeds[feed].group;
     if (group < 0) {
-        row = 0;
+        row = kGazetteSmartCount;
         for (i = 0; i < feed; i++) {
             if (FeedShown(p, i)) {
                 row++;

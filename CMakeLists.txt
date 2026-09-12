@@ -61,10 +61,13 @@ set(GAZETTE_SOURCES
 
 # Resource fork: SIZE (8 MB preferred / 4 MB minimum), About alert, version,
 # and the Finder icon family with the BNDL/FREF that binds it to 'Gzt9'.
-# Gazette_icon.r is generated -- see tools/generate_icon.py.
+# Gazette_icon.r is generated -- see tools/generate_icon.py -- and so are the
+# sidebar's own small icons in Gazette_row_icons.r; see
+# tools/generate_row_icons.py.
 set(GAZETTE_RESOURCES
     Resources/Gazette.r
     Resources/Gazette_icon.r
+    Resources/Gazette_row_icons.r
 )
 
 # ------------------------------------------------------------------ #

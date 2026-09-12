@@ -87,6 +87,7 @@ static void    HandleRename(void);
 static void    HandleRemove(void);
 static void    HandleToggleEnabled(void);
 static void    HandleMoveToGroup(short item);
+static void    ShowSmart(int which);
 static void    HandleMarkRead(void);
 static void    HandleMarkAllRead(void);
 static void    HandleMarkRange(Boolean below);
@@ -122,6 +123,11 @@ static int gQueue[kGazetteMaxFeeds];
 static int gQueueCount;
 static int gQueueAt;
 static int gQueueGroup = -1;       /* -1 when no group refresh is running */
+
+/* Which standing view a finished queue should gather into, or -1. Refreshing
+   with Today, All Unread or Starred selected fetches every enabled feed —
+   there is no one feed behind the view — and then asks the question again. */
+static int gQueueSmart = -1;
 
 /*
  * The feed a discovery attempt is still owed, or -1.
@@ -215,13 +221,17 @@ enum {
     kMoveToFirstGroup = 3
 };
 
-/* Article menu items. */
+/*
+ * Article menu items. The three in the middle are the same three standing
+ * views the sidebar carries at the top; choosing one here selects its row,
+ * so the two ways of reaching them cannot disagree.
+ */
 enum {
     kArticleItemNextUnread = 1,
     /* 2 is a divider */
-    kArticleItemToday      = 3,   /* the three saved views are grey until */
-    kArticleItemAllUnread  = 4,   /* a later phase gives them something   */
-    kArticleItemStarred    = 5,   /* to show                              */
+    kArticleItemToday      = 3,
+    kArticleItemAllUnread  = 4,
+    kArticleItemStarred    = 5,
     /* 6 is a divider */
     kArticleItemMarkRead   = 7,
     kArticleItemMarkAll    = 8,
@@ -313,7 +323,7 @@ static Boolean InitGazette(void)
 
     InstallAppleEventHandlers();
 
-    if (!GazetteUIOpen(ShowFeed, ShowArticle, ShowGroup)) {
+    if (!GazetteUIOpen(ShowFeed, ShowArticle, ShowGroup, ShowSmart)) {
         return false;
     }
 
@@ -444,7 +454,7 @@ static Boolean BuildMenuBar(void)
     }
     AppendMenu(articleMenu,
                "\pNext Unread//;(-;"
-               "(Today/1;(All Unread/2;(Starred/3;(-;"
+               "Today/1;All Unread/2;Starred/3;(-;"
                "Mark as Unread/U;Mark All as Read/K;"
                "Mark Above as Read/K;Mark Below as Read/K;(-;"
                "Mark as Starred/L;(-;"
@@ -782,6 +792,15 @@ static void HandleMenuChoice(long menuResult)
         case kMenuArticle:
             switch (menuItem) {
                 case kArticleItemNextUnread: HandleNextUnread();       break;
+                case kArticleItemToday:
+                    GazetteUISelectSmart(kGazetteSmartToday);
+                    break;
+                case kArticleItemAllUnread:
+                    GazetteUISelectSmart(kGazetteSmartUnread);
+                    break;
+                case kArticleItemStarred:
+                    GazetteUISelectSmart(kGazetteSmartStarred);
+                    break;
                 case kArticleItemMarkRead:   HandleMarkRead();         break;
                 case kArticleItemMarkAll:    HandleMarkAllRead();      break;
                 case kArticleItemMarkAbove:  HandleMarkRange(false);   break;
@@ -935,11 +954,29 @@ static void AdjustMenus(void)
             DisableMenuItem(article, kArticleItemMarkBelow);
         }
 
-        if (GazetteFeedsUnreadCount() > 0) {
+        /*
+         * One item, both directions. With something left unread it offers to
+         * read the rest; with nothing left it offers to put it all back,
+         * which is the only thing left for it to mean and is more use than a
+         * grey line saying the list is finished.
+         */
+        if (count == 0) {
+            DisableMenuItem(article, kArticleItemMarkAll);
+            SetMenuItemText(article, kArticleItemMarkAll,
+                            "\pMark All as Read");
+        } else if (GazetteFeedsUnreadCount() > 0) {
             MacEnableMenuItem(article, kArticleItemMarkAll);
+            SetMenuItemText(article, kArticleItemMarkAll,
+                            "\pMark All as Read");
+        } else {
+            MacEnableMenuItem(article, kArticleItemMarkAll);
+            SetMenuItemText(article, kArticleItemMarkAll,
+                            "\pMark All as Unread");
+        }
+
+        if (GazetteFeedsUnreadCount() > 0) {
             MacEnableMenuItem(article, kArticleItemNextUnread);
         } else {
-            DisableMenuItem(article, kArticleItemMarkAll);
             DisableMenuItem(article, kArticleItemNextUnread);
         }
 
@@ -1231,7 +1268,13 @@ static void HandleMarkRead(void)
 
 static void HandleMarkAllRead(void)
 {
-    GazetteFeedsMarkAllRead();
+    /* Which way round follows the list, exactly as the menu item's own text
+       does: nothing left unread means the command is the other one. */
+    if (GazetteFeedsUnreadCount() > 0) {
+        GazetteFeedsMarkAllRead();
+    } else {
+        GazetteFeedsMarkAllUnread();
+    }
 
     /* With read articles hidden, marking the lot read empties the list — so
        the list has to be re-derived rather than redrawn. */
@@ -1698,6 +1741,43 @@ static void ShowGroup(int groupIndex)
 }
 
 /*
+ * One of the three standing views. Gathered from every enabled feed's cache
+ * rather than fetched: they are a question about what is already here, and a
+ * reader who wants more presses Command-R, which refreshes the lot.
+ */
+static void ShowSmart(int which)
+{
+    char message[224];
+    int  count;
+
+    /* The feed being left may have had something read in it. */
+    GazetteFeedsFlush();
+    GazetteFeedsSetFilter(NULL);
+
+    count = GazetteFeedsLoadSmart(which, PrefsMaxArticles());
+    GazetteUIArticlesChanged();
+
+    if (count == 0) {
+        switch (which) {
+            case kGazetteSmartToday:
+                GazetteUISetStatus("Nothing dated today in any feed yet.");
+                break;
+            case kGazetteSmartStarred:
+                GazetteUISetStatus("No starred articles - Command-L stars "
+                                   "the one you are reading.");
+                break;
+            default:
+                GazetteUISetStatus("Everything has been read.");
+                break;
+        }
+        return;
+    }
+    snprintf(message, sizeof message, "%d articles in %s.", count,
+             GazetteCoreSmartName(which));
+    GazetteUISetStatus(message);
+}
+
+/*
  * Start the next feed of a group refresh, or finish it. Returns true while
  * the queue is still running, which is what tells PumpRefresh to keep the
  * window as it is rather than showing the one feed that just landed.
@@ -1706,7 +1786,7 @@ static Boolean AdvanceGroupRefresh(void)
 {
     char message[224];
 
-    if (gQueueGroup < 0) {
+    if (gQueueGroup < 0 && gQueueSmart < 0) {
         return false;
     }
 
@@ -1724,15 +1804,22 @@ static Boolean AdvanceGroupRefresh(void)
            rest of the group. */
     }
 
-    /* Done: the store holds whichever feed came last, so the group has to be
+    /* Done: the store holds whichever feed came last, so the view has to be
        gathered again from the caches they all just wrote. */
     {
         int group = gQueueGroup;
+        int smart = gQueueSmart;
         int count;
 
         gQueueGroup = -1;
+        gQueueSmart = -1;
         gQueueCount = 0;
         gQueueAt    = 0;
+
+        if (smart >= 0) {
+            ShowSmart(smart);
+            return false;
+        }
 
         count = GazetteFeedsLoadGroup(group, PrefsMaxArticles());
         GazetteUIArticlesChanged();
@@ -1759,6 +1846,26 @@ static void HandleRefresh(void)
     }
     if (GazetteCoreFeedCount() == 0) {
         GazetteUISetStatus("No feeds configured.");
+        return;
+    }
+
+    /* A standing view has no one feed behind it, so it refreshes the lot. */
+    if (GazetteFeedsCurrentSmart() >= 0) {
+        int i;
+
+        gQueueCount = 0;
+        gQueueAt    = 0;
+        for (i = 0; i < GazetteCoreFeedCount(); i++) {
+            if (GazetteCoreFeedEnabled(i)) {
+                gQueue[gQueueCount++] = i;
+            }
+        }
+        if (gQueueCount == 0) {
+            GazetteUISetStatus("No feeds are switched on.");
+            return;
+        }
+        gQueueSmart = GazetteFeedsCurrentSmart();
+        (void)AdvanceGroupRefresh();
         return;
     }
 
@@ -1863,20 +1970,36 @@ static void PumpRefresh(void)
 {
     static int lastProgress = -1;
     char       message[224];
+    Boolean    queued;
 
     if (GazetteFeedsRefreshGetState() != kGazetteRefreshRunning) {
         return;
     }
 
+    /* Whether what just finished was one feed of a queue. Read before the
+       pump, because finishing the queue is what clears it. */
+    queued = (Boolean)(gQueueGroup >= 0 || gQueueSmart >= 0);
+
     switch (GazetteFeedsRefreshPump()) {
         case kGazetteRefreshDone:
             gLastRefreshTicks = TickCount();
             lastProgress      = -1;
-            if (AdvanceGroupRefresh()) {
-                break;              /* more of the group still to fetch */
-            }
-            if (gQueueGroup >= 0) {
-                break;              /* the queue just finished and redrew */
+            if (queued) {
+                /*
+                 * Either more of the queue to fetch, or it has just finished
+                 * and gathered the group — or the standing view — back
+                 * together and said so. Nothing below applies either way: it
+                 * is about one feed's refresh landing.
+                 *
+                 * Asked *before* the call, not after. AdvanceGroupRefresh
+                 * clears gQueueGroup on its way out, so the test that used
+                 * to be here — for a queue still being set after it returned
+                 * false — could never be true, and a finished group refresh
+                 * went on to overwrite its own status line with the last
+                 * feed's.
+                 */
+                (void)AdvanceGroupRefresh();
+                break;
             }
             GazetteUIArticlesChanged();
             snprintf(message, sizeof message, "%d articles from %s",
@@ -1896,10 +2019,8 @@ static void PumpRefresh(void)
             }
             /* One feed of a group failing is not the group failing: carry on
                to the next and let the ones that worked show. */
-            if (AdvanceGroupRefresh()) {
-                break;
-            }
-            if (gQueueGroup >= 0) {
+            if (queued) {
+                (void)AdvanceGroupRefresh();
                 break;
             }
             snprintf(message, sizeof message, "Failed: %s",
@@ -1946,13 +2067,14 @@ static void CheckAutoRefresh(void)
     if (!gNetUp || GazetteFeedsRefreshGetState() == kGazetteRefreshRunning) {
         return;
     }
-    if (gQueueGroup >= 0) {
-        return;                     /* a group refresh is already running */
+    if (gQueueGroup >= 0 || gQueueSmart >= 0) {
+        return;                     /* a queued refresh is already running */
     }
-    /* A group is on screen. The clock refreshes one feed, and replacing a
-       merged view with that one feed's articles is not what anyone asked
-       for -- Command-R on the group is. */
-    if (GazetteFeedsCurrentGroup() >= 0) {
+    /* A merged view is on screen — a group, or one of the standing views.
+       The clock refreshes one feed, and replacing what is merged with that
+       one feed's articles is not what anyone asked for; Command-R on the
+       view is. */
+    if (GazetteFeedsCurrentGroup() >= 0 || GazetteFeedsCurrentSmart() >= 0) {
         return;
     }
     /* A feed switched off is skipped by the clock, not by the user: asking

@@ -428,3 +428,13 @@ int GazetteCoreSidebarRowForGroup(int group)
 {
     return gInited ? GazettePrefsRowForGroup(&gPrefs, group) : -1;
 }
+
+int GazetteCoreSidebarRowForSmart(int which)
+{
+    return GazettePrefsRowForSmart(which);
+}
+
+const char *GazetteCoreSmartName(int which)
+{
+    return GazettePrefsSmartName(which);
+}

@@ -16,6 +16,8 @@
 
 #include <DateTimeUtils.h>      /* GetDateTime */
 #include <MacMemory.h>          /* NewPtrClear, DisposePtr */
+#include <OSUtils.h>            /* MachineLocation */
+#include <Script.h>             /* ReadLocation */
 
 #include <stdio.h>
 #include <string.h>
@@ -50,6 +52,7 @@ static char               gFeedTitle[kGazetteFeedTitleLen];
 static int                gCurrentFeed = -1;
 static int                gPendingFeed = -1;
 static int                gCurrentGroup = -1;
+static int                gCurrentSmart = -1;
 
 static GazetteFeedParser *gParser;
 
@@ -131,6 +134,41 @@ static long UnixNow(void)
 
     GetDateTime(&macNow);
     return (long)macNow - kMacToUnixEpoch;
+}
+
+/*
+ * Seconds east of GMT, as the Date & Time control panel has it. A feed
+ * timestamps its articles in UTC and the Macintosh clock keeps local time, so
+ * this is what stands between the two — and it lives here, beside UnixNow,
+ * because this is the file that already owns Gazette's idea of the clock.
+ *
+ * Which way it goes matters and is easy to get backwards: UnixNow is already
+ * local, so it is an article's date that this is added to, never the current
+ * time. Adding it to both counts it twice.
+ *
+ * gmtDelta shares a long with the daylight saving flag and is only three
+ * bytes wide, which is why it is masked and sign-extended by hand rather than
+ * read straight out. A machine that has never been told where it is answers
+ * zero, which is the right answer for a machine keeping UTC.
+ */
+long GazetteFeedsGMTDelta(void)
+{
+    MachineLocation loc;
+    long            delta;
+
+    ReadLocation(&loc);
+    delta = loc.u.gmtDelta & 0x00FFFFFFL;
+    if (delta >= 0x00800000L) {
+        delta -= 0x01000000L;       /* the three-byte field's sign */
+    }
+    return delta;
+}
+
+/* An article's timestamp read on the reader's own clock. Zero means "no date"
+   everywhere else in the application, so it stays zero here. */
+long GazetteFeedsLocalTime(long seconds)
+{
+    return (seconds == 0) ? 0 : seconds + GazetteFeedsGMTDelta();
 }
 
 /* ------------------------------------------------------------------ */
@@ -268,6 +306,7 @@ void GazetteFeedsClear(void)
     gFeedTitle[0] = '\0';
     gCurrentFeed  = -1;
     gCurrentGroup = -1;
+    gCurrentSmart = -1;
     gFetchedAt    = 0;
 
     /* The held text is indexed by a position in the store that is about to
@@ -332,6 +371,24 @@ void GazetteFeedsMarkAllRead(void)
         if (!gArticles[i].read) {
             gArticles[i].read = 1;
             GazetteIndexSetRead(gArticles[i].link, 1);
+        }
+    }
+    PublishCounts();
+}
+
+/*
+ * The other way. Not an undo — it does not remember which were read before —
+ * but the same command turned round, which is what a menu item that says
+ * "Mark All as Unread" when there is nothing left to read has to do.
+ */
+void GazetteFeedsMarkAllUnread(void)
+{
+    int i;
+
+    for (i = 0; i < gArticleCount; i++) {
+        if (gArticles[i].read) {
+            gArticles[i].read = 0;
+            GazetteIndexSetRead(gArticles[i].link, 0);
         }
     }
     PublishCounts();
@@ -984,6 +1041,7 @@ int GazetteFeedsLoadCache(int feedIndex, const char *url, long maxArticles)
     gArticleCount = ctx.count;
     gCurrentFeed  = feedIndex;
     gCurrentGroup = -1;
+    gCurrentSmart = -1;
     gFetchedAt    = fetchedAt;
 
     /* Where a later Flush writes the read state back to. A refresh sets this
@@ -1035,6 +1093,115 @@ static void EmitMerge(const GazetteArticle *a, void *ctx)
     gArticleCount++;
 }
 
+/*
+ * Which standing view is being gathered, for EmitSmart to consult. A
+ * file-scope flag rather than the emitter's context pointer because ScanCache
+ * hands that straight through and EmitMerge already ignores it; one of the
+ * two would have to grow a structure to carry both.
+ */
+static int  gSmartWhich = -1;
+static long gSmartToday;        /* the local day "Today" means */
+
+/*
+ * One article, on its way into a standing view. The question each view asks
+ * is asked here rather than after the merge, because the merge keeps only the
+ * newest kGazetteMaxArticles and a starred article from last month would be
+ * thrown away before anything looked at it.
+ *
+ * The read and starred flags come from the index rather than from the article
+ * off the cache, for the same reason they do everywhere else: the cache holds
+ * what the feed said and the index holds what the reader has done.
+ */
+static void EmitSmart(const GazetteArticle *a, void *ctx)
+{
+    switch (gSmartWhich) {
+        case kGazetteSmartToday:
+            if (a->date == 0 ||
+                GazetteDayNumber(GazetteFeedsLocalTime(a->date)) !=
+                    gSmartToday) {
+                return;
+            }
+            break;
+        case kGazetteSmartUnread:
+            if (GazetteIndexIsRead(a->link)) {
+                return;
+            }
+            break;
+        case kGazetteSmartStarred:
+            if (!GazetteIndexIsStarred(a->link)) {
+                return;
+            }
+            break;
+        default:
+            return;
+    }
+    EmitMerge(a, ctx);
+}
+
+int GazetteFeedsLoadSmart(int which, long maxArticles)
+{
+    int cap = kGazetteMaxArticles;
+    int i;
+
+    if (which < 0 || which >= kGazetteSmartCount) {
+        return 0;
+    }
+    if (maxArticles > 0 && maxArticles < cap) {
+        cap = (int)maxArticles;
+    }
+
+    GazetteFeedsClear();
+
+    gSmartWhich = which;
+
+    /*
+     * UnixNow is already local — GetDateTime reads the Macintosh clock, and
+     * the Macintosh clock keeps local time — so it is the *article* that has
+     * to be converted and not the other way round. Putting the offset on both
+     * sides counts it twice, which on this side of the Atlantic quietly moves
+     * "Today" by an hour and at the ends of the day by a whole one.
+     */
+    gSmartToday = GazetteDayNumber(UnixNow());
+
+    for (i = 0; i < GazetteCoreFeedCount(); i++) {
+        if (!GazetteCoreFeedEnabled(i)) {
+            continue;
+        }
+        ScanCache(GazetteCoreFeedURL(i), i, EmitSmart, NULL, NULL, 0, NULL);
+
+        /* Trim as we go, so a hundred feeds cost one store rather than a
+           hundred. */
+        if (gArticleCount > cap) {
+            gArticleCount = cap;
+        }
+    }
+    gSmartWhich = -1;
+
+    gCurrentFeed  = -1;
+    gCurrentGroup = -1;
+    gCurrentSmart = which;
+    gFetchedAt    = 0;
+
+    /* No single feed owns this view, so there is nothing for Flush to write
+       back against. Marking an article read still works: the index is keyed
+       by the article, not by the feed. */
+    gCurrentURL[0] = '\0';
+    gz_copy_n(gFeedTitle, sizeof gFeedTitle, GazettePrefsSmartName(which),
+              strlen(GazettePrefsSmartName(which)));
+
+    for (i = 0; i < gArticleCount; i++) {
+        gArticles[i].read    = GazetteIndexIsRead(gArticles[i].link);
+        gArticles[i].starred = GazetteIndexIsStarred(gArticles[i].link);
+    }
+    Refilter();
+    return gArticleCount;
+}
+
+int GazetteFeedsCurrentSmart(void)
+{
+    return gCurrentSmart;
+}
+
 int GazetteFeedsLoadGroup(int group, long maxArticles)
 {
     int cap = kGazetteMaxArticles;
@@ -1060,6 +1227,7 @@ int GazetteFeedsLoadGroup(int group, long maxArticles)
 
     gCurrentFeed  = -1;
     gCurrentGroup = group;
+    gCurrentSmart = -1;
     gFetchedAt    = 0;
 
     /*

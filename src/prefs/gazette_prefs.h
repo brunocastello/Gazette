@@ -214,7 +214,24 @@ int GazettePrefsGroupFeedCount(const GazettePrefs *p, int group);
  * can reach it instead of inside a Toolbox drawing routine where it could
  * only be checked by looking at the screen.
  */
-enum { kGazetteRowGroup = 0, kGazetteRowFeed = 1 };
+enum { kGazetteRowGroup = 0, kGazetteRowFeed = 1, kGazetteRowSmart = 2 };
+
+/*
+ * The three standing views above the feed list. They are not subscriptions
+ * and they are not in the preferences file — they are three questions about
+ * everything that has been fetched, and they are first in the sidebar because
+ * they are where a reader starts.
+ *
+ * They live in the row model rather than in the window because the row model
+ * is the one place that knows what shape the sidebar is, and because the
+ * arithmetic that puts a feed on row n has to know they are there.
+ */
+enum {
+    kGazetteSmartToday   = 0,
+    kGazetteSmartUnread  = 1,
+    kGazetteSmartStarred = 2,
+    kGazetteSmartCount   = 3
+};
 
 typedef struct {
     int kind;                   /* kGazetteRowGroup or kGazetteRowFeed */
@@ -234,6 +251,14 @@ int GazettePrefsRowForFeed(const GazettePrefs *p, int feed);
 
 /* The row a group's own line is drawn on, or -1 when it is hidden. */
 int GazettePrefsRowForGroup(const GazettePrefs *p, int group);
+
+/* The row one of the standing views is drawn on. They are the first rows and
+   nothing hides them, so this is the index itself; it exists so that nothing
+   above has to know that. */
+int GazettePrefsRowForSmart(int which);
+
+/* The name a standing view is labelled with. */
+const char *GazettePrefsSmartName(int which);
 
 /* Clear every `hidden` flag — what "Hide Read Feeds" being switched off
    means, and what the sidebar starts from each time it recomputes them. */

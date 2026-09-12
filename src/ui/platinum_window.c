@@ -52,11 +52,9 @@
 #include <Fonts.h>
 #include <Icons.h>
 #include <Lists.h>
-#include <OSUtils.h>   /* MachineLocation, which ReadLocation fills in */
 #include <Quickdraw.h>
 #include <QuickdrawText.h>
 #include <Scrap.h>
-#include <Script.h>
 #include <TextEdit.h>
 
 #include <stdio.h>
@@ -124,11 +122,6 @@ enum {
      */
     kBandGrey      = 221,
 
-    /* The star drawn at the right hand end of a starred headline, in the
-       column a date used to be in. Odd, so it has a middle column to be
-       symmetrical about. */
-    kStarSize      = 9,
-
     /* The focus border's thickness, and therefore how far a row has to keep
        clear of the edge of the view it is in. */
     kFocusBorder   = 2,
@@ -156,6 +149,7 @@ static WindowRef              gWindow;
 static GazetteUIFeedChosen    gOnFeedChosen;
 static GazetteUIArticleChosen gOnArticleChosen;
 static GazetteUIGroupChosen   gOnGroupChosen;
+static GazetteUISmartChosen   gOnSmartChosen;
 
 /* The root of the hierarchy. Every other control is embedded in it, which
    is what makes SetKeyboardFocus and the Tab key mean anything. */
@@ -263,6 +257,10 @@ static int gSelectedArticle = -1;
    change. */
 static int gSelectedGroup   = -1;
 
+/* Which of the three standing views is open, or -1 when the sidebar's
+   selection is a feed or a group. */
+static int gSelectedSmart   = -1;
+
 
 static char gStatus[192];
 
@@ -310,6 +308,8 @@ static short gHeadRowHeight    = kRowHeight;  /* the headline list's own */
 static short gHeadRowBaseline  = kBaseline;   /* a headline's first line  */
 static short gHeadContBaseline = kBaseline;   /* and its second           */
 static short gHeadingBaseline  = kBaseline;   /* a date heading, centred  */
+static short gHeadAscent       = 12;          /* what a headline's line is
+                                                 tall in, above its baseline */
 static short gRowAscent    = 9;
 static short gRowDescent   = 3;
 
@@ -547,6 +547,7 @@ static void MeasureFonts(void)
         /* The first line sits a pad below the top of its row. The second is
            a line-height below the first, which lands above the top of its
            own row — hence the subtraction. */
+        gHeadAscent       = info.ascent;
         gHeadRowBaseline  = (short)(pad + info.ascent);
         gHeadContBaseline = (short)(gHeadRowBaseline + step - gHeadRowHeight);
 
@@ -729,36 +730,6 @@ static long UnixNow(void)
     return (long)macNow - kMacToUnixEpoch;
 }
 
-/*
- * Seconds east of GMT, as the Date & Time control panel has it. A feed
- * timestamps its articles in UTC and the Macintosh clock keeps local time,
- * so this is what stands between the two.
- *
- * gmtDelta shares a long with the daylight saving flag and is only three
- * bytes wide, which is why it is masked and sign-extended by hand rather
- * than read straight out. A machine that has never been told where it is
- * answers zero, which is the right answer for a machine keeping UTC.
- */
-static long LocalGMTDelta(void)
-{
-    MachineLocation loc;
-    long            delta;
-
-    ReadLocation(&loc);
-    delta = loc.u.gmtDelta & 0x00FFFFFFL;
-    if (delta >= 0x00800000L) {
-        delta -= 0x01000000L;       /* the three-byte field's sign */
-    }
-    return delta;
-}
-
-/* An article's timestamp read on the reader's own clock. Zero means "no
-   date" everywhere else in the application, so it stays zero here. */
-static long LocalTime(long seconds)
-{
-    return (seconds == 0) ? 0 : seconds + LocalGMTDelta();
-}
-
 /* ------------------------------------------------------------------ */
 /* Talking to a list                                                   */
 /* ------------------------------------------------------------------ */
@@ -934,7 +905,7 @@ static void BuildHeadlineRows(void)
         /* Grouped by the day the reader's clock would call it, which is the
            day the article's own byline says — not the UTC one the feed
            happened to stamp it with. */
-        day = GazetteDayNumber(LocalTime(a->date));
+        day = GazetteDayNumber(GazetteFeedsLocalTime(a->date));
         if (!have || day != last) {
             gHeadRows[gHeadRowCount].kind    = kHeadlineDate;
             gHeadRows[gHeadRowCount].article = (short)i;
@@ -1852,7 +1823,8 @@ static void SetReaderText(void)
         /* Written out in full, and on the reader's clock: a feed stamps its
            articles in UTC and the hour under a headline should be the hour
            the reader's own Macintosh would have shown. */
-        GazetteFormatLongDate(LocalTime(a->date), when, sizeof when);
+        GazetteFormatLongDate(GazetteFeedsLocalTime(a->date), when,
+                              sizeof when);
 
         /* In a group view the articles come from several feeds, so which one
            this is from is worth saying. The feed's own name stands in when
@@ -2104,60 +2076,105 @@ static void DrawDisclosure(const Rect *cell, short left, Boolean open)
  * because they live as long as the window does and releasing a shared
  * system icon on every row draw would be the wrong trade.
  */
-static IconRef gFolderIcon;
-static IconRef gOpenFolderIcon;
-static IconRef gFeedIcon;
-static IconRef gDocIcon;
+/*
+ * A row's icon is one of two things, and they are drawn by two different
+ * calls. The four above are the system's, reached through Icon Services by
+ * constant and carried as IconRefs. The three standing views and the mark on
+ * a starred headline are ours, drawn by tools/generate_row_icons.py into
+ * Resources/Gazette_row_icons.r, and read out of the application's own
+ * resource fork as icon suites.
+ *
+ * Suites rather than a registration with Icon Services: GetIconSuite takes a
+ * resource ID, which is exactly what we have, and registering four icons
+ * under a creator code so that they could be asked for the same way as the
+ * system's would be ceremony with nothing at the end of it.
+ */
+typedef struct {
+    IconRef ref;                /* the system's, or NULL */
+    Handle  suite;              /* ours, or NULL */
+} RowIcon;
+
+static RowIcon gFolderIcon;
+static RowIcon gOpenFolderIcon;
+static RowIcon gFeedIcon;
+static RowIcon gDocIcon;
+static RowIcon gSmartIcon[kGazetteSmartCount];
+static RowIcon gStarIcon;       /* the mark on a starred headline */
+
+/* Resource IDs, and they have to agree with tools/generate_row_icons.py. */
+enum {
+    kIconToday        = 128,
+    kIconAllUnread    = 129,
+    kIconStarred      = 130,
+    kIconStarredSmall = 131
+};
+
+static void SystemIcon(RowIcon *out, OSType which)
+{
+    out->suite = NULL;
+    out->ref   = NULL;
+    (void)GetIconRef(kOnSystemDisk, kSystemIconsCreator, which, &out->ref);
+}
+
+static void OwnIcon(RowIcon *out, short resID)
+{
+    out->ref   = NULL;
+    out->suite = NULL;
+    (void)GetIconSuite(&out->suite, resID, svAllAvailableData);
+}
 
 static void LoadRowIcons(void)
 {
-    (void)GetIconRef(kOnSystemDisk, kSystemIconsCreator,
-                     kGenericFolderIcon, &gFolderIcon);
-    (void)GetIconRef(kOnSystemDisk, kSystemIconsCreator,
-                     kOpenFolderIcon, &gOpenFolderIcon);
-    (void)GetIconRef(kOnSystemDisk, kSystemIconsCreator,
-                     kInternetLocationNewsIcon, &gFeedIcon);
-    (void)GetIconRef(kOnSystemDisk, kSystemIconsCreator,
-                     kGenericDocumentIcon, &gDocIcon);
+    SystemIcon(&gFolderIcon, kGenericFolderIcon);
+    SystemIcon(&gOpenFolderIcon, kOpenFolderIcon);
+    SystemIcon(&gFeedIcon, kInternetLocationNewsIcon);
+    SystemIcon(&gDocIcon, kGenericDocumentIcon);
+
+    OwnIcon(&gSmartIcon[kGazetteSmartToday], kIconToday);
+    OwnIcon(&gSmartIcon[kGazetteSmartUnread], kIconAllUnread);
+    OwnIcon(&gSmartIcon[kGazetteSmartStarred], kIconStarred);
+    OwnIcon(&gStarIcon, kIconStarredSmall);
+}
+
+static void ReleaseRowIcon(RowIcon *icon)
+{
+    if (icon->ref != NULL) {
+        (void)ReleaseIconRef(icon->ref);
+        icon->ref = NULL;
+    }
+    if (icon->suite != NULL) {
+        (void)DisposeIconSuite(icon->suite, true);
+        icon->suite = NULL;
+    }
 }
 
 static void ReleaseRowIcons(void)
 {
-    if (gFolderIcon != NULL) {
-        (void)ReleaseIconRef(gFolderIcon);
-        gFolderIcon = NULL;
+    int i;
+
+    ReleaseRowIcon(&gFolderIcon);
+    ReleaseRowIcon(&gOpenFolderIcon);
+    ReleaseRowIcon(&gFeedIcon);
+    ReleaseRowIcon(&gDocIcon);
+    for (i = 0; i < kGazetteSmartCount; i++) {
+        ReleaseRowIcon(&gSmartIcon[i]);
     }
-    if (gOpenFolderIcon != NULL) {
-        (void)ReleaseIconRef(gOpenFolderIcon);
-        gOpenFolderIcon = NULL;
-    }
-    if (gFeedIcon != NULL) {
-        (void)ReleaseIconRef(gFeedIcon);
-        gFeedIcon = NULL;
-    }
-    if (gDocIcon != NULL) {
-        (void)ReleaseIconRef(gDocIcon);
-        gDocIcon = NULL;
-    }
+    ReleaseRowIcon(&gStarIcon);
 }
 
-/* Plot one, centred in the row, dimmed when the feed it stands for is off. */
-static void DrawRowIcon(const Rect *cell, short left, IconRef icon,
-                        Boolean enabled, short rowHeight)
+/*
+ * Plot one at a given top, dimmed when the feed it stands for is off. The two
+ * callers below settle where that top is; everything from here down is the
+ * same either way.
+ */
+static void PlotRowIcon(short left, short top, const RowIcon *icon,
+                        Boolean enabled)
 {
     Rect box;
-    short top;
 
-    if (icon == NULL) {
+    if (icon == NULL || (icon->ref == NULL && icon->suite == NULL)) {
         return;
     }
-    /*
-     * Centred in a row's full height, not in whatever is left of the
-     * rectangle. The List Manager truncates the last cell's rectangle at the
-     * foot of the view, so centring in it walked the icon upwards a pixel at
-     * a time as a divider was dragged — the "bumping".
-     */
-    top = (short)(cell->top + ((rowHeight - kIconSize) / 2));
     SetRect(&box, left, top, (short)(left + kIconSize),
             (short)(top + kIconSize));
 
@@ -2184,9 +2201,49 @@ static void DrawRowIcon(const Rect *cell, short left, IconRef icon,
         }
     }
 
-    (void)PlotIconRef(&box, kAlignAbsoluteCenter,
-                      enabled ? kTransformNone : kTransformDisabled,
-                      kIconServicesNormalUsageFlag, icon);
+    if (icon->suite != NULL) {
+        (void)PlotIconSuite(&box, kAlignAbsoluteCenter,
+                            enabled ? kTransformNone : kTransformDisabled,
+                            icon->suite);
+    } else if (icon->ref != NULL) {
+        (void)PlotIconRef(&box, kAlignAbsoluteCenter,
+                          enabled ? kTransformNone : kTransformDisabled,
+                          kIconServicesNormalUsageFlag, icon->ref);
+    }
+}
+
+/*
+ * Centred in a row's full height — which is what the sidebar wants, where a
+ * row is one line of text and the icon belongs beside it.
+ *
+ * The row's height and not the rectangle's: the List Manager truncates the
+ * last cell's rectangle at the foot of the view, so centring in that walked
+ * the icon upwards a pixel at a time as a divider was dragged.
+ */
+static void DrawRowIcon(const Rect *cell, short left, const RowIcon *icon,
+                        Boolean enabled, short rowHeight)
+{
+    PlotRowIcon(left, (short)(cell->top + ((rowHeight - kIconSize) / 2)),
+                icon, enabled);
+}
+
+/*
+ * Centred on one line of text rather than on the row, for the headline list —
+ * where a row is half of a two-line block and the icon belongs beside the
+ * *first* line, not floating between the two.
+ *
+ * The line's middle is half an ascent above its baseline: the ascent is the
+ * part of the line the letters are actually in, and the descent below the
+ * baseline is nearly empty. Centring on the whole of ascent plus descent puts
+ * the icon a pixel or two low, and centring on the row — which is what this
+ * used to do — puts it several pixels high, because the row carries all its
+ * padding above the first line and none of it below.
+ */
+static void DrawLineIcon(short left, short baseline, short ascent,
+                         const RowIcon *icon, Boolean enabled)
+{
+    PlotRowIcon(left, (short)(baseline - ascent / 2 - kIconSize / 2),
+                icon, enabled);
 }
 
 /*
@@ -2477,7 +2534,17 @@ static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
     }
     textLeft = (short)(iconLeft + kIconSize + kIconGap);
 
-    if (r.kind != kGazetteRowGroup) {
+    /*
+     * A standing view is a question about everything rather than a place
+     * articles are kept, so there is no count to put beside it: "All Unread"
+     * could carry the sum the sidebar already shows feed by feed, and the
+     * other two would need every cache opened to answer at all. One of three
+     * carrying a number would read as the other two having none rather than
+     * as their not having one.
+     */
+    if (r.kind == kGazetteRowSmart) {
+        unread = 0;
+    } else if (r.kind == kGazetteRowFeed) {
         enabled = GazetteCoreFeedEnabled(r.index);
         unread  = enabled ? FeedUnread(r.index) : 0;
     } else {
@@ -2493,17 +2560,21 @@ static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
      */
     badge = CountWidth(unread);
 
-    if (r.kind == kGazetteRowGroup) {
-        UseSysFont();
-    } else {
+    /* A standing view is set in the system font the groups are: it is one of
+       the window's own lines rather than one of the reader's. */
+    if (r.kind == kGazetteRowFeed) {
         UseViewFont();
+    } else {
+        UseSysFont();
     }
 
     /* The badge is pinned right, so the name is truncated into what is left
        rather than the two overlapping. */
-    width = BuildRowLabel(r.kind == kGazetteRowGroup
-                              ? GazetteCoreGroupName(r.index)
-                              : GazetteCoreFeedTitle(r.index),
+    width = BuildRowLabel(r.kind == kGazetteRowSmart
+                              ? GazetteCoreSmartName(r.index)
+                              : (r.kind == kGazetteRowGroup
+                                     ? GazetteCoreGroupName(r.index)
+                                     : GazetteCoreFeedTitle(r.index)),
                           0,
                           (short)(cell->right - kTextInset - textLeft - badge),
                           label, sizeof label, &labelLen);
@@ -2527,14 +2598,17 @@ static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
         FillHighlight(&box);
     }
 
-    if (r.kind == kGazetteRowGroup) {
+    if (r.kind == kGazetteRowSmart) {
+        /* No disclosure triangle: there is nothing under it to disclose. */
+        DrawRowIcon(cell, iconLeft, &gSmartIcon[r.index], true, gRowHeight);
+    } else if (r.kind == kGazetteRowGroup) {
         Boolean open = (Boolean)!GazetteCoreGroupCollapsed(r.index);
 
         DrawDisclosure(cell, (short)(cell->left + kTextInset), open);
-        DrawRowIcon(cell, iconLeft, open ? gOpenFolderIcon : gFolderIcon, true,
-                    gRowHeight);
+        DrawRowIcon(cell, iconLeft, open ? &gOpenFolderIcon : &gFolderIcon,
+                    true, gRowHeight);
     } else {
-        DrawRowIcon(cell, iconLeft, gFeedIcon, enabled, gRowHeight);
+        DrawRowIcon(cell, iconLeft, &gFeedIcon, enabled, gRowHeight);
     }
 
     /* A switched-off feed is drawn the way an unavailable item is drawn
@@ -2653,7 +2727,8 @@ static void DrawDateHeading(const Rect *cell, int article)
     if (a == NULL) {
         return;
     }
-    GazetteRelativeDay(LocalTime(a->date), UnixNow(), label, sizeof label);
+    GazetteRelativeDay(GazetteFeedsLocalTime(a->date), UnixNow(),
+                       label, sizeof label);
     if (label[0] == '\0') {
         return;
     }
@@ -2668,42 +2743,6 @@ static void DrawDateHeading(const Rect *cell, int article)
     DrawTruncated(label, (short)(cell->right - cell->left - kTextInset * 2));
 
     RGBForeColor(&save);
-}
-
-/*
- * A five-pointed star, filled, centred on a point.
- *
- * A polygon rather than a character: neither Charcoal nor Geneva has a star
- * in MacRoman, the two glyphs that come closest — the bullet and the lozenge
- * — both already mean something else in a list of headlines, and a shape
- * this small is ten line segments however it is arrived at.
- *
- * The offsets are a unit star at two radii, rounded: the outer points at
- * four pixels from the middle and the inner ones at just under two, which is
- * the proportion that still reads as a star once it is this small.
- */
-static void DrawStar(short cx, short cy)
-{
-    static const signed char kPoints[10][2] = {
-        {  0, -4 }, {  1, -1 }, {  4, -1 }, {  2,  1 }, {  3,  3 },
-        {  0,  2 }, { -3,  3 }, { -2,  1 }, { -4, -1 }, { -1, -1 }
-    };
-    PolyHandle poly;
-    int        i;
-
-    poly = OpenPoly();
-    if (poly == NULL) {
-        return;
-    }
-    MoveTo((short)(cx + kPoints[0][0]), (short)(cy + kPoints[0][1]));
-    for (i = 1; i < 10; i++) {
-        LineTo((short)(cx + kPoints[i][0]), (short)(cy + kPoints[i][1]));
-    }
-    LineTo((short)(cx + kPoints[0][0]), (short)(cy + kPoints[0][1]));
-    ClosePoly();
-
-    PaintPoly(poly);
-    KillPoly(poly);
 }
 
 static void DrawArticleCell(const Rect *full, short row, Boolean selected)
@@ -2797,8 +2836,8 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
        the icon. The date is gone from the row: it is in the heading above
        and, to the minute, in the article itself. */
     if (gHeadRows[row].kind == kHeadlineArticle) {
-        DrawRowIcon(cell, (short)(cell->left + kTextInset), gDocIcon, true,
-                    gHeadRowHeight);
+        DrawLineIcon((short)(cell->left + kTextInset), baseline, gHeadAscent,
+                     &gDocIcon, true);
     }
     textLeft  = (short)(cell->left + HeadlineTextInset());
     textRight = (short)(cell->right - kTextInset);
@@ -2806,13 +2845,14 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
     /*
      * The star goes at the right hand end of a headline's first line, and
      * takes its room out of that line rather than out of both: a headline
-     * that wraps has its whole second line either way.
+     * that wraps has its whole second line either way. It is the same star
+     * the sidebar's Starred view carries, drawn smaller so that it marks the
+     * headline rather than competing with it.
      */
     if (a->starred && gHeadRows[row].kind == kHeadlineArticle) {
-        ForeColor(blackColor);
-        DrawStar((short)(textRight - kStarSize / 2),
-                 (short)(cell->top + gHeadRowBaseline - kStarSize / 2 - 1));
-        textRight = (short)(textRight - kStarSize - kIconGap);
+        textRight = (short)(textRight - kIconSize);
+        DrawLineIcon(textRight, baseline, gHeadAscent, &gStarIcon, true);
+        textRight = (short)(textRight - kIconGap);
     }
 
     /*
@@ -3542,20 +3582,35 @@ static void TrackDivider(Point where, Boolean second)
    about. */
 static void ChooseRow(const GazetteSidebarRow *row)
 {
+    if (row->kind == kGazetteRowSmart) {
+        if (row->index == gSelectedSmart) {
+            return;
+        }
+        gSelectedSmart = row->index;
+        gSelectedGroup = -1;
+        if (gOnSmartChosen != NULL) {
+            gOnSmartChosen(row->index);
+        }
+        return;
+    }
+
     if (row->kind == kGazetteRowGroup) {
-        if (row->index == gSelectedGroup) {
+        if (row->index == gSelectedGroup && gSelectedSmart < 0) {
             return;
         }
         gSelectedGroup = row->index;
+        gSelectedSmart = -1;
         if (gOnGroupChosen != NULL) {
             gOnGroupChosen(row->index);
         }
         return;
     }
 
-    if (row->index != gSelectedFeed || gSelectedGroup >= 0) {
+    if (row->index != gSelectedFeed || gSelectedGroup >= 0 ||
+        gSelectedSmart >= 0) {
         gSelectedFeed  = row->index;
         gSelectedGroup = -1;
+        gSelectedSmart = -1;
         if (gOnFeedChosen != NULL) {
             gOnFeedChosen(row->index);
         }
@@ -3570,9 +3625,7 @@ static void SidebarRowsChanged(void)
     LSetDrawingMode(false, gSidebarList);
     SetRowCount(gSidebarList, GazetteCoreSidebarRowCount());
 
-    row = (gSelectedGroup >= 0)
-              ? GazetteCoreSidebarRowForGroup(gSelectedGroup)
-              : GazetteCoreSidebarRowForFeed(gSelectedFeed);
+    row = SelectedRow();
     SelectRow(gSidebarList, row, false);
 
     LSetDrawingMode(true, gSidebarList);
@@ -3650,16 +3703,94 @@ static void SidebarClicked(Point where, EventModifiers modifiers)
  * the drag turns out to have been a plain click — otherwise the pane would
  * be left showing an insertion point it can do nothing with.
  */
+/*
+ * Tracked here rather than by TEClick.
+ *
+ * TEClick is the documented way to do this and it did not work: a drag
+ * through the article left selStart equal to selEnd, so nothing highlighted
+ * and Copy stayed grey. It is documented to be called "when a mouse-down
+ * occurs in the view rectangle of the edit record, and the edit record is
+ * active", and rather than keep guessing which of its preconditions this
+ * window was failing to meet, the loop is written out: TEGetOffset answers
+ * which character a point is on, TESetSelect moves the selection and redraws
+ * it, and neither has anything to be wrong about.
+ *
+ * It buys two things as well. The point is clamped into the view, so a drag
+ * that wanders into the margin or past the end of the text keeps extending
+ * the selection instead of stopping dead at the edge. And a drag that leaves
+ * the pane scrolls it, which TEAutoView(false) — set because the scroll
+ * offset is this file's to know — takes away from TEClick.
+ */
 static void ReaderClick(Point where, EventModifiers modifiers)
 {
-    if (gReaderTE == NULL) {
+    TEHandle te = gReaderTE;
+    Rect     view;
+    Point    pt;
+    short    anchor;
+    short    at;
+    short    last;
+
+    if (te == NULL || gWindow == NULL) {
         return;
     }
-    TEActivate(gReaderTE);
-    TEClick(where, (Boolean)((modifiers & shiftKey) != 0), gReaderTE);
+    SetPortWindowPort(gWindow);
+    view = (**te).viewRect;
+    if (view.right <= view.left) {
+        return;
+    }
 
-    if ((**gReaderTE).selStart == (**gReaderTE).selEnd) {
-        TEDeactivate(gReaderTE);
+    pt = where;
+    if (pt.h < view.left)   pt.h = view.left;
+    if (pt.h > view.right)  pt.h = (short)(view.right - 1);
+    if (pt.v < view.top)    pt.v = view.top;
+    if (pt.v > view.bottom) pt.v = (short)(view.bottom - 1);
+
+    TEActivate(te);
+
+    /*
+     * Shift extends what is already there, which means the anchor is the far
+     * end of the existing selection rather than the point just clicked.
+     */
+    at = TEGetOffset(pt, te);
+    if ((modifiers & shiftKey) != 0 && (**te).selStart != (**te).selEnd) {
+        anchor = (at <= (**te).selStart) ? (**te).selEnd : (**te).selStart;
+    } else {
+        anchor = at;
+    }
+    TESetSelect((long)((anchor < at) ? anchor : at),
+                (long)((anchor < at) ? at : anchor), te);
+    last = at;
+
+    while (StillDown()) {
+        GetMouse(&pt);
+
+        /*
+         * Outside the view above or below, the article scrolls and the
+         * selection keeps going — the same gesture every Macintosh text view
+         * has. Clamped afterwards, so the offset asked for is one that is on
+         * screen now that it has scrolled.
+         */
+        if (pt.v < view.top) {
+            ScrollReaderTo((short)(ReaderOffset() - kReaderLead));
+        } else if (pt.v > view.bottom) {
+            ScrollReaderTo((short)(ReaderOffset() + kReaderLead));
+        }
+
+        if (pt.h < view.left)   pt.h = view.left;
+        if (pt.h > view.right)  pt.h = (short)(view.right - 1);
+        if (pt.v < view.top)    pt.v = view.top;
+        if (pt.v > view.bottom) pt.v = (short)(view.bottom - 1);
+
+        at = TEGetOffset(pt, te);
+        if (at != last) {
+            TESetSelect((long)((anchor < at) ? anchor : at),
+                        (long)((anchor < at) ? at : anchor), te);
+            last = at;
+        }
+    }
+
+    if ((**te).selStart == (**te).selEnd) {
+        TEDeactivate(te);
     }
 }
 
@@ -3838,7 +3969,9 @@ static int SelectedRow(void)
 {
     int row;
 
-    if (gSelectedGroup >= 0) {
+    if (gSelectedSmart >= 0) {
+        row = GazetteCoreSidebarRowForSmart(gSelectedSmart);
+    } else if (gSelectedGroup >= 0) {
         row = GazetteCoreSidebarRowForGroup(gSelectedGroup);
     } else {
         row = GazetteCoreSidebarRowForFeed(gSelectedFeed);
@@ -4364,6 +4497,11 @@ Boolean GazetteUISelection(int *kind, int *index)
     if (kind == NULL || index == NULL) {
         return false;
     }
+    if (gSelectedSmart >= 0) {
+        /* A standing view is not a feed and not a group, so nothing in the
+           Feeds menu applies to it and this says so by saying nothing. */
+        return false;
+    }
     if (gSelectedGroup >= 0 && gSelectedGroup < GazetteCoreGroupCount()) {
         *kind  = kGazetteRowGroup;
         *index = gSelectedGroup;
@@ -4377,12 +4515,33 @@ Boolean GazetteUISelection(int *kind, int *index)
     return false;
 }
 
+void GazetteUISelectSmart(int which)
+{
+    GazetteSidebarRow row;
+
+    if (which < 0 || which >= kGazetteSmartCount) {
+        return;
+    }
+    row.kind  = kGazetteRowSmart;
+    row.index = which;
+
+    /* Through ChooseRow so that picking a standing view from the Article
+       menu and clicking its row in the sidebar are the same act — the
+       callback, the state and the highlight all move together. */
+    ChooseRow(&row);
+    SelectRow(gSidebarList, GazetteCoreSidebarRowForSmart(which), true);
+    if (gWindow != NULL) {
+        DrawSidebarPane();
+    }
+}
+
 void GazetteUISelectGroup(int index)
 {
     if (index < 0 || index >= GazetteCoreGroupCount()) {
         return;
     }
     gSelectedGroup = index;
+    gSelectedSmart = -1;
     SelectRow(gSidebarList, GazetteCoreSidebarRowForGroup(index), true);
     if (gWindow != NULL) {
         DrawSidebarPane();
@@ -4396,6 +4555,7 @@ void GazetteUISelectFeed(int index)
     }
     gSelectedFeed  = index;
     gSelectedGroup = -1;
+    gSelectedSmart = -1;
     /* -1 when the feed's group is shut: it is still the selection, there is
        just no row to select it on. */
     SelectRow(gSidebarList, GazetteCoreSidebarRowForFeed(index), true);
@@ -4484,7 +4644,8 @@ static ControlRef MakeScroll(long reference)
 
 Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
                       GazetteUIArticleChosen onArticleChosen,
-                      GazetteUIGroupChosen onGroupChosen)
+                      GazetteUIGroupChosen onGroupChosen,
+                      GazetteUISmartChosen onSmartChosen)
 {
     OSStatus         err;
     Rect             bounds;
@@ -4495,6 +4656,7 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
     }
 
     gOnFeedChosen    = onFeedChosen;
+    gOnSmartChosen   = onSmartChosen;
     gOnArticleChosen = onArticleChosen;
     gOnGroupChosen   = onGroupChosen;
 
@@ -4548,6 +4710,7 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
     gSelectedFeed    = 0;
     gSelectedArticle = -1;
     gSelectedGroup   = -1;
+    gSelectedSmart   = -1;
     Layout();
 
     /* The headers first, so that they are behind the lists in the hierarchy
