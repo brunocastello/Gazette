@@ -85,9 +85,36 @@ Boolean GazetteCoreSetFeedEnabled(int index, Boolean enabled);
    when another feed already has that address. */
 Boolean GazetteCoreSetFeedURL(int index, const char *url);
 
-/* Fetch and show each article's own page, rather than the summary the feed
-   carries. The Feeds menu's check mark. */
-void GazetteCoreSetFullText(Boolean on);
+/* ------------------------------------------------------------------ */
+/* The View menu                                                       */
+/*                                                                     */
+/* What the window is showing rather than what it is subscribed to.    */
+/* Each one is a preference and survives a quit; each marks the block  */
+/* dirty, so nothing has to remember to save.                          */
+/* ------------------------------------------------------------------ */
+
+Boolean GazetteCoreOldestFirst(void);
+void    GazetteCoreSetOldestFirst(Boolean on);
+
+Boolean GazetteCoreHideReadArticles(void);
+void    GazetteCoreSetHideReadArticles(Boolean on);
+
+Boolean GazetteCoreHideReadFeeds(void);
+void    GazetteCoreSetHideReadFeeds(Boolean on);
+
+Boolean GazetteCoreHideSidebar(void);
+void    GazetteCoreSetHideSidebar(Boolean on);
+
+/*
+ * Which sidebar lines are drawn. "Hide Read Feeds" is the only thing that
+ * sets these, and it sets them from unread counts the engine does not keep —
+ * so the window works them out and says so here, and the row model reads them
+ * back. Nothing is written to the preferences file: a feed the user cannot
+ * see is still a feed they are subscribed to.
+ */
+void GazetteCoreSetFeedHidden(int index, Boolean hidden);
+void GazetteCoreSetGroupHidden(int index, Boolean hidden);
+void GazetteCoreShowAllRows(void);
 
 /*
  * Merge an OPML document into the feed list, adding what is not already

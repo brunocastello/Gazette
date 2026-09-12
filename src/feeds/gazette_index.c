@@ -34,6 +34,11 @@ typedef struct {
 static unsigned long gRead[kGazetteMaxReadArticles];
 static int           gReadCount;
 
+/* The starred set. Not ordered by anything — nothing evicts from it, so
+   there is no oldest to find. */
+static unsigned long gStarred[kGazetteMaxStarredArticles];
+static int           gStarredCount;
+
 static FeedCounts    gFeeds[kGazetteMaxFeeds];
 static int           gFeedCount;
 
@@ -60,16 +65,21 @@ static unsigned long Hash(const char *s)
 /* Read articles                                                       */
 /* ------------------------------------------------------------------ */
 
-static int FindRead(unsigned long key)
+static int FindKey(const unsigned long *set, int count, unsigned long key)
 {
     int i;
 
-    for (i = 0; i < gReadCount; i++) {
-        if (gRead[i] == key) {
+    for (i = 0; i < count; i++) {
+        if (set[i] == key) {
             return i;
         }
     }
     return -1;
+}
+
+static int FindRead(unsigned long key)
+{
+    return FindKey(gRead, gReadCount, key);
 }
 
 int GazetteIndexIsRead(const char *link)
@@ -118,6 +128,54 @@ void GazetteIndexSetRead(const char *link, int read)
     }
     gRead[gReadCount++] = key;
     gDirty = 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* Starred articles                                                    */
+/* ------------------------------------------------------------------ */
+
+int GazetteIndexIsStarred(const char *link)
+{
+    if (link == NULL || link[0] == '\0') {
+        return 0;
+    }
+    return (FindKey(gStarred, gStarredCount, Hash(link)) >= 0);
+}
+
+void GazetteIndexSetStarred(const char *link, int starred)
+{
+    unsigned long key;
+    int           at;
+
+    if (link == NULL || link[0] == '\0') {
+        return;
+    }
+    key = Hash(link);
+    at  = FindKey(gStarred, gStarredCount, key);
+
+    if (!starred) {
+        if (at < 0) {
+            return;
+        }
+        memmove(&gStarred[at], &gStarred[at + 1],
+                (size_t)(gStarredCount - at - 1) * sizeof gStarred[0]);
+        gStarredCount--;
+        gDirty = 1;
+        return;
+    }
+
+    if (at >= 0 || gStarredCount >= kGazetteMaxStarredArticles) {
+        /* Full: the star is refused rather than taken from something else.
+           A thousand of them is not a limit anyone will meet by reading. */
+        return;
+    }
+    gStarred[gStarredCount++] = key;
+    gDirty = 1;
+}
+
+int GazetteIndexStarredCount(void)
+{
+    return gStarredCount;
 }
 
 /* ------------------------------------------------------------------ */
@@ -235,9 +293,10 @@ void GazetteIndexLoad(void)
     char              line[128];
     long              n;
 
-    gReadCount = 0;
-    gFeedCount = 0;
-    gDirty     = 0;
+    gReadCount    = 0;
+    gStarredCount = 0;
+    gFeedCount    = 0;
+    gDirty        = 0;
 
     f = GazetteStoreDataOpen(kIndexFileName);
     if (f == NULL) {
@@ -257,6 +316,10 @@ void GazetteIndexLoad(void)
         if (line[0] == 'R') {
             if (gReadCount < kGazetteMaxReadArticles) {
                 gRead[gReadCount++] = ParseHex(line + 2);
+            }
+        } else if (line[0] == 'S') {
+            if (gStarredCount < kGazetteMaxStarredArticles) {
+                gStarred[gStarredCount++] = ParseHex(line + 2);
             }
         } else if (line[0] == 'F') {
             /* "F <hash> <total> <unread>" */
@@ -300,6 +363,10 @@ void GazetteIndexSave(void)
     for (i = 0; i < gFeedCount; i++) {
         snprintf(line, sizeof line, "F %08lX %d %d", gFeeds[i].key,
                  (int)gFeeds[i].total, (int)gFeeds[i].unread);
+        GazetteStoreWriteLine(f, line);
+    }
+    for (i = 0; i < gStarredCount; i++) {
+        snprintf(line, sizeof line, "S %08lX", gStarred[i]);
         GazetteStoreWriteLine(f, line);
     }
     for (i = 0; i < gReadCount; i++) {

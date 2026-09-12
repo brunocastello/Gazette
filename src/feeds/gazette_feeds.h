@@ -89,6 +89,37 @@ void GazetteFeedsSetFilter(const char *text);
 /* What is being searched for, or "". */
 const char *GazetteFeedsFilter(void);
 
+/* ------------------------------------------------------------------ */
+/* The rest of the view                                                */
+/*                                                                     */
+/* Two more things shape the list the window draws, and they go        */
+/* through the same map the search does, so an index is an index       */
+/* whatever is switched on.                                            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * "Hide Read Articles". A starred article stays in the list whatever its read
+ * state: starring it is the reader saying they want it where they can find
+ * it, which is the opposite of what hiding it would do.
+ *
+ * Marking an article read does *not* re-derive the list. That is deliberate:
+ * opening an article marks it read, and an article that vanished from under
+ * the reader at the moment they opened it would be unusable. It goes when the
+ * view is next rebuilt — which is to say, when they have moved on.
+ */
+void GazetteFeedsSetHideRead(int hide);
+int  GazetteFeedsHideRead(void);
+
+/* "Sort Articles By". The store is held newest first, so this is a walk
+   backwards rather than a sort. */
+void GazetteFeedsSetOldestFirst(int oldest);
+int  GazetteFeedsOldestFirst(void);
+
+/* Re-derive the list from the store. Called when something outside has
+   changed what belongs in it — a Mark All as Read, with read articles
+   hidden — rather than on every change of state. */
+void GazetteFeedsRebuildView(void);
+
 /* How many are held in total, filter or no filter — the denominator when
    saying "8 of 120". */
 int GazetteFeedsTotalCount(void);
@@ -104,6 +135,21 @@ int GazetteFeedsTotalCount(void);
 int  GazetteFeedsUnreadCount(void);
 void GazetteFeedsMarkRead(int index, int read);
 void GazetteFeedsMarkAllRead(void);
+
+/* Everything before this article in the list, or everything after it, marked
+   read. "Before" and "after" are the list's own order, so they follow the
+   sort rather than the store. */
+void GazetteFeedsMarkRange(int index, int below);
+
+/* ------------------------------------------------------------------ */
+/* Starred                                                             */
+/*                                                                     */
+/* Kept where the read state is kept — in the index, by the article's  */
+/* link — so it outlives the article rolling off its feed and coming   */
+/* back on the next fetch. GazetteArticle carries it as `starred`.     */
+/* ------------------------------------------------------------------ */
+
+void GazetteFeedsMarkStarred(int index, int starred);
 
 /*
  * Write the cache back if the read state has moved since it was loaded.

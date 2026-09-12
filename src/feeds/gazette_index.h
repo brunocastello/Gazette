@@ -41,7 +41,17 @@ enum {
      * read long enough ago to be evicted has almost certainly rolled off its
      * feed too, and if it has not, it comes back unread once.
      */
-    kGazetteMaxReadArticles = 8192
+    kGazetteMaxReadArticles = 8192,
+
+    /*
+     * Starred articles remembered. Far fewer than read ones and for the
+     * opposite reason: starring is something a reader does on purpose, a
+     * handful of times a week, and an article that is starred is one they
+     * mean to come back to. These are never evicted — the set is small
+     * enough that it never needs to be, and silently dropping the article
+     * somebody marked would be the one unforgivable thing to do with it.
+     */
+    kGazetteMaxStarredArticles = 1024
 };
 
 /* Read the index, or start an empty one when there is none. Call once. */
@@ -56,6 +66,21 @@ void GazetteIndexSave(void);
 
 int  GazetteIndexIsRead(const char *link);
 void GazetteIndexSetRead(const char *link, int read);
+
+/* ------------------------------------------------------------------ */
+/* Starred articles                                                    */
+/*                                                                     */
+/* The same shape as the read set and for the same reason: starring is */
+/* a property of an article, not of the feed whose cache it happens to */
+/* be sitting in, and a group view stars articles from several feeds.  */
+/* ------------------------------------------------------------------ */
+
+int  GazetteIndexIsStarred(const char *link);
+void GazetteIndexSetStarred(const char *link, int starred);
+
+/* How many are starred. Nothing uses the set as a list yet — the Starred
+   view is a later phase — but the count is what says whether there is one. */
+int  GazetteIndexStarredCount(void);
 
 /* ------------------------------------------------------------------ */
 /* Per-feed counts                                                     */

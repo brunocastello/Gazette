@@ -30,14 +30,22 @@ static GazetteArticle     gArticles[kGazetteMaxArticles];
 static int                gArticleCount;
 
 /*
- * The search. gFilterMap holds the store indices that match, in order, and
- * every index crossing this file's boundary is an index into it — so the
- * window draws matches, clicks arrive as matches, and nothing outside has to
- * know a filter is on.
+ * The view. gViewMap holds the store indices the window is showing, in the
+ * order it shows them, and every index crossing this file's boundary is an
+ * index into it — so the window draws the view, clicks arrive as the view,
+ * and nothing outside has to know what is behind it.
+ *
+ * Three things shape it: the search text, "Hide Read Articles", and which way
+ * up the sort is. It used to be the search alone and the map was built only
+ * when a search was on, which meant two index regimes to keep straight; one
+ * map, always built, is a walk of at most a hundred and fifty entries and it
+ * costs nothing that anybody can measure.
  */
 static char               gFilter[64];
-static short              gFilterMap[kGazetteMaxArticles];
-static int                gFilterCount;
+static short              gViewMap[kGazetteMaxArticles];
+static int                gViewCount;
+static int                gHideRead;      /* Hide Read Articles */
+static int                gOldestFirst;   /* Sort Articles By: Oldest on Top */
 static char               gFeedTitle[kGazetteFeedTitleLen];
 static int                gCurrentFeed = -1;
 static int                gPendingFeed = -1;
@@ -129,17 +137,14 @@ static long UnixNow(void)
 /* The store                                                           */
 /* ------------------------------------------------------------------ */
 
-/* A store index from a public one. They are the same thing when no filter is
-   set, which is the common case and costs a comparison. */
+/* A store index from a public one. Always through the map now, so there is
+   one answer rather than one per combination of what is switched on. */
 static int StoreIndex(int index)
 {
-    if (gFilter[0] == '\0') {
-        return (index >= 0 && index < gArticleCount) ? index : -1;
-    }
-    if (index < 0 || index >= gFilterCount) {
+    if (index < 0 || index >= gViewCount) {
         return -1;
     }
-    return gFilterMap[index];
+    return gViewMap[index];
 }
 
 static int Matches(const GazetteArticle *a)
@@ -149,19 +154,63 @@ static int Matches(const GazetteArticle *a)
            gz_contains_ci(a->body, strlen(a->body), gFilter);
 }
 
+/*
+ * Build the view. The store is held newest first — that is the order every
+ * feed worth reading sends its items in, and the order the cache keeps — so
+ * "Oldest on Top" is the same walk backwards rather than a sort.
+ *
+ * An article the reader has open is not dropped by "Hide Read Articles"
+ * simply because opening it marked it read: this runs when the view changes,
+ * not when a read flag does, so the article stays on screen until the reader
+ * moves off it. That is deliberate, and it is why marking read does not call
+ * this.
+ */
 static void Refilter(void)
 {
-    int i;
+    int n;
 
-    gFilterCount = 0;
-    if (gFilter[0] == '\0') {
-        return;
-    }
-    for (i = 0; i < gArticleCount; i++) {
-        if (Matches(&gArticles[i])) {
-            gFilterMap[gFilterCount++] = (short)i;
+    gViewCount = 0;
+    for (n = 0; n < gArticleCount; n++) {
+        int i = gOldestFirst ? (gArticleCount - 1 - n) : n;
+        const GazetteArticle *a = &gArticles[i];
+
+        if (gFilter[0] != '\0' && !Matches(a)) {
+            continue;
         }
+        if (gHideRead && a->read && !a->starred) {
+            continue;       /* a starred article is kept whatever its state */
+        }
+        gViewMap[gViewCount++] = (short)i;
     }
+}
+
+void GazetteFeedsRebuildView(void)
+{
+    Refilter();
+}
+
+void GazetteFeedsSetHideRead(int hide)
+{
+    gHideRead = hide ? 1 : 0;
+    Refilter();
+    GazetteFeedsFullTextCancel();
+}
+
+int GazetteFeedsHideRead(void)
+{
+    return gHideRead;
+}
+
+void GazetteFeedsSetOldestFirst(int oldest)
+{
+    gOldestFirst = oldest ? 1 : 0;
+    Refilter();
+    GazetteFeedsFullTextCancel();
+}
+
+int GazetteFeedsOldestFirst(void)
+{
+    return gOldestFirst;
 }
 
 void GazetteFeedsSetFilter(const char *text)
@@ -187,7 +236,7 @@ int GazetteFeedsTotalCount(void)
 
 int GazetteFeedsArticleCount(void)
 {
-    return (gFilter[0] != '\0') ? gFilterCount : gArticleCount;
+    return gViewCount;
 }
 
 const GazetteArticle *GazetteFeedsArticleAt(int index)
@@ -215,7 +264,7 @@ int GazetteFeedsCurrentGroup(void)
 void GazetteFeedsClear(void)
 {
     gArticleCount = 0;
-    gFilterCount  = 0;
+    gViewCount    = 0;
     gFeedTitle[0] = '\0';
     gCurrentFeed  = -1;
     gCurrentGroup = -1;
@@ -288,6 +337,47 @@ void GazetteFeedsMarkAllRead(void)
     PublishCounts();
 }
 
+/*
+ * Everything above the article in the view, or everything below it, marked
+ * read in one go. "Above" and "below" are the list's, not the store's: with
+ * the sort turned over they mean the opposite ends of the store, and what the
+ * reader means by them is what they can see.
+ */
+void GazetteFeedsMarkRange(int index, int below)
+{
+    int i;
+
+    if (index < 0 || index >= gViewCount) {
+        return;
+    }
+    for (i = below ? (index + 1) : 0;
+         below ? (i < gViewCount) : (i < index);
+         i++) {
+        int at = gViewMap[i];
+
+        if (!gArticles[at].read) {
+            gArticles[at].read = 1;
+            GazetteIndexSetRead(gArticles[at].link, 1);
+        }
+    }
+    PublishCounts();
+}
+
+/* ------------------------------------------------------------------ */
+/* Starred                                                             */
+/* ------------------------------------------------------------------ */
+
+void GazetteFeedsMarkStarred(int index, int starred)
+{
+    int at = StoreIndex(index);
+
+    if (at < 0 || gArticles[at].starred == (starred ? 1 : 0)) {
+        return;
+    }
+    gArticles[at].starred = starred ? 1 : 0;
+    GazetteIndexSetStarred(gArticles[at].link, starred);
+}
+
 /* ------------------------------------------------------------------ */
 /* Parsing                                                             */
 /* ------------------------------------------------------------------ */
@@ -319,7 +409,8 @@ static int ArticleSink(const GazetteArticle *article, void *context)
     gArticles[gArticleCount].feed = gPendingFeed;
     /* The index knows, and knows across a refresh: an article that was read
        before this fetch replaced the store is still read. */
-    gArticles[gArticleCount].read = GazetteIndexIsRead(article->link);
+    gArticles[gArticleCount].read    = GazetteIndexIsRead(article->link);
+    gArticles[gArticleCount].starred = GazetteIndexIsStarred(article->link);
     gArticleCount++;
     return 1;
 }
@@ -905,7 +996,8 @@ int GazetteFeedsLoadCache(int feedIndex, const char *url, long maxArticles)
        been read. Applied here rather than stored in the cache so a group view
        and a feed view agree about the same article. */
     for (i = 0; i < gArticleCount; i++) {
-        gArticles[i].read = GazetteIndexIsRead(gArticles[i].link);
+        gArticles[i].read    = GazetteIndexIsRead(gArticles[i].link);
+        gArticles[i].starred = GazetteIndexIsStarred(gArticles[i].link);
     }
     PublishCounts();
     Refilter();
@@ -980,7 +1072,8 @@ int GazetteFeedsLoadGroup(int group, long maxArticles)
               strlen(GazetteCoreGroupName(group)));
 
     for (i = 0; i < gArticleCount; i++) {
-        gArticles[i].read = GazetteIndexIsRead(gArticles[i].link);
+        gArticles[i].read    = GazetteIndexIsRead(gArticles[i].link);
+        gArticles[i].starred = GazetteIndexIsStarred(gArticles[i].link);
     }
     Refilter();
     return gArticleCount;

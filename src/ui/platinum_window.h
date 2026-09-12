@@ -84,6 +84,23 @@ void GazetteUIArticleTextChanged(void);
 /* Which article the reader pane is showing, or -1. */
 int GazetteUISelectedArticle(void);
 
+/* Its address, or "" — what "Open in Browser" hands to Internet Config. */
+const char *GazetteUISelectedArticleLink(void);
+
+/*
+ * Something in the View menu has moved: the sort order, what is hidden, or
+ * whether the sidebar is there. Everything downstream is re-derived, and the
+ * article being read is followed across the change rather than dropped.
+ */
+void GazetteUIViewChanged(void);
+
+/*
+ * Open the next unread headline below the one being read. Forward only and no
+ * wrap. False when there is nothing after this one, which is what the caller
+ * says so in the status line.
+ */
+Boolean GazetteUINextUnread(void);
+
 /*
  * The reader pane is a TextEdit record, so a drag in it selects text. These
  * two are the Edit menu's Copy: whether it should be enabled, and what it

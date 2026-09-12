@@ -17,3 +17,7 @@ __pycache__/
 # Reference screenshots dropped in the root to point at UI problems. They are
 # working material, not part of the build.
 /*.png
+
+# Working notes dropped in docs/ to say what to build next. Same as the
+# screenshots above: working material, not part of the build.
+docs/

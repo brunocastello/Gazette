@@ -38,6 +38,7 @@
 #include <AERegistry.h>
 #include <MacMemory.h>
 #include <TextUtils.h>
+#include <InternetConfig.h>     /* ICLaunchURL, for Open in Browser */
 
 #include <stdio.h>
 #include <string.h>
@@ -86,11 +87,17 @@ static void    HandleRename(void);
 static void    HandleRemove(void);
 static void    HandleToggleEnabled(void);
 static void    HandleMoveToGroup(short item);
-static void    HandleToggleFullText(void);
 static void    HandleMarkRead(void);
 static void    HandleMarkAllRead(void);
+static void    HandleMarkRange(Boolean below);
+static void    HandleToggleStar(void);
+static void    HandleNextUnread(void);
+static void    HandleOpenInBrowser(void);
+static void    HandleSortOrder(Boolean oldestFirst);
+static void    HandleHideReadArticles(void);
+static void    HandleHideReadFeeds(void);
+static void    HandleHideSidebar(void);
 static void    HandleFind(void);
-static void    HandleShowAll(void);
 static void    HandleImportOPML(void);
 static void    HandleExportOPML(void);
 
@@ -129,15 +136,17 @@ static int gDiscoverFeed = -1;
 
 /* Menu IDs */
 enum {
-    kMenuApple  = 128,
-    kMenuFile   = 129,
-    kMenuEdit   = 130,
-    kMenuFeeds  = 131,
-    kMenuWindow = 132,
+    kMenuApple   = 128,
+    kMenuFile    = 129,
+    kMenuEdit    = 130,
+    kMenuView    = 131,
+    kMenuFeeds   = 132,
+    kMenuArticle = 133,
 
-    /* The hierarchical menu hanging off "Move to Group". Its ID has to be in
-       the hierarchical range and unique among menus, nothing more. */
-    kMenuMoveTo = 133
+    /* The two hierarchical menus. Their IDs have to be unique among menus and
+       nothing more; neither sits in the bar. */
+    kMenuSortBy  = 134,
+    kMenuMoveTo  = 135
 };
 
 enum {
@@ -146,32 +155,58 @@ enum {
 
 /* Menu item indices, in the order AppendMenu() adds them below. */
 enum {
-    kFileItemRefresh = 1,
-    /* 2 is a divider */
-    kFileItemImport  = 3,
-    kFileItemExport  = 4,
+    kFileItemNewFeed  = 1,
+    kFileItemNewGroup = 2,
+    /* 3 is a divider */
+    kFileItemRefresh  = 4,
     /* 5 is a divider */
-    kFileItemClose   = 6,
-    /* 7 is a divider */
-    kFileItemQuit    = 8
+    kFileItemImport   = 6,
+    kFileItemExport   = 7,
+    /* 8 is a divider */
+    kFileItemQuit     = 9
 };
 
-/* Feeds menu items, in the order AppendMenu() adds them below. */
+/*
+ * Edit menu items. Undo, Cut, Paste and Clear are permanently grey: there is
+ * nothing in this window that can be typed into, and a dialog that is up runs
+ * its own loop with the menu bar out of reach. They are there because an Edit
+ * menu without them reads as broken, not because they will ever do anything.
+ * Copy is the exception — the reader pane holds a TextEdit record and a drag
+ * in it selects text.
+ */
 enum {
-    kFeedsItemNewFeed  = 1,
-    kFeedsItemNewGroup = 2,
-    /* 3 is a divider */
-    kFeedsItemEdit     = 4,
-    kFeedsItemRename   = 5,
-    kFeedsItemRemove   = 6,
-    /* 7 is a divider */
-    kFeedsItemEnabled  = 8,
-    kFeedsItemMoveTo   = 9,
-    /* 10 is a divider */
-    kFeedsItemFullText = 11,
-    /* 12 is a divider */
-    kFeedsItemMarkRead = 13,
-    kFeedsItemMarkAll  = 14
+    /* 1 Undo, 2 divider, 3 Cut, 5 Paste, 6 Clear, 7 divider */
+    kEditItemCopy = 4,
+    kEditItemFind = 8
+};
+
+/* View menu items. */
+enum {
+    kViewItemSortBy      = 1,
+    /* 2 is a divider */
+    kViewItemGroupByFeed = 3,     /* grey until a later phase */
+    kViewItemHideRead    = 4,
+    kViewItemHideFeeds   = 5,
+    /* 6 is a divider */
+    kViewItemHideSidebar = 7,
+    /* 8 is a divider */
+    kViewItemHideToolbar = 9      /* grey until there is a toolbar */
+};
+
+/* Sort Articles By: the two orders, one of them checked. */
+enum {
+    kSortItemNewest = 1,
+    kSortItemOldest = 2
+};
+
+/* Feeds menu items. */
+enum {
+    kFeedsItemEdit    = 1,
+    kFeedsItemRename  = 2,
+    kFeedsItemRemove  = 3,
+    /* 4 is a divider */
+    kFeedsItemEnabled = 5,
+    kFeedsItemMoveTo  = 6
 };
 
 /* Move to Group: the top level, a divider, then one item per group. */
@@ -180,19 +215,22 @@ enum {
     kMoveToFirstGroup = 3
 };
 
-/* Edit menu items. Undo, Cut, Paste and Clear are the Dialog Manager's
-   business while a dialog is up and inert otherwise — nothing in the window
-   can be typed into. Copy is the exception: the reader pane holds a TextEdit
-   record and a drag in it selects text. */
+/* Article menu items. */
 enum {
-    /* 1 Undo, 2 divider, 3 Cut, 5 Paste, 6 Clear, 7 divider */
-    kEditItemCopy    = 4,
-    kEditItemFind    = 8,
-    kEditItemShowAll = 9
-};
-
-enum {
-    kWindowItemGazette = 1
+    kArticleItemNextUnread = 1,
+    /* 2 is a divider */
+    kArticleItemToday      = 3,   /* the three saved views are grey until */
+    kArticleItemAllUnread  = 4,   /* a later phase gives them something   */
+    kArticleItemStarred    = 5,   /* to show                              */
+    /* 6 is a divider */
+    kArticleItemMarkRead   = 7,
+    kArticleItemMarkAll    = 8,
+    kArticleItemMarkAbove  = 9,
+    kArticleItemMarkBelow  = 10,
+    /* 11 is a divider */
+    kArticleItemStar       = 12,
+    /* 13 is a divider */
+    kArticleItemBrowser    = 14
 };
 
 /* Must match kAboutAlertID in Resources/Gazette.r. */
@@ -258,6 +296,12 @@ static Boolean InitGazette(void)
        with unread counts in it. */
     GazetteIndexLoad();
 
+    /* The store keeps its own copy of what the View menu is holding, because
+       it is the store that shapes the list. Handing it over here is what
+       makes the two agree before the first article is loaded. */
+    GazetteFeedsSetOldestFirst(GazetteCoreOldestFirst() ? 1 : 0);
+    GazetteFeedsSetHideRead(GazetteCoreHideReadArticles() ? 1 : 0);
+
     /* Open Transport before the window, because InitOpenTransport can put up
        a dialog of its own if TCP/IP needs loading and should not do that over
        a half-drawn window. Failure is not fatal — the cache still reads. */
@@ -293,9 +337,33 @@ static Boolean InitGazette(void)
 /* a lone '-' is a divider, and '/X' assigns a command key.             */
 /* ------------------------------------------------------------------ */
 
+/*
+ * The command keys the menus below name, and the three that carry a modifier
+ * as well. Mac OS 9's Menu Manager holds the extra modifiers separately from
+ * the character, which is what SetMenuItemModifiers is for; AppendMenu's "/X"
+ * can only ever say Command.
+ *
+ * The pairs are chosen so that the second of each pair is the first with
+ * Shift on it and means a narrower version of the same thing: Hide Read
+ * Articles and Hide Read Feeds, Mark All as Read and the two halves of the
+ * list either side of the article being read.
+ */
+static void SetShiftKey(MenuRef menu, short item)
+{
+    SetMenuItemModifiers(menu, (MenuItemIndex)item,
+                         (UInt8)(kMenuShiftModifier));
+}
+
+static void SetOptionKey(MenuRef menu, short item)
+{
+    SetMenuItemModifiers(menu, (MenuItemIndex)item,
+                         (UInt8)(kMenuOptionModifier));
+}
+
 static Boolean BuildMenuBar(void)
 {
-    MenuRef appleMenu, fileMenu, editMenu, feedsMenu, moveToMenu, windowMenu;
+    MenuRef appleMenu, fileMenu, editMenu, viewMenu, sortMenu;
+    MenuRef feedsMenu, moveToMenu, articleMenu;
 
     /* "\024" is the Apple logo in MacRoman. */
     appleMenu = NewMenu(kMenuApple, "\p\024");
@@ -311,36 +379,58 @@ static Boolean BuildMenuBar(void)
         return false;
     }
     AppendMenu(fileMenu,
-               "\pRefresh/R;(-;"
-               "Import Feeds\311;Export Feeds\311;(-;"
-               "Close/W;(-;Quit/Q");
+               "\pNew Feed\311/N;New Group\311/G;(-;"
+               "Refresh/R;(-;"
+               "Import Feeds\311;Export Feeds\311/E;(-;"
+               "Quit/Q");
     InsertMenu(fileMenu, 0);
 
     editMenu = NewMenu(kMenuEdit, "\pEdit");
     if (editMenu == nil) {
         return false;
     }
+    /* The four inert ones are disabled here rather than in AdjustMenus: they
+       are never enabled, so there is nothing for AdjustMenus to decide. */
     AppendMenu(editMenu,
-               "\pUndo/Z;(-;Cut/X;Copy/C;Paste/V;Clear;(-;"
-               "Find\311/F;Show All Articles");
+               "\p(Undo/Z;(-;(Cut/X;Copy/C;(Paste/V;(Clear;(-;"
+               "Find\311/F");
     InsertMenu(editMenu, 0);
+
+    viewMenu = NewMenu(kMenuView, "\pView");
+    if (viewMenu == nil) {
+        return false;
+    }
+    AppendMenu(viewMenu,
+               "\pSort Articles By;(-;"
+               "(Group by Feed;Hide Read Articles/H;Hide Read Feeds/H;(-;"
+               "Hide Sidebar/S;(-;"
+               "(Hide Toolbar/T");
+    SetShiftKey(viewMenu, kViewItemHideFeeds);
+    InsertMenu(viewMenu, 0);
+
+    /*
+     * The two hierarchical menus. A submenu goes in with hierMenu (-1) as its
+     * "before" menu, which is what tells the Menu Manager it hangs off an item
+     * rather than sitting in the bar; the item is then pointed at it by ID.
+     */
+    sortMenu = NewMenu(kMenuSortBy, "\pSort Articles By");
+    if (sortMenu == nil) {
+        return false;
+    }
+    AppendMenu(sortMenu, "\pNewest on Top;Oldest on Top");
+    InsertMenu(sortMenu, hierMenu);
+    SetMenuItemHierarchicalID(viewMenu, kViewItemSortBy, kMenuSortBy);
 
     feedsMenu = NewMenu(kMenuFeeds, "\pFeeds");
     if (feedsMenu == nil) {
         return false;
     }
     AppendMenu(feedsMenu,
-               "\pNew Feed\311/N;New Group\311;(-;"
-               "Edit Feed\311;Rename\311;Remove;(-;"
-               "Turn Off;Move to Group;(-;"
-               "Full Article Text/T;(-;"
-               "Mark as Unread/U;Mark All as Read");
+               "\pEdit Feed\311;Rename\311;Remove;(-;"
+               "Turn Off;Move to Group");
     InsertMenu(feedsMenu, 0);
 
-    /* "Move to Group" is a hierarchical item: the submenu goes in with
-       hierMenu (-1) as its "before" menu, which is what tells the Menu
-       Manager it hangs off another item rather than sitting in the bar.
-       Its contents are rebuilt in AdjustMenus, because the groups change. */
+    /* Rebuilt in AdjustMenus, because the groups change. */
     moveToMenu = NewMenu(kMenuMoveTo, "\pMove to Group");
     if (moveToMenu == nil) {
         return false;
@@ -348,12 +438,20 @@ static Boolean BuildMenuBar(void)
     InsertMenu(moveToMenu, hierMenu);
     SetMenuItemHierarchicalID(feedsMenu, kFeedsItemMoveTo, kMenuMoveTo);
 
-    windowMenu = NewMenu(kMenuWindow, "\pWindow");
-    if (windowMenu == nil) {
+    articleMenu = NewMenu(kMenuArticle, "\pArticle");
+    if (articleMenu == nil) {
         return false;
     }
-    AppendMenu(windowMenu, "\pGazette");
-    InsertMenu(windowMenu, 0);
+    AppendMenu(articleMenu,
+               "\pNext Unread//;(-;"
+               "(Today/1;(All Unread/2;(Starred/3;(-;"
+               "Mark as Unread/U;Mark All as Read/K;"
+               "Mark Above as Read/K;Mark Below as Read/K;(-;"
+               "Mark as Starred/L;(-;"
+               "Open in Browser/B");
+    SetShiftKey(articleMenu, kArticleItemMarkAbove);
+    SetOptionKey(articleMenu, kArticleItemMarkBelow);
+    InsertMenu(articleMenu, 0);
 
     DrawMenuBar();
 
@@ -632,41 +730,47 @@ static void HandleMenuChoice(long menuResult)
             break;
 
         case kMenuFile:
-            if (menuItem == kFileItemRefresh) {
-                HandleRefresh();
-            } else if (menuItem == kFileItemImport) {
-                HandleImportOPML();
-            } else if (menuItem == kFileItemExport) {
-                HandleExportOPML();
-            } else if (menuItem == kFileItemClose ||
-                       menuItem == kFileItemQuit) {
-                HandleQuit();
+            switch (menuItem) {
+                case kFileItemNewFeed:  HandleNewFeed();    break;
+                case kFileItemNewGroup: HandleNewGroup();   break;
+                case kFileItemRefresh:  HandleRefresh();    break;
+                case kFileItemImport:   HandleImportOPML(); break;
+                case kFileItemExport:   HandleExportOPML(); break;
+                case kFileItemQuit:     HandleQuit();       break;
+                default: break;
             }
             break;
 
         case kMenuEdit:
-            /* The text fields in the dialogs get the Edit menu's behaviour
-               from the Dialog Manager; Copy is the window's own. */
+            /* Undo, Cut, Paste and Clear are never enabled, so they never
+               arrive here. Copy is the window's own: the reader pane holds a
+               TextEdit record and a drag in it selects text. */
             if (menuItem == kEditItemCopy) {
                 GazetteUIReaderCopy();
             } else if (menuItem == kEditItemFind) {
                 HandleFind();
-            } else if (menuItem == kEditItemShowAll) {
-                HandleShowAll();
             }
+            break;
+
+        case kMenuView:
+            switch (menuItem) {
+                case kViewItemHideRead:    HandleHideReadArticles(); break;
+                case kViewItemHideFeeds:   HandleHideReadFeeds();    break;
+                case kViewItemHideSidebar: HandleHideSidebar();      break;
+                default: break;
+            }
+            break;
+
+        case kMenuSortBy:
+            HandleSortOrder((Boolean)(menuItem == kSortItemOldest));
             break;
 
         case kMenuFeeds:
             switch (menuItem) {
-                case kFeedsItemNewFeed:  HandleNewFeed();       break;
-                case kFeedsItemNewGroup: HandleNewGroup();      break;
                 case kFeedsItemEdit:     HandleEditFeed();      break;
                 case kFeedsItemRename:   HandleRename();        break;
                 case kFeedsItemRemove:   HandleRemove();        break;
                 case kFeedsItemEnabled:  HandleToggleEnabled(); break;
-                case kFeedsItemFullText: HandleToggleFullText(); break;
-                case kFeedsItemMarkRead: HandleMarkRead();       break;
-                case kFeedsItemMarkAll:  HandleMarkAllRead();    break;
                 default: break;
             }
             break;
@@ -675,10 +779,16 @@ static void HandleMenuChoice(long menuResult)
             HandleMoveToGroup(menuItem);
             break;
 
-        case kMenuWindow:
-            if (menuItem == kWindowItemGazette &&
-                GazetteUIWindow() != nil) {
-                SelectWindow(GazetteUIWindow());
+        case kMenuArticle:
+            switch (menuItem) {
+                case kArticleItemNextUnread: HandleNextUnread();       break;
+                case kArticleItemMarkRead:   HandleMarkRead();         break;
+                case kArticleItemMarkAll:    HandleMarkAllRead();      break;
+                case kArticleItemMarkAbove:  HandleMarkRange(false);   break;
+                case kArticleItemMarkBelow:  HandleMarkRange(true);    break;
+                case kArticleItemStar:       HandleToggleStar();       break;
+                case kArticleItemBrowser:    HandleOpenInBrowser();    break;
+                default: break;
             }
             break;
 
@@ -724,80 +834,123 @@ static void HandleQuit(void)
  */
 static void AdjustMenus(void)
 {
-    MenuRef feeds  = GetMenuHandle(kMenuFeeds);
-    MenuRef moveTo = GetMenuHandle(kMenuMoveTo);
-    int     kind   = 0;
-    int     index  = 0;
+    MenuRef view    = GetMenuHandle(kMenuView);
+    MenuRef sort    = GetMenuHandle(kMenuSortBy);
+    MenuRef feeds   = GetMenuHandle(kMenuFeeds);
+    MenuRef article = GetMenuHandle(kMenuArticle);
+    MenuRef moveTo  = GetMenuHandle(kMenuMoveTo);
+    int     kind    = 0;
+    int     index   = 0;
     Boolean any;
     Boolean feedSelected;
     Str255  itemText;
     int     i;
 
-    if (feeds == nil) {
-        return;
-    }
-
     any          = GazetteUISelection(&kind, &index);
     feedSelected = (any && kind == kGazetteRowFeed);
 
-    if (any) {
-        MacEnableMenuItem(feeds, kFeedsItemRename);
-        MacEnableMenuItem(feeds, kFeedsItemRemove);
-    } else {
-        DisableMenuItem(feeds, kFeedsItemRename);
-        DisableMenuItem(feeds, kFeedsItemRemove);
-    }
+    /* ---- View -------------------------------------------------- */
+    if (view != nil) {
+        MacCheckMenuItem(view, kViewItemHideRead,
+                         GazetteCoreHideReadArticles() ? true : false);
+        MacCheckMenuItem(view, kViewItemHideFeeds,
+                         GazetteCoreHideReadFeeds() ? true : false);
 
-    /* The address, the on/off switch and the group are all a feed's: a group
-       has no address and does not nest inside another. */
-    if (feedSelected) {
-        MacEnableMenuItem(feeds, kFeedsItemEdit);
-        MacEnableMenuItem(feeds, kFeedsItemEnabled);
-        MacEnableMenuItem(feeds, kFeedsItemMoveTo);
-        SetMenuItemText(feeds, kFeedsItemEnabled,
-                        GazetteCoreFeedEnabled(index) ? "\pTurn Off"
-                                                      : "\pTurn On");
-    } else {
-        DisableMenuItem(feeds, kFeedsItemEdit);
-        DisableMenuItem(feeds, kFeedsItemEnabled);
-        DisableMenuItem(feeds, kFeedsItemMoveTo);
-        SetMenuItemText(feeds, kFeedsItemEnabled, "\pTurn Off");
-    }
-
-    /* A preference, not a command: it shows its state with a check mark the
-       way every other toggle in the menu bar does. */
-    {
-        const GazettePrefs *prefs = GazetteCoreGetPrefs();
-
-        MacCheckMenuItem(feeds, kFeedsItemFullText,
-                         (prefs != nil && prefs->fullText) ? true : false);
-    }
-
-    /* The read/unread pair follows the article, not the feed. The first item
-       says what it would do, so it reads as one command rather than two. */
-    {
-        const GazetteArticle *article =
-            GazetteFeedsArticleAt(GazetteUISelectedArticle());
-
-        if (article != nil) {
-            MacEnableMenuItem(feeds, kFeedsItemMarkRead);
-            SetMenuItemText(feeds, kFeedsItemMarkRead,
-                            article->read ? "\pMark as Unread"
-                                          : "\pMark as Read");
+        /* The item says what it would do, so it reads as one command rather
+           than as a check box whose label is only true half the time. */
+        if (GazetteCoreHideSidebar()) {
+            SetMenuItemText(view, kViewItemHideSidebar, "\pShow Sidebar");
         } else {
-            DisableMenuItem(feeds, kFeedsItemMarkRead);
-            SetMenuItemText(feeds, kFeedsItemMarkRead, "\pMark as Unread");
+            SetMenuItemText(view, kViewItemHideSidebar, "\pHide Sidebar");
+        }
+    }
+    if (sort != nil) {
+        Boolean oldest = GazetteCoreOldestFirst();
+
+        MacCheckMenuItem(sort, kSortItemNewest, (Boolean)!oldest);
+        MacCheckMenuItem(sort, kSortItemOldest, oldest);
+    }
+
+    /* ---- Feeds ------------------------------------------------- */
+    if (feeds != nil) {
+        if (any) {
+            MacEnableMenuItem(feeds, kFeedsItemRename);
+            MacEnableMenuItem(feeds, kFeedsItemRemove);
+        } else {
+            DisableMenuItem(feeds, kFeedsItemRename);
+            DisableMenuItem(feeds, kFeedsItemRemove);
+        }
+
+        /* The address, the on/off switch and the group are all a feed's: a
+           group has no address and does not nest inside another. */
+        if (feedSelected) {
+            MacEnableMenuItem(feeds, kFeedsItemEdit);
+            MacEnableMenuItem(feeds, kFeedsItemEnabled);
+            MacEnableMenuItem(feeds, kFeedsItemMoveTo);
+            SetMenuItemText(feeds, kFeedsItemEnabled,
+                            GazetteCoreFeedEnabled(index) ? "\pTurn Off"
+                                                          : "\pTurn On");
+        } else {
+            DisableMenuItem(feeds, kFeedsItemEdit);
+            DisableMenuItem(feeds, kFeedsItemEnabled);
+            DisableMenuItem(feeds, kFeedsItemMoveTo);
+            SetMenuItemText(feeds, kFeedsItemEnabled, "\pTurn Off");
+        }
+    }
+
+    /* ---- Article ----------------------------------------------- */
+    if (article != nil) {
+        int                   at      = GazetteUISelectedArticle();
+        const GazetteArticle *open    = GazetteFeedsArticleAt(at);
+        int                   count   = GazetteFeedsArticleCount();
+
+        /* The read/unread pair follows the article, not the feed. The first
+           item says what it would do, so it reads as one command. */
+        if (open != nil) {
+            MacEnableMenuItem(article, kArticleItemMarkRead);
+            SetMenuItemText(article, kArticleItemMarkRead,
+                            open->read ? "\pMark as Unread"
+                                       : "\pMark as Read");
+            MacEnableMenuItem(article, kArticleItemStar);
+            SetMenuItemText(article, kArticleItemStar,
+                            open->starred ? "\pRemove Star"
+                                          : "\pMark as Starred");
+        } else {
+            DisableMenuItem(article, kArticleItemMarkRead);
+            SetMenuItemText(article, kArticleItemMarkRead, "\pMark as Unread");
+            DisableMenuItem(article, kArticleItemStar);
+            SetMenuItemText(article, kArticleItemStar, "\pMark as Starred");
+        }
+
+        /* Above and below are about where the article sits in the list, so
+           the first headline has nothing above it and the last none below. */
+        if (open != nil && at > 0) {
+            MacEnableMenuItem(article, kArticleItemMarkAbove);
+        } else {
+            DisableMenuItem(article, kArticleItemMarkAbove);
+        }
+        if (open != nil && at >= 0 && at < count - 1) {
+            MacEnableMenuItem(article, kArticleItemMarkBelow);
+        } else {
+            DisableMenuItem(article, kArticleItemMarkBelow);
         }
 
         if (GazetteFeedsUnreadCount() > 0) {
-            MacEnableMenuItem(feeds, kFeedsItemMarkAll);
+            MacEnableMenuItem(article, kArticleItemMarkAll);
+            MacEnableMenuItem(article, kArticleItemNextUnread);
         } else {
-            DisableMenuItem(feeds, kFeedsItemMarkAll);
+            DisableMenuItem(article, kArticleItemMarkAll);
+            DisableMenuItem(article, kArticleItemNextUnread);
+        }
+
+        if (GazetteUISelectedArticleLink()[0] != '\0') {
+            MacEnableMenuItem(article, kArticleItemBrowser);
+        } else {
+            DisableMenuItem(article, kArticleItemBrowser);
         }
     }
 
-    /* Find needs something to search; Show All needs a search to clear;
-       Copy needs something selected in the reader. */
+    /* ---- Edit -------------------------------------------------- */
     {
         MenuRef edit = GetMenuHandle(kMenuEdit);
 
@@ -811,11 +964,6 @@ static void AdjustMenus(void)
                 MacEnableMenuItem(edit, kEditItemFind);
             } else {
                 DisableMenuItem(edit, kEditItemFind);
-            }
-            if (GazetteFeedsFilter()[0] != '\0') {
-                MacEnableMenuItem(edit, kEditItemShowAll);
-            } else {
-                DisableMenuItem(edit, kEditItemShowAll);
             }
         }
     }
@@ -1069,29 +1217,6 @@ static void HandleToggleEnabled(void)
  * turning it on and having to click away and back would read as it not
  * working.
  */
-static void HandleToggleFullText(void)
-{
-    const GazettePrefs *prefs = GazetteCoreGetPrefs();
-    Boolean             wanted;
-
-    if (prefs == nil) {
-        return;
-    }
-    wanted = prefs->fullText ? false : true;
-
-    GazetteCoreSetFullText(wanted);
-    GazetteCoreSavePrefs();
-
-    if (!wanted) {
-        /* Back to the feed's own summary, and drop what was fetched. */
-        GazetteFeedsFullTextCancel();
-        GazetteUIArticleTextChanged();
-        GazetteUISetStatus("Showing the summary each feed provides.");
-        return;
-    }
-    ShowArticle(GazetteUISelectedArticle());
-}
-
 static void HandleMarkRead(void)
 {
     int                   index   = GazetteUISelectedArticle();
@@ -1107,7 +1232,142 @@ static void HandleMarkRead(void)
 static void HandleMarkAllRead(void)
 {
     GazetteFeedsMarkAllRead();
+
+    /* With read articles hidden, marking the lot read empties the list — so
+       the list has to be re-derived rather than redrawn. */
+    if (GazetteCoreHideReadArticles()) {
+        GazetteUIViewChanged();
+    } else {
+        GazetteUIUpdate();
+    }
+}
+
+static void HandleMarkRange(Boolean below)
+{
+    int index = GazetteUISelectedArticle();
+
+    if (GazetteFeedsArticleAt(index) == nil) {
+        return;
+    }
+    GazetteFeedsMarkRange(index, below ? 1 : 0);
+
+    if (GazetteCoreHideReadArticles()) {
+        GazetteUIViewChanged();
+    } else {
+        GazetteUIUpdate();
+    }
+}
+
+static void HandleToggleStar(void)
+{
+    int                   index   = GazetteUISelectedArticle();
+    const GazetteArticle *article = GazetteFeedsArticleAt(index);
+
+    if (article == nil) {
+        return;
+    }
+    GazetteFeedsMarkStarred(index, article->starred ? 0 : 1);
+    GazetteIndexSave();
     GazetteUIUpdate();
+}
+
+static void HandleNextUnread(void)
+{
+    if (!GazetteUINextUnread()) {
+        GazetteUISetStatus("Nothing unread below this one.");
+    }
+}
+
+/*
+ * Hand the article's address to whatever the machine calls its browser.
+ *
+ * Internet Config, rather than an Apple event of our own: ICLaunchURL is what
+ * every Mac OS 9 application uses for this, it obeys the helper the user
+ * chose in the Internet control panel, and it starts the browser if it is not
+ * already running. The hint is empty because the URL carries its own scheme.
+ */
+static void HandleOpenInBrowser(void)
+{
+    const char *url = GazetteUISelectedArticleLink();
+    ICInstance  ic  = nil;
+    long        start;
+    long        end;
+
+    if (url[0] == '\0') {
+        return;
+    }
+    if (ICStart(&ic, 'Gzt9') != noErr || ic == nil) {
+        GazetteUISetStatus("Internet Config is not available on this "
+                           "Macintosh.");
+        return;
+    }
+
+    start = 0;
+    end   = (long)strlen(url);
+    if (ICLaunchURL(ic, "\p", (Ptr)url, end, &start, &end) != noErr) {
+        GazetteUISetStatus("No application is set up to open that address.");
+    } else {
+        GazetteUISetStatus("Opened in your browser.");
+    }
+    (void)ICStop(ic);
+}
+
+/* ------------------------------------------------------------------ */
+/* The View menu                                                       */
+/*                                                                     */
+/* Each of these is the same three steps: move the preference, tell     */
+/* the store or the window what changed, and save. They are written     */
+/* out rather than folded together because what each one has to tell    */
+/* is different, and the differences are the whole of the code.         */
+/* ------------------------------------------------------------------ */
+
+static void HandleSortOrder(Boolean oldestFirst)
+{
+    if (GazetteCoreOldestFirst() == oldestFirst) {
+        return;
+    }
+    GazetteCoreSetOldestFirst(oldestFirst);
+    GazetteFeedsSetOldestFirst(oldestFirst ? 1 : 0);
+    GazetteCoreSavePrefs();
+
+    GazetteUIViewChanged();
+    GazetteUISetStatus(oldestFirst ? "Oldest articles on top."
+                                   : "Newest articles on top.");
+}
+
+static void HandleHideReadArticles(void)
+{
+    Boolean wanted = GazetteCoreHideReadArticles() ? false : true;
+
+    GazetteCoreSetHideReadArticles(wanted);
+    GazetteFeedsSetHideRead(wanted ? 1 : 0);
+    GazetteCoreSavePrefs();
+
+    GazetteUIViewChanged();
+    GazetteUISetStatus(wanted ? "Showing unread articles only."
+                              : "Showing every article.");
+}
+
+static void HandleHideReadFeeds(void)
+{
+    Boolean wanted = GazetteCoreHideReadFeeds() ? false : true;
+
+    GazetteCoreSetHideReadFeeds(wanted);
+    GazetteCoreSavePrefs();
+
+    GazetteUIViewChanged();
+    GazetteUISetStatus(wanted ? "Showing feeds with something unread in them."
+                              : "Showing every feed.");
+}
+
+static void HandleHideSidebar(void)
+{
+    Boolean wanted = GazetteCoreHideSidebar() ? false : true;
+
+    GazetteCoreSetHideSidebar(wanted);
+    GazetteCoreSavePrefs();
+
+    GazetteUIViewChanged();
 }
 
 /*
@@ -1130,6 +1390,15 @@ static void HandleFind(void)
     GazetteFeedsSetFilter(text);
     GazetteUIArticlesChanged();
 
+    /* An empty box is how a search is cleared — which is why there is no
+       "Show All Articles" beside this one any more. */
+    if (text[0] == '\0') {
+        snprintf(message, sizeof message, "%d articles.",
+                 GazetteFeedsArticleCount());
+        GazetteUISetStatus(message);
+        return;
+    }
+
     if (GazetteFeedsArticleCount() == 0) {
         snprintf(message, sizeof message,
                  "Nothing here contains \322%s\323.", text);
@@ -1138,21 +1407,6 @@ static void HandleFind(void)
                  "\322%s\323.", GazetteFeedsArticleCount(),
                  GazetteFeedsTotalCount(), text);
     }
-    GazetteUISetStatus(message);
-}
-
-static void HandleShowAll(void)
-{
-    char message[224];
-
-    if (GazetteFeedsFilter()[0] == '\0') {
-        return;
-    }
-    GazetteFeedsSetFilter(NULL);
-    GazetteUIArticlesChanged();
-
-    snprintf(message, sizeof message, "%d articles.",
-             GazetteFeedsArticleCount());
     GazetteUISetStatus(message);
 }
 

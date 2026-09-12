@@ -124,6 +124,11 @@ enum {
      */
     kBandGrey      = 221,
 
+    /* The star drawn at the right hand end of a starred headline, in the
+       column a date used to be in. Odd, so it has a middle column to be
+       symmetrical about. */
+    kStarSize      = 9,
+
     /* The focus border's thickness, and therefore how far a row has to keep
        clear of the edge of the view it is in. */
     kFocusBorder   = 2,
@@ -391,6 +396,7 @@ static void DrawStatus(void);
 static void DrawStatusText(void);
 static void DrawHeaderTitle(const Rect *r, const char *text);
 static void DrawReaderRule(void);
+static void SyncSidebarRows(void);
 
 /* ------------------------------------------------------------------ */
 /* Small helpers                                                       */
@@ -1333,8 +1339,10 @@ static void SizeListPane(ControlRef control, ListHandle list,
 
 static void Layout(void)
 {
-    Rect  bounds;
-    short contentBottom;
+    Rect    bounds;
+    short   contentBottom;
+    short   width;
+    Boolean noSidebar;
 
     if (gWindow == NULL) {
         return;
@@ -1343,12 +1351,17 @@ static void Layout(void)
     GetWindowPortBounds(gWindow, &bounds);
 
     contentBottom = (short)(bounds.bottom - gStatusHeight);
+    noSidebar     = GazetteCoreHideSidebar();
 
     /*
      * Three columns side by side, so two widths to settle and a minimum for
      * each of the three. The sidebar gives way first and the article last:
      * the article is what the window is for, and the sidebar is the column
      * whose contents are shortest.
+     *
+     * With the sidebar put away it is two columns, and its own width is left
+     * exactly as it was — hiding a column is not the same as resizing it, and
+     * bringing it back should bring it back where it was.
      */
     {
         short room = (short)(bounds.right - bounds.left);
@@ -1362,7 +1375,9 @@ static void Layout(void)
             gSidebarWidth = kMinSidebar;
         }
 
-        most = (short)(room - gSidebarWidth - kMinReader);
+        width = noSidebar ? (short)(-kVDividerWidth + 2) : gSidebarWidth;
+
+        most = (short)(room - width - kMinReader);
         if (gListWidth > most) {
             gListWidth = most;
         }
@@ -1386,7 +1401,15 @@ static void Layout(void)
      * vRule and hRule are those columns and rows, worked out once.
      */
     {
-        short split   = (short)(bounds.left + gSidebarWidth);
+        /*
+         * With the sidebar hidden, split is carried off the left edge far
+         * enough that the headline list's own arithmetic — split + 5 for its
+         * header, split + 6 for its pane — lands on bounds.left - 1 and
+         * bounds.left, which is exactly where the sidebar's used to. The
+         * column that was first is simply not there, and nothing else in
+         * here has to know.
+         */
+        short split   = (short)(bounds.left + width);
         short split2  = (short)(split + gListWidth);
         short headTop = (short)(bounds.top - 1);
         short headBot = (short)(bounds.top + gHeaderHeight);
@@ -1408,8 +1431,15 @@ static void Layout(void)
                 split, headBot);
         SetRect(&gListHeader, (short)(split + 5), headTop, split2, headBot);
 
-        SetRect(&gVDivider, split, bounds.top,
-                (short)(split + kVDividerWidth), contentBottom);
+        /* An empty rectangle is a divider that cannot be drawn on and cannot
+           be grabbed — PtInRect answers false for every point in one — which
+           is what the hidden sidebar's groove has to be. */
+        if (noSidebar) {
+            SetRect(&gVDivider, 0, 0, 0, 0);
+        } else {
+            SetRect(&gVDivider, split, bounds.top,
+                    (short)(split + kVDividerWidth), contentBottom);
+        }
         SetRect(&gVDivider2, split2, bounds.top,
                 (short)(split2 + kVDividerWidth), contentBottom);
 
@@ -1492,6 +1522,23 @@ static void Layout(void)
        above, and every one of their scroll bars ends on it. */
     SetRect(&gStatusRect, bounds.left, contentBottom,
             bounds.right, bounds.bottom);
+
+    /*
+     * Hidden rather than merely laid out off the edge. A control with an
+     * inverted rectangle is still a control: DrawControls visits it, the
+     * Control Manager offers it the keyboard, and its list keeps a scroll bar
+     * it would place somewhere. Saying it is invisible settles all three.
+     */
+    if (gSidebarCtl != NULL) {
+        SetControlVisibility(gSidebarCtl, !noSidebar, false);
+    }
+    if (gSidebarHeaderCtl != NULL) {
+        SetControlVisibility(gSidebarHeaderCtl, !noSidebar, false);
+    }
+    if (noSidebar && gFocusPane == gSidebarCtl) {
+        /* The keyboard cannot be left in a pane that is not there. */
+        (void)SetKeyboardFocus(gWindow, gArticleCtl, kControlFocusNextPart);
+    }
 
     SizeListPane(gSidebarCtl, gSidebarList, &gSidebarPane);
     SizeListPane(gArticleCtl, gArticleList, &gListPane);
@@ -1971,6 +2018,9 @@ static pascal void ScrollAction(ControlRef control, ControlPartCode part)
  */
 static void DrawHeaderTitle(const Rect *r, const char *text)
 {
+    if (r->right <= r->left) {
+        return;                 /* a column that is not being drawn */
+    }
     Rect inner = *r;
 
     UseSysFont();
@@ -2620,6 +2670,42 @@ static void DrawDateHeading(const Rect *cell, int article)
     RGBForeColor(&save);
 }
 
+/*
+ * A five-pointed star, filled, centred on a point.
+ *
+ * A polygon rather than a character: neither Charcoal nor Geneva has a star
+ * in MacRoman, the two glyphs that come closest — the bullet and the lozenge
+ * — both already mean something else in a list of headlines, and a shape
+ * this small is ten line segments however it is arrived at.
+ *
+ * The offsets are a unit star at two radii, rounded: the outer points at
+ * four pixels from the middle and the inner ones at just under two, which is
+ * the proportion that still reads as a star once it is this small.
+ */
+static void DrawStar(short cx, short cy)
+{
+    static const signed char kPoints[10][2] = {
+        {  0, -4 }, {  1, -1 }, {  4, -1 }, {  2,  1 }, {  3,  3 },
+        {  0,  2 }, { -3,  3 }, { -2,  1 }, { -4, -1 }, { -1, -1 }
+    };
+    PolyHandle poly;
+    int        i;
+
+    poly = OpenPoly();
+    if (poly == NULL) {
+        return;
+    }
+    MoveTo((short)(cx + kPoints[0][0]), (short)(cy + kPoints[0][1]));
+    for (i = 1; i < 10; i++) {
+        LineTo((short)(cx + kPoints[i][0]), (short)(cy + kPoints[i][1]));
+    }
+    LineTo((short)(cx + kPoints[0][0]), (short)(cy + kPoints[0][1]));
+    ClosePoly();
+
+    PaintPoly(poly);
+    KillPoly(poly);
+}
+
 static void DrawArticleCell(const Rect *full, short row, Boolean selected)
 {
     const GazetteArticle *a;
@@ -2627,6 +2713,7 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
     const Rect           *cell = &cellRect;
     short                 baseline;
     short                 textLeft;
+    short                 textRight;
     int                   article;
 
     RowRect(full, &cellRect);
@@ -2713,7 +2800,20 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
         DrawRowIcon(cell, (short)(cell->left + kTextInset), gDocIcon, true,
                     gHeadRowHeight);
     }
-    textLeft = (short)(cell->left + HeadlineTextInset());
+    textLeft  = (short)(cell->left + HeadlineTextInset());
+    textRight = (short)(cell->right - kTextInset);
+
+    /*
+     * The star goes at the right hand end of a headline's first line, and
+     * takes its room out of that line rather than out of both: a headline
+     * that wraps has its whole second line either way.
+     */
+    if (a->starred && gHeadRows[row].kind == kHeadlineArticle) {
+        ForeColor(blackColor);
+        DrawStar((short)(textRight - kStarSize / 2),
+                 (short)(cell->top + gHeadRowBaseline - kStarSize / 2 - 1));
+        textRight = (short)(textRight - kStarSize - kIconGap);
+    }
 
     /*
      * The same face the feed names are set in, and always black: bold while
@@ -2729,7 +2829,7 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
         /* The rest of the headline, truncated — this is the line that ends
            in an ellipsis when two were not enough for it. */
         DrawTruncated(a->title + gHeadRows[row].start,
-                      (short)(cell->right - kTextInset - textLeft));
+                      (short)(textRight - textLeft));
     } else {
         /*
          * Just this line's words. Truncated as well as sliced, so that a
@@ -2747,7 +2847,7 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
         }
         memcpy(line, a->title + gHeadRows[row].start, (size_t)len);
         line[len] = '\0';
-        DrawTruncated(line, (short)(cell->right - kTextInset - textLeft));
+        DrawTruncated(line, (short)(textRight - textLeft));
     }
 
     TextFace(normal);
@@ -3286,9 +3386,11 @@ void GazetteUIUpdate(void)
        track the theme rather than being two hard-coded greys, and the
        horizontal one carries the row of dots Outlook Express puts in a
        splitter to say that it can be dragged. */
-    DrawVDivider(&gVDivider);
+    if (!GazetteCoreHideSidebar()) {
+        DrawVDivider(&gVDivider);
+        DrawGrabHandle(&gVDivider, true);
+    }
     DrawVDivider(&gVDivider2);
-    DrawGrabHandle(&gVDivider, true);
     DrawGrabHandle(&gVDivider2, true);
 
     /* The whole control hierarchy in one call — the two lists with their
@@ -3336,7 +3438,9 @@ void GazetteUIUpdate(void)
     /* The bars last and by name. The erase at the top of this took them with
        everything else, and coming back through DrawControls did not put them
        back. */
-    DrawListScrollBar(gSidebarList, gSidebarCtl);
+    if (!GazetteCoreHideSidebar()) {
+        DrawListScrollBar(gSidebarList, gSidebarCtl);
+    }
     DrawListScrollBar(gArticleList, gArticleCtl);
 }
 
@@ -4019,6 +4123,10 @@ void GazetteUIArticlesChanged(void)
 
     gSelectedArticle = (GazetteFeedsArticleCount() > 0) ? 0 : -1;
 
+    /* A refresh moves the unread counts, and those are what decide which
+       feeds the sidebar is drawing. */
+    SyncSidebarRows();
+
     /* The rows are rebuilt before the list is told how many there are: a
        day's heading is a row too. */
     BuildHeadlineRows();
@@ -4082,6 +4190,59 @@ int GazetteUISelectedArticle(void)
     return gSelectedArticle;
 }
 
+/*
+ * Which sidebar lines "Hide Read Feeds" leaves standing. The engine keeps no
+ * unread counts of its own — they come from the index, by feed URL — so the
+ * window is what works this out and the row model reads the answer back.
+ *
+ * Two things are kept whatever is left in them: the feed being read, and the
+ * group being read. Hiding the column out from under the reader the moment
+ * they finish the last article in it is not what the option means.
+ */
+static void ApplyFeedVisibility(void)
+{
+    int i;
+    int g;
+
+    if (!GazetteCoreHideReadFeeds()) {
+        GazetteCoreShowAllRows();
+        return;
+    }
+
+    /* Groups are hidden first and brought back by their feeds, so a group is
+       shown exactly when it still has a line under it — or is the one open. */
+    for (g = 0; g < GazetteCoreGroupCount(); g++) {
+        GazetteCoreSetGroupHidden(g, true);
+    }
+    for (i = 0; i < GazetteCoreFeedCount(); i++) {
+        Boolean keep = (Boolean)(i == gSelectedFeed || FeedUnread(i) > 0);
+        int     group;
+
+        GazetteCoreSetFeedHidden(i, (Boolean)!keep);
+        group = GazetteCoreFeedGroup(i);
+        if (keep && group >= 0) {
+            GazetteCoreSetGroupHidden(group, false);
+        }
+    }
+    if (gSelectedGroup >= 0) {
+        GazetteCoreSetGroupHidden(gSelectedGroup, false);
+    }
+}
+
+/* The sidebar's rows, after whatever has just changed what is in them. */
+static void SyncSidebarRows(void)
+{
+    ApplyFeedVisibility();
+
+    if (gSidebarList == NULL) {
+        return;
+    }
+    LSetDrawingMode(false, gSidebarList);
+    SetRowCount(gSidebarList, GazetteCoreSidebarRowCount());
+    SelectRow(gSidebarList, SelectedRow(), false);
+    LSetDrawingMode(true, gSidebarList);
+}
+
 void GazetteUIFeedsChanged(void)
 {
     if (gWindow == NULL) {
@@ -4094,13 +4255,103 @@ void GazetteUIFeedsChanged(void)
         gSelectedGroup = -1;
     }
 
-    LSetDrawingMode(false, gSidebarList);
-    SetRowCount(gSidebarList, GazetteCoreSidebarRowCount());
-    SelectRow(gSidebarList, SelectedRow(), false);
-    LSetDrawingMode(true, gSidebarList);
+    SyncSidebarRows();
 
     Layout();
     GazetteUIUpdate();
+}
+
+/*
+ * Something in the View menu has moved. Everything downstream of it is
+ * re-derived: which feeds are drawn, which articles are in the list and in
+ * what order, and where the three columns are.
+ *
+ * The article being read is followed across the change rather than being
+ * dropped — its index in the list means something different on the other side
+ * of a sort, and losing the reader's place because they turned the list over
+ * would be the most annoying possible way to answer the command.
+ */
+void GazetteUIViewChanged(void)
+{
+    const GazetteArticle *was = NULL;
+    char                  link[kGazetteArticleLinkLen];
+
+    if (gWindow == NULL) {
+        return;
+    }
+
+    link[0] = '\0';
+    was     = GazetteFeedsArticleAt(gSelectedArticle);
+    if (was != NULL) {
+        (void)gz_copy_n(link, sizeof link, was->link, strlen(was->link));
+    }
+
+    GazetteFeedsRebuildView();
+
+    /* Where that article has ended up, if it is still in the list at all. */
+    gSelectedArticle = -1;
+    if (link[0] != '\0') {
+        int i;
+
+        for (i = 0; i < GazetteFeedsArticleCount(); i++) {
+            const GazetteArticle *a = GazetteFeedsArticleAt(i);
+
+            if (a != NULL && strcmp(a->link, link) == 0) {
+                gSelectedArticle = i;
+                break;
+            }
+        }
+    }
+    if (gSelectedArticle < 0 && GazetteFeedsArticleCount() > 0) {
+        gSelectedArticle = 0;
+    }
+
+    SyncSidebarRows();
+
+    BuildHeadlineRows();
+    LSetDrawingMode(false, gArticleList);
+    SetRowCount(gArticleList, gHeadRowCount);
+    SelectRow(gArticleList, RowForArticle(gSelectedArticle), true);
+    LSetDrawingMode(true, gArticleList);
+
+    Layout();
+    SetReaderText();
+    GazetteUIUpdate();
+}
+
+/*
+ * The next headline below the one being read that has not been read. Forward
+ * only and no wrap: "next" means further down the list, and a command that
+ * silently jumped back to the top would take the reader somewhere they had
+ * already been. Returns false when there is nothing after this one.
+ */
+Boolean GazetteUINextUnread(void)
+{
+    int count = GazetteFeedsArticleCount();
+    int i;
+
+    if (gWindow == NULL) {
+        return false;
+    }
+    for (i = (gSelectedArticle < 0) ? 0 : gSelectedArticle + 1;
+         i < count; i++) {
+        const GazetteArticle *a = GazetteFeedsArticleAt(i);
+
+        if (a != NULL && !a->read) {
+            SelectArticle(i);
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Which article is open, by its address — what "Open in Browser" needs, and
+   the only thing above this header that wants an article's link. */
+const char *GazetteUISelectedArticleLink(void)
+{
+    const GazetteArticle *a = GazetteFeedsArticleAt(gSelectedArticle);
+
+    return (a != NULL) ? a->link : "";
 }
 
 int GazetteUISelectedFeed(void)

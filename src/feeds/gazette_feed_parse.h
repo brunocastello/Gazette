@@ -76,6 +76,14 @@ typedef struct {
     int  read;
 
     /*
+     * And whether the reader has starred it. The same kind of thing as
+     * `read` and kept in the same place — the index, by the article's link —
+     * so it survives the article rolling out of a feed's cache and coming
+     * back on the next fetch.
+     */
+    int  starred;
+
+    /*
      * Which feed in the preferences it came from. The store used to hold one
      * feed's articles, where the answer was the same for all of them and did
      * not need saying; a group view holds several feeds' at once, and each

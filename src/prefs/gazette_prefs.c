@@ -37,7 +37,8 @@ enum {
  * Worst case is every entry at full length: a feed line is "feed     = " (11)
  * + a 511-byte URL + " | " (3) + a 127-byte title + CR, and a group line is
  * "group-closed = " (15) + a 63-byte name + CR. Plus the settings block and
- * comments, for which 512 is generous.
+ * comments, for which 768 is generous — the block is eight settings and
+ * three comment lines, and comes to under four hundred bytes.
  *
  * The array below has a negative size if that ever stops holding, which turns
  * the bug into a compile error on the line that raised the limit.
@@ -45,7 +46,7 @@ enum {
 typedef char gazette_prefs_text_buffer_is_large_enough[
     (kGazettePrefsTextMax >
      kGazetteMaxFeeds * (11 + kGazetteURLLen + 3 + kGazetteTitleLen + 1) +
-     kGazetteMaxGroups * (15 + kGazetteGroupLen + 1) + 512)
+     kGazetteMaxGroups * (15 + kGazetteGroupLen + 1) + 768)
     ? 1 : -1];
 
 /* ------------------------------------------------------------------ */
@@ -128,8 +129,18 @@ void GazettePrefsSetDefaults(GazettePrefs *p)
 
     p->refreshMinutes = kDefaultRefreshMinutes;
     p->maxArticles    = kDefaultMaxArticles;
-    p->fullText       = 0;
+    /* An article is read in full or it is read in summary, and the summary
+       was never the thing anyone wanted. It is no longer a choice. */
+    p->fullText       = 1;
     gz_copy_n(p->country, sizeof p->country, "US", 2);
+
+    /* Newest on top, everything shown, the sidebar out: what the window looks
+       like the first time it opens. memset has already said so; these are
+       here because a default worth knowing is worth writing down. */
+    p->oldestFirst      = 0;
+    p->hideReadArticles = 0;
+    p->hideReadFeeds    = 0;
+    p->hideSidebar      = 0;
 
     GazettePrefsAddFeed(p, kStarterFeedURL, kStarterFeedTitle, -1);
 }
@@ -285,108 +296,187 @@ int GazettePrefsGroupFeedCount(const GazettePrefs *p, int group)
 /* are contiguous after them, in group order. Nothing here searches.    */
 /* ------------------------------------------------------------------ */
 
-static int TopLevelCount(const GazettePrefs *p)
+/*
+ * Every one of these walks the feed list in drawing order rather than doing
+ * arithmetic over it. The order is still what RebuildOrder maintains — the
+ * top-level feeds first, then each group's, contiguous — but a hidden feed
+ * takes no row, and once rows and feeds no longer march in step there is no
+ * arithmetic to do. 128 feeds is a walk nobody will ever measure.
+ */
+static int FeedShown(const GazettePrefs *p, int i)
 {
-    int i;
-
-    for (i = 0; i < p->feedCount && p->feeds[i].group < 0; i++) {
-    }
-    return i;
+    return !p->feeds[i].hidden;
 }
 
-/* A group's line, plus its feeds when it is open. */
-static int RowsForGroup(const GazettePrefs *p, int group)
+static int GroupShown(const GazettePrefs *p, int g)
 {
-    if (p->groups[group].collapsed) {
-        return 1;
-    }
-    return 1 + GazettePrefsGroupFeedCount(p, group);
+    return !p->groups[g].hidden;
 }
 
 int GazettePrefsRowCount(const GazettePrefs *p)
 {
-    int n;
+    int n = 0;
+    int i;
     int g;
 
     if (p == NULL) {
         return 0;
     }
-    n = TopLevelCount(p);
+    for (i = 0; i < p->feedCount && p->feeds[i].group < 0; i++) {
+        if (FeedShown(p, i)) {
+            n++;
+        }
+    }
     for (g = 0; g < p->groupCount; g++) {
-        n += RowsForGroup(p, g);
+        if (!GroupShown(p, g)) {
+            continue;
+        }
+        n++;
+        if (p->groups[g].collapsed) {
+            continue;
+        }
+        for (i = 0; i < p->feedCount; i++) {
+            if (p->feeds[i].group == g && FeedShown(p, i)) {
+                n++;
+            }
+        }
     }
     return n;
 }
 
 int GazettePrefsRowAt(const GazettePrefs *p, int row, GazetteSidebarRow *out)
 {
-    int top;
+    int i;
     int g;
 
     if (p == NULL || out == NULL || row < 0) {
         return 0;
     }
 
-    top = TopLevelCount(p);
-    if (row < top) {
-        out->kind  = kGazetteRowFeed;
-        out->index = row;
-        return 1;
+    for (i = 0; i < p->feedCount && p->feeds[i].group < 0; i++) {
+        if (!FeedShown(p, i)) {
+            continue;
+        }
+        if (row-- == 0) {
+            out->kind  = kGazetteRowFeed;
+            out->index = i;
+            return 1;
+        }
     }
-    row -= top;
 
     for (g = 0; g < p->groupCount; g++) {
-        int n;
-
-        if (row == 0) {
+        if (!GroupShown(p, g)) {
+            continue;
+        }
+        if (row-- == 0) {
             out->kind  = kGazetteRowGroup;
             out->index = g;
             return 1;
         }
-        row--;
-
-        n = p->groups[g].collapsed ? 0 : GazettePrefsGroupFeedCount(p, g);
-        if (row < n) {
-            out->kind  = kGazetteRowFeed;
-            out->index = GazettePrefsFirstFeedInGroup(p, g) + row;
-            return 1;
+        if (p->groups[g].collapsed) {
+            continue;
         }
-        row -= n;
+        for (i = 0; i < p->feedCount; i++) {
+            if (p->feeds[i].group != g || !FeedShown(p, i)) {
+                continue;
+            }
+            if (row-- == 0) {
+                out->kind  = kGazetteRowFeed;
+                out->index = i;
+                return 1;
+            }
+        }
     }
     return 0;
 }
 
+/* Both of these are the walk above, stopped when it reaches what was asked
+   for. Written out twice rather than through a callback: two short loops read
+   better here than one indirect one. */
 int GazettePrefsRowForGroup(const GazettePrefs *p, int group)
 {
-    int row;
+    int row = 0;
+    int i;
     int g;
 
-    if (p == NULL || group < 0 || group >= p->groupCount) {
+    if (p == NULL || group < 0 || group >= p->groupCount ||
+        !GroupShown(p, group)) {
         return -1;
     }
-    row = TopLevelCount(p);
-    for (g = 0; g < group; g++) {
-        row += RowsForGroup(p, g);
+    for (i = 0; i < p->feedCount && p->feeds[i].group < 0; i++) {
+        if (FeedShown(p, i)) {
+            row++;
+        }
     }
-    return row;
+    for (g = 0; g < p->groupCount; g++) {
+        if (!GroupShown(p, g)) {
+            continue;
+        }
+        if (g == group) {
+            return row;
+        }
+        row++;
+        if (p->groups[g].collapsed) {
+            continue;
+        }
+        for (i = 0; i < p->feedCount; i++) {
+            if (p->feeds[i].group == g && FeedShown(p, i)) {
+                row++;
+            }
+        }
+    }
+    return -1;
 }
 
 int GazettePrefsRowForFeed(const GazettePrefs *p, int feed)
 {
     int group;
+    int row;
+    int i;
 
-    if (p == NULL || feed < 0 || feed >= p->feedCount) {
+    if (p == NULL || feed < 0 || feed >= p->feedCount ||
+        !FeedShown(p, feed)) {
         return -1;
     }
+
     group = p->feeds[feed].group;
     if (group < 0) {
-        return feed;            /* the top level is the first rows, in order */
+        row = 0;
+        for (i = 0; i < feed; i++) {
+            if (FeedShown(p, i)) {
+                row++;
+            }
+        }
+        return row;
     }
-    if (group >= p->groupCount || p->groups[group].collapsed) {
-        return -1;              /* drawn nowhere: its group is shut */
+
+    if (group >= p->groupCount || p->groups[group].collapsed ||
+        !GroupShown(p, group)) {
+        return -1;              /* drawn nowhere: its group is shut or gone */
     }
-    return GazettePrefsRowForGroup(p, group) + 1 +
-           (feed - GazettePrefsFirstFeedInGroup(p, group));
+
+    row = GazettePrefsRowForGroup(p, group) + 1;
+    for (i = 0; i < feed; i++) {
+        if (p->feeds[i].group == group && FeedShown(p, i)) {
+            row++;
+        }
+    }
+    return row;
+}
+
+void GazettePrefsShowAll(GazettePrefs *p)
+{
+    int i;
+
+    if (p == NULL) {
+        return;
+    }
+    for (i = 0; i < p->feedCount; i++) {
+        p->feeds[i].hidden = 0;
+    }
+    for (i = 0; i < p->groupCount; i++) {
+        p->groups[i].hidden = 0;
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -600,6 +690,15 @@ int GazettePrefsParse(const char *text, size_t len, GazettePrefs *p)
                                          p->fullText) ? 1 : 0;
     (void)gz_prefs_get(text, len, "country", p->country, sizeof p->country);
 
+    p->oldestFirst      = gz_prefs_get_num(text, len, "sort-oldest-first",
+                                           p->oldestFirst) ? 1 : 0;
+    p->hideReadArticles = gz_prefs_get_num(text, len, "hide-read-articles",
+                                           p->hideReadArticles) ? 1 : 0;
+    p->hideReadFeeds    = gz_prefs_get_num(text, len, "hide-read-feeds",
+                                           p->hideReadFeeds) ? 1 : 0;
+    p->hideSidebar      = gz_prefs_get_num(text, len, "hide-sidebar",
+                                           p->hideSidebar) ? 1 : 0;
+
     if (p->refreshMinutes < 0) {
         p->refreshMinutes = 0;
     }
@@ -754,6 +853,24 @@ size_t GazettePrefsSerialize(const GazettePrefs *p, char *out, size_t cap)
 
     Append(out, cap, &len, "country         = ");
     Append(out, cap, &len, p->country);
+    Append(out, cap, &len, "\r\r");
+
+    /* What the View menu is holding. Written out so the window comes back the
+       way it was left. */
+    Append(out, cap, &len, "sort-oldest-first  = ");
+    AppendNum(out, cap, &len, p->oldestFirst ? 1 : 0);
+    Append(out, cap, &len, "\r");
+
+    Append(out, cap, &len, "hide-read-articles = ");
+    AppendNum(out, cap, &len, p->hideReadArticles ? 1 : 0);
+    Append(out, cap, &len, "\r");
+
+    Append(out, cap, &len, "hide-read-feeds    = ");
+    AppendNum(out, cap, &len, p->hideReadFeeds ? 1 : 0);
+    Append(out, cap, &len, "\r");
+
+    Append(out, cap, &len, "hide-sidebar       = ");
+    AppendNum(out, cap, &len, p->hideSidebar ? 1 : 0);
     Append(out, cap, &len, "\r\r");
 
     Append(out, cap, &len,

@@ -77,9 +77,17 @@ enum {
     kGazettePrefsTextMax = 96 * 1024
 };
 
+/*
+ * `hidden` on either of these is a *view* flag, not part of the model: it is
+ * what "Hide Read Feeds" sets, and it says only that the sidebar is not
+ * drawing that line at the moment. It is never written to the file and never
+ * read back from one — a subscription the user cannot see is still a
+ * subscription — and everything that walks the rows skips it.
+ */
 typedef struct {
     char name[kGazetteGroupLen];
     int  collapsed;             /* the sidebar's disclosure triangle */
+    int  hidden;                /* runtime only; see above */
 } GazetteGroupPref;
 
 typedef struct {
@@ -87,6 +95,7 @@ typedef struct {
     char title[kGazetteTitleLen];
     int  enabled;
     int  group;                 /* index into groups, or -1 for the top level */
+    int  hidden;                /* runtime only; see above */
 } GazetteFeedPref;
 
 typedef struct {
@@ -105,6 +114,16 @@ typedef struct {
     long maxArticles;       /* per feed; bounds the cache and the list */
     int  fullText;          /* 1 = fetch and strip the article page too */
     char country[kGazetteCountryLen];   /* for Google News URLs */
+
+    /*
+     * What the View menu is holding. These are the user's, they survive a
+     * quit like every other preference, and they change nothing about what
+     * is subscribed to or what has been fetched — only what is drawn.
+     */
+    int  oldestFirst;       /* Sort Articles By: Oldest on Top */
+    int  hideReadArticles;
+    int  hideReadFeeds;
+    int  hideSidebar;
 } GazettePrefs;
 
 /* Populate p with Gazette's out-of-the-box configuration: one Google News
@@ -202,18 +221,23 @@ typedef struct {
     int index;                  /* into groups[] or feeds[] accordingly */
 } GazetteSidebarRow;
 
-/* How many rows the sidebar shows. */
+/* How many rows the sidebar shows. Hidden feeds and hidden groups are not
+   rows: they are drawn nowhere and counted nowhere. */
 int GazettePrefsRowCount(const GazettePrefs *p);
 
 /* What row n is. Returns 1 and fills out, or returns 0 and leaves it. */
 int GazettePrefsRowAt(const GazettePrefs *p, int row, GazetteSidebarRow *out);
 
-/* The row a feed is drawn on, or -1 when its group is closed and it is not
-   drawn at all. */
+/* The row a feed is drawn on, or -1 when it is hidden, or its group is
+   closed or hidden, and it is not drawn at all. */
 int GazettePrefsRowForFeed(const GazettePrefs *p, int feed);
 
-/* The row a group's own line is drawn on, or -1. */
+/* The row a group's own line is drawn on, or -1 when it is hidden. */
 int GazettePrefsRowForGroup(const GazettePrefs *p, int group);
+
+/* Clear every `hidden` flag — what "Hide Read Feeds" being switched off
+   means, and what the sidebar starts from each time it recomputes them. */
+void GazettePrefsShowAll(GazettePrefs *p);
 
 #ifdef __cplusplus
 }

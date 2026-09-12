@@ -41,6 +41,17 @@ Boolean GazetteCoreInit(void)
        or unreadable file leaves a perfectly usable configuration behind. */
     GazettePrefsParse(found ? text : NULL, found ? (size_t)len : 0, &gPrefs);
 
+    /*
+     * An article is read in full or it is read in summary, and the summary
+     * was never what anyone wanted. It stopped being a choice when "Full
+     * Article Text" left the menu; forcing it here rather than only in the
+     * defaults is what reaches a preferences file that still says otherwise.
+     */
+    gPrefs.fullText = 1;
+
+    /* Nothing is hidden until the window has counted what is unread. */
+    GazettePrefsShowAll(&gPrefs);
+
     gInited     = true;
     /* A first run has nothing on disk yet; writing the defaults out at once
        gives the user a file to edit instead of one they have to invent. */
@@ -209,6 +220,100 @@ void GazetteCoreSetFullText(Boolean on)
     }
     gPrefs.fullText = on ? 1 : 0;
     gPrefsDirty     = true;
+}
+
+/* ------------------------------------------------------------------ */
+/* The View menu                                                       */
+/* ------------------------------------------------------------------ */
+
+/* Four of the same thing. Written out rather than driven from a table: a
+   table of pointers to ints is harder to read than four pairs of two-line
+   functions, and there will never be forty of them. */
+Boolean GazetteCoreOldestFirst(void)
+{
+    return (gInited && gPrefs.oldestFirst) ? true : false;
+}
+
+void GazetteCoreSetOldestFirst(Boolean on)
+{
+    if (!gInited || gPrefs.oldestFirst == (on ? 1 : 0)) {
+        return;
+    }
+    gPrefs.oldestFirst = on ? 1 : 0;
+    gPrefsDirty        = true;
+}
+
+Boolean GazetteCoreHideReadArticles(void)
+{
+    return (gInited && gPrefs.hideReadArticles) ? true : false;
+}
+
+void GazetteCoreSetHideReadArticles(Boolean on)
+{
+    if (!gInited || gPrefs.hideReadArticles == (on ? 1 : 0)) {
+        return;
+    }
+    gPrefs.hideReadArticles = on ? 1 : 0;
+    gPrefsDirty             = true;
+}
+
+Boolean GazetteCoreHideReadFeeds(void)
+{
+    return (gInited && gPrefs.hideReadFeeds) ? true : false;
+}
+
+void GazetteCoreSetHideReadFeeds(Boolean on)
+{
+    if (!gInited || gPrefs.hideReadFeeds == (on ? 1 : 0)) {
+        return;
+    }
+    gPrefs.hideReadFeeds = on ? 1 : 0;
+    gPrefsDirty          = true;
+}
+
+Boolean GazetteCoreHideSidebar(void)
+{
+    return (gInited && gPrefs.hideSidebar) ? true : false;
+}
+
+void GazetteCoreSetHideSidebar(Boolean on)
+{
+    if (!gInited || gPrefs.hideSidebar == (on ? 1 : 0)) {
+        return;
+    }
+    gPrefs.hideSidebar = on ? 1 : 0;
+    gPrefsDirty        = true;
+}
+
+/* ------------------------------------------------------------------ */
+/* Which sidebar lines are drawn                                       */
+/*                                                                     */
+/* Not preferences, so none of these marks the block dirty: they are a */
+/* view of the tree that the window recomputes whenever the unread     */
+/* counts move.                                                        */
+/* ------------------------------------------------------------------ */
+
+void GazetteCoreSetFeedHidden(int index, Boolean hidden)
+{
+    if (!gInited || index < 0 || index >= gPrefs.feedCount) {
+        return;
+    }
+    gPrefs.feeds[index].hidden = hidden ? 1 : 0;
+}
+
+void GazetteCoreSetGroupHidden(int index, Boolean hidden)
+{
+    if (!gInited || index < 0 || index >= gPrefs.groupCount) {
+        return;
+    }
+    gPrefs.groups[index].hidden = hidden ? 1 : 0;
+}
+
+void GazetteCoreShowAllRows(void)
+{
+    if (gInited) {
+        GazettePrefsShowAll(&gPrefs);
+    }
 }
 
 int GazetteCoreImportOPML(const char *text, size_t len)

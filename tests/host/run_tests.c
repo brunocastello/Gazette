@@ -359,7 +359,11 @@ static void TestPrefsModel(void)
     CheckLong("defaults ship one feed", p.feedCount, 1);
     CheckLong("default refresh", p.refreshMinutes, 30);
     CheckLong("default max articles", p.maxArticles, 100);
-    CheckLong("full text is off by default", p.fullText, 0);
+    CheckLong("full text is on and is no longer a choice", p.fullText, 1);
+    CheckLong("newest on top by default", p.oldestFirst, 0);
+    CheckLong("nothing is hidden by default", p.hideReadArticles, 0);
+    CheckLong("nor are read feeds", p.hideReadFeeds, 0);
+    CheckLong("nor is the sidebar", p.hideSidebar, 0);
     CheckTrue("the default feed is Google News",
               strstr(p.feeds[0].url, "news.google.com") != NULL);
     CheckTrue("the default feed is enabled", p.feeds[0].enabled);
@@ -519,6 +523,10 @@ static void TestPrefsRoundTrip(void)
     before.refreshMinutes = 45;
     before.maxArticles    = 12;
     before.fullText       = 1;
+    before.oldestFirst      = 1;
+    before.hideReadArticles = 1;
+    before.hideReadFeeds    = 1;
+    before.hideSidebar      = 1;
 
     len = GazettePrefsSerialize(&before, text, sizeof text);
     CheckTrue("serialize writes something", len > 0);
@@ -537,6 +545,14 @@ static void TestPrefsRoundTrip(void)
               after.refreshMinutes, before.refreshMinutes);
     CheckLong("round-trip keeps max-articles", after.maxArticles, before.maxArticles);
     CheckLong("round-trip keeps full-text", after.fullText, before.fullText);
+    CheckLong("round-trip keeps the sort order",
+              after.oldestFirst, before.oldestFirst);
+    CheckLong("round-trip keeps hide-read-articles",
+              after.hideReadArticles, before.hideReadArticles);
+    CheckLong("round-trip keeps hide-read-feeds",
+              after.hideReadFeeds, before.hideReadFeeds);
+    CheckLong("round-trip keeps hide-sidebar",
+              after.hideSidebar, before.hideSidebar);
 
     /* Serialising writes the enabled feeds and the disabled ones in file
        order, and parsing re-groups them the same way, so the two lists match
@@ -1969,6 +1985,59 @@ static void TestSidebarRows(void)
     }
 }
 
+/*
+ * Hide Read Feeds sets the `hidden` flag and the rows have to close up over
+ * it — which is the whole reason they are a walk rather than arithmetic over
+ * the feed order.
+ */
+static void TestHiddenRows(void)
+{
+    GazettePrefs p;
+
+    memset(&p, 0, sizeof p);
+    GazettePrefsAddGroup(&p, "News");
+    GazettePrefsAddGroup(&p, "Blogs");
+    GazettePrefsAddFeed(&p, "https://e/top", "Top", -1);
+    GazettePrefsAddFeed(&p, "https://e/t2", "Top2", -1);
+    GazettePrefsAddFeed(&p, "https://e/n1", "N1", 0);
+    GazettePrefsAddFeed(&p, "https://e/n2", "N2", 0);
+    GazettePrefsAddFeed(&p, "https://e/b1", "B1", 1);
+
+    CheckRows("everything shown to begin with", &p,
+              "Top,Top2,[News],N1,N2,[Blogs],B1");
+
+    /* A hidden top-level feed takes no row and the ones after it move up. */
+    p.feeds[0].hidden = 1;
+    CheckRows("a hidden top-level feed is not a row", &p,
+              "Top2,[News],N1,N2,[Blogs],B1");
+    CheckLong("and has no row of its own", GazettePrefsRowForFeed(&p, 0), -1);
+    CheckLong("the feed after it is the first row",
+              GazettePrefsRowForFeed(&p, 1), 0);
+    CheckLong("the first group moves up",
+              GazettePrefsRowForGroup(&p, 0), 1);
+
+    /* One inside a group, likewise, without disturbing the group's line. */
+    p.feeds[2].hidden = 1;
+    CheckRows("a hidden feed inside a group closes up", &p,
+              "Top2,[News],N2,[Blogs],B1");
+    CheckLong("its sibling takes its row", GazettePrefsRowForFeed(&p, 3), 2);
+
+    /* A hidden group takes its feeds with it, open or not. */
+    p.groups[0].hidden = 1;
+    CheckRows("a hidden group takes its feeds with it", &p,
+              "Top2,[Blogs],B1");
+    CheckLong("the hidden group has no row",
+              GazettePrefsRowForGroup(&p, 0), -1);
+    CheckLong("nor does a feed inside it",
+              GazettePrefsRowForFeed(&p, 3), -1);
+    CheckLong("the group below it moves up",
+              GazettePrefsRowForGroup(&p, 1), 1);
+
+    GazettePrefsShowAll(&p);
+    CheckRows("showing all puts every line back", &p,
+              "Top,Top2,[News],N1,N2,[Blogs],B1");
+}
+
 static void TestGroupParsing(void)
 {
     static const char text[] =
@@ -2516,6 +2585,7 @@ int main(void)
     TestPrefsIterator();
     TestGroups();
     TestSidebarRows();
+    TestHiddenRows();
     TestGroupParsing();
     TestOPML();
     TestHeaderBlocks();
