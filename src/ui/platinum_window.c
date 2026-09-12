@@ -130,6 +130,23 @@ enum {
      */
     kBandGrey      = 221,
 
+    /*
+     * The toolbar. Measured off Outlook Express 5.0.6's, which is twenty-four
+     * rows of the window's own grey with a black rule under it — the same
+     * rule the pane headers draw along their own tops, so the two meet as one
+     * line and the panes below need no arithmetic of their own.
+     *
+     * Two more rows than OE's, because OE's buttons carry a label beside the
+     * icon and stand on a shorter box; these are icons alone and want the air
+     * instead.
+     */
+    kToolbarHeight = 27,        /* 26 of grey, and the rule under it */
+    kToolbarButton = 22,        /* a button's square */
+    kToolbarPad    = 6,         /* window edge to the first button */
+    kToolbarGap    = 1,         /* between buttons of one group */
+    kToolbarGroup  = 12,        /* the least space between two groups */
+    kSearchWidth   = 150,
+
     /* The focus border's thickness, and therefore how far a row has to keep
        clear of the edge of the view it is in. */
     kFocusBorder   = 2,
@@ -158,6 +175,7 @@ static GazetteUIFeedChosen    gOnFeedChosen;
 static GazetteUIArticleChosen gOnArticleChosen;
 static GazetteUIGroupChosen   gOnGroupChosen;
 static GazetteUISmartChosen   gOnSmartChosen;
+static GazetteUICommandChosen gOnCommand;
 
 /* The root of the hierarchy. Every other control is embedded in it, which
    is what makes SetKeyboardFocus and the Tab key mean anything. */
@@ -233,6 +251,31 @@ static ControlUserPaneFocusUPP gPaneFocusUPP;
    business and live inside it, so nothing here has to leave room for them.
    Where a list's rows actually are is a question for the list, and
    GetListViewBounds answers it. */
+/*
+ * The toolbar's buttons, in the order they are laid out. Each one is a Bevel
+ * Button — a real control, so the Control Manager tracks the press, draws the
+ * pressed and disabled states, and knows how to put an icon suite on a button
+ * — and each one carries a command from platinum_window.h that the shell maps
+ * onto the handler its menu item already uses.
+ */
+enum {
+    kTBSidebar = 0,
+    kTBRefresh,
+    kTBMarkAll,
+    kTBHideRead,
+    kTBMarkRead,
+    kTBStar,
+    kTBNextUnread,
+    kTBBrowser,
+    kToolbarButtons
+};
+
+static ControlRef gToolbarBtn[kToolbarButtons];
+static ControlRef gSearchCtl;
+static Rect       gToolbarRect;     /* the grey, and the rule along its foot */
+static Rect       gToolbarSep[2];   /* between one group and the next */
+static short      gToolbarSepCount;
+
 static Rect gSidebarPane;
 static Rect gSidebarHeader;
 static Rect gListPane;
@@ -410,7 +453,13 @@ static void DrawStatusText(void);
 static void DrawHeaderTitle(const Rect *r, const char *text);
 static void DrawReaderRule(void);
 static void ReaderHiliteColours(void);
+static void GreyPen(short grey);
 static void SyncSidebarRows(void);
+static void MakeToolbar(void);
+static void DrawToolbar(void);
+static void ToolbarButtonPressed(int button);
+static void AdjustToolbarState(void);
+static void SetButtonIcon(ControlRef button, short resID);
 
 /* ------------------------------------------------------------------ */
 /* Small helpers                                                       */
@@ -1322,11 +1371,104 @@ static void SizeListPane(ControlRef control, ListHandle list,
     WakeScrollBar(list);
 }
 
+/*
+ * Where the toolbar's buttons go.
+ *
+ * Three groups, and each one begins over the column it acts on: the first
+ * over the sidebar, the second over the headline list, the third over the
+ * article. That is what the design asked for and it is also what makes the
+ * toolbar legible without labels — a button's meaning is half in its picture
+ * and half in which column it is standing over.
+ *
+ * "Begins over" and not "is centred on": a group never starts before the
+ * previous one has ended, so a narrow sidebar simply pushes the next group
+ * along instead of running the two together. With the sidebar hidden the
+ * first column is not there at all and the whole row closes up, which the
+ * same rule handles without knowing about it.
+ */
+static void LayoutToolbar(const Rect *bounds, short listLeft, short readerLeft)
+{
+    static const short kGroupStart[3] = { kTBSidebar, kTBMarkAll, kTBMarkRead };
+    static const short kGroupEnd[3]   = { kTBMarkAll, kTBMarkRead,
+                                          kToolbarButtons };
+    short top  = (short)(gToolbarRect.top +
+                         ((kToolbarHeight - 1 - kToolbarButton) / 2));
+    short want[3];
+    short at;
+    short prevEnd = 0;
+    short g;
+    short i;
+
+    gToolbarSepCount = 0;
+
+    want[0] = (short)(bounds->left + kToolbarPad);
+    want[1] = listLeft;
+    want[2] = readerLeft;
+
+    at = want[0];
+    for (g = 0; g < 3; g++) {
+        if (want[g] > at) {
+            at = want[g];
+        }
+        if (g > 0 && gToolbarSepCount < 2) {
+            /*
+             * Halfway between the two groups rather than a fixed distance
+             * from the second: a group pushed right by its column leaves a
+             * gap wider than the one the layout asked for, and a separator
+             * measured off one end of it hangs off that group instead of
+             * dividing the two.
+             *
+             * The line itself is Platinum's etched separator — a dark column
+             * and a white one, measured off Outlook Express's toolbar, and
+             * the same pair the window's own grooves are built from.
+             */
+            short mid = (short)((prevEnd + at) / 2);
+
+            SetRect(&gToolbarSep[gToolbarSepCount], (short)(mid - 1),
+                    (short)(gToolbarRect.top + 1), (short)(mid + 1),
+                    (short)(gToolbarRect.bottom - 2));
+            gToolbarSepCount++;
+        }
+        for (i = kGroupStart[g]; i < kGroupEnd[g]; i++) {
+            Rect r;
+
+            SetRect(&r, at, top, (short)(at + kToolbarButton),
+                    (short)(top + kToolbarButton));
+            if (gToolbarBtn[i] != NULL) {
+                SetControlBounds(gToolbarBtn[i], &r);
+            }
+            at = (short)(at + kToolbarButton + kToolbarGap);
+        }
+        prevEnd = (short)(at - kToolbarGap);
+        at      = (short)(prevEnd + kToolbarGroup);
+    }
+
+    /* The search box is pinned to the right hand end, and gives way to the
+       buttons rather than the other way round: a field a few pixels narrow is
+       still a field, and a button pushed off the edge is gone. */
+    if (gSearchCtl != NULL) {
+        Rect r;
+        short left  = (short)(bounds->right - kToolbarPad - kSearchWidth);
+        short right = (short)(bounds->right - kToolbarPad);
+
+        if (left < at) {
+            left = at;
+        }
+        SetRect(&r, left, (short)(top + 2), right,
+                (short)(top + kToolbarButton - 2));
+        if (r.right <= r.left) {
+            r.right = r.left;       /* nothing left to draw in */
+        }
+        SetControlBounds(gSearchCtl, &r);
+    }
+}
+
 static void Layout(void)
 {
     Rect    bounds;
     short   contentBottom;
     short   width;
+    short   toolbar;
     Boolean noSidebar;
 
     if (gWindow == NULL) {
@@ -1337,6 +1479,10 @@ static void Layout(void)
 
     contentBottom = (short)(bounds.bottom - gStatusHeight);
     noSidebar     = GazetteCoreHideSidebar();
+    toolbar       = GazetteCoreHideToolbar() ? 0 : kToolbarHeight;
+
+    SetRect(&gToolbarRect, bounds.left, bounds.top, bounds.right,
+            (short)(bounds.top + toolbar));
 
     /*
      * Three columns side by side, so two widths to settle and a minimum for
@@ -1396,8 +1542,16 @@ static void Layout(void)
          */
         short split   = (short)(bounds.left + width);
         short split2  = (short)(split + gListWidth);
-        short headTop = (short)(bounds.top - 1);
-        short headBot = (short)(bounds.top + gHeaderHeight);
+        /*
+         * A pixel above where the panes begin, which is the row the black
+         * rule is on: the window frame's when there is no toolbar, and the
+         * toolbar's own when there is. Either way the headers' top edges and
+         * the article's land on a line that is already drawn, which is why
+         * nothing below here has to know which of the two it was.
+         */
+        short top     = (short)(bounds.top + toolbar);
+        short headTop = (short)(top - 1);
+        short headBot = (short)(top + gHeaderHeight);
 
         /*
          * The border runs the whole height of the window, top to bottom,
@@ -1422,10 +1576,10 @@ static void Layout(void)
         if (noSidebar) {
             SetRect(&gVDivider, 0, 0, 0, 0);
         } else {
-            SetRect(&gVDivider, split, bounds.top,
+            SetRect(&gVDivider, split, top,
                     (short)(split + kVDividerWidth), contentBottom);
         }
-        SetRect(&gVDivider2, split2, bounds.top,
+        SetRect(&gVDivider2, split2, top,
                 (short)(split2 + kVDividerWidth), contentBottom);
 
         /*
@@ -1501,6 +1655,10 @@ static void Layout(void)
                 (short)(gReaderPane.top + 1),
                 (short)(gReaderPane.right - kScrollWidth),
                 (short)(gReaderPane.bottom - 1));
+
+        /* Last, because each group of buttons begins over the column it acts
+           on and the columns have only just been settled. */
+        LayoutToolbar(&bounds, gListPane.left, gReaderPane.left);
     }
 
     /* End to end. The strip's own rule is the line between it and the panes
@@ -1520,6 +1678,21 @@ static void Layout(void)
     if (gSidebarHeaderCtl != NULL) {
         SetControlVisibility(gSidebarHeaderCtl, !noSidebar, false);
     }
+    {
+        /* The whole row goes away together, buttons and field alike. */
+        Boolean showing = (Boolean)!GazetteCoreHideToolbar();
+        int     i;
+
+        for (i = 0; i < kToolbarButtons; i++) {
+            if (gToolbarBtn[i] != NULL) {
+                SetControlVisibility(gToolbarBtn[i], showing, false);
+            }
+        }
+        if (gSearchCtl != NULL) {
+            SetControlVisibility(gSearchCtl, showing, false);
+        }
+    }
+
     if (noSidebar && gFocusPane == gSidebarCtl) {
         /* The keyboard cannot be left in a pane that is not there. */
         (void)SetKeyboardFocus(gWindow, gArticleCtl, kControlFocusNextPart);
@@ -2107,9 +2280,10 @@ static void DrawDisclosure(const Rect *cell, short left, Boolean open)
  * A row's icon is one of two things, and they are drawn by two different
  * calls. The four above are the system's, reached through Icon Services by
  * constant and carried as IconRefs. The three standing views and the mark on
- * a starred headline are ours, drawn by tools/generate_row_icons.py into
- * Resources/Gazette_row_icons.r, and read out of the application's own
- * resource fork as icon suites.
+ * a starred headline are ours, drawn by tools/generate_ui_icons.py into
+ * Resources/Gazette_ui_icons.r, and read out of the application's own
+ * resource fork as icon suites. So is every one of the toolbar's, though
+ * those go to the Bevel Button CDEF by resource ID rather than through here.
  *
  * Suites rather than a registration with Icon Services: GetIconSuite takes a
  * resource ID, which is exactly what we have, and registering four icons
@@ -2128,12 +2302,26 @@ static RowIcon gDocIcon;
 static RowIcon gSmartIcon[kGazetteSmartCount];
 static RowIcon gStarIcon;       /* the mark on a starred headline */
 
-/* Resource IDs, and they have to agree with tools/generate_row_icons.py. */
+/* Resource IDs, and they have to agree with tools/generate_ui_icons.py. */
 enum {
     kIconToday        = 128,
     kIconAllUnread    = 129,
     kIconStarred      = 130,
-    kIconStarredSmall = 131
+    kIconStarredSmall = 131,
+
+    /* The toolbar's. The three pairs are the buttons that toggle: each wears
+       the picture for what it would do next, the way its menu item wears the
+       words for it. */
+    kIconSidebar       = 132,
+    kIconRefresh       = 133,
+    kIconMarkAllRead   = 134,
+    kIconMarkAllUnread = 135,
+    kIconHideRead      = 136,
+    kIconShowRead      = 137,
+    kIconMarkRead      = 138,
+    kIconMarkUnread    = 139,
+    kIconNextUnread    = 140,
+    kIconBrowser       = 141
 };
 
 static void SystemIcon(RowIcon *out, OSType which)
@@ -3362,6 +3550,231 @@ static void DrawGrabHandle(const Rect *divider, Boolean vertical)
     ForeColor(blackColor);
 }
 
+/* ------------------------------------------------------------------ */
+/* The toolbar                                                         */
+/*                                                                     */
+/* Eight Bevel Buttons and an edit field, which is as much of it as is  */
+/* ours: the Control Manager tracks a press, draws the pressed and the  */
+/* disabled states, puts the icon on, and takes the keystrokes in the   */
+/* field. What is left here is where they go, what picture each one is  */
+/* wearing, and which of them can do anything just now.                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The picture on a button. The Bevel Button CDEF takes an icon *suite by
+ * resource ID* and loads it itself, which is why the toolbar's icons do not
+ * go through the RowIcon pair the lists use — there is nothing for this end
+ * to hold on to.
+ */
+static void SetButtonIcon(ControlRef button, short resID)
+{
+    ControlButtonContentInfo info;
+
+    if (button == NULL) {
+        return;
+    }
+    info.contentType = kControlContentIconSuiteRes;
+    info.u.resID     = resID;
+    (void)SetControlData(button, kControlEntireControl,
+                         kControlBevelButtonContentTag, sizeof info,
+                         (Ptr)&info);
+}
+
+static ControlRef MakeToolbarButton(short resID)
+{
+    Rect       r;
+    ControlRef c;
+
+    /* Laid out properly by LayoutToolbar a moment later; born somewhere
+       harmless so that creating one never draws in the wrong place. */
+    SetRect(&r, 0, 0, kToolbarButton, kToolbarButton);
+
+    /*
+     * The small bevel, not the normal one: a toolbar of eight normal bevels
+     * is a row of raised tiles, and Platinum's small bevel is the quiet
+     * square that Sherlock and the Finder's own button bars are drawn with.
+     */
+    c = MakeControl(&r, kControlBevelButtonSmallBevelProc, 0);
+    SetButtonIcon(c, resID);
+    return c;
+}
+
+static void MakeToolbar(void)
+{
+    static const short kIcons[kToolbarButtons] = {
+        kIconSidebar, kIconRefresh, kIconMarkAllRead, kIconHideRead,
+        kIconMarkRead, kIconStarred, kIconNextUnread, kIconBrowser
+    };
+    Rect r;
+    int  i;
+
+    for (i = 0; i < kToolbarButtons; i++) {
+        gToolbarBtn[i] = MakeToolbarButton(kIcons[i]);
+    }
+
+    SetRect(&r, 0, 0, kSearchWidth, kToolbarButton);
+    gSearchCtl = MakeControl(&r, kControlEditTextProc, 0);
+}
+
+/*
+ * The bar itself: the window's own grey, a black rule along its foot, and an
+ * etched separator between one group of buttons and the next.
+ *
+ * The rule is the toolbar's own and not the headers'. Both draw on the same
+ * row — the headers' top edges land there — but the article has no header,
+ * and without this its column would begin on nothing.
+ */
+static void DrawToolbar(void)
+{
+    Rect rule;
+    int  i;
+
+    if (gWindow == NULL || gToolbarRect.bottom <= gToolbarRect.top) {
+        return;
+    }
+    SetPortWindowPort(gWindow);
+
+    EraseWith(&gToolbarRect, kThemeBrushDialogBackgroundActive);
+
+    for (i = 0; i < gToolbarSepCount; i++) {
+        Rect sep = gToolbarSep[i];
+
+        /* Measured off Outlook Express: (91,91,91) then white, a pixel clear
+           of the grey at either end. It is Platinum's etched separator, the
+           same pair the window's own grooves are built from. */
+        GreyPen(91);
+        MoveTo(sep.left, sep.top);
+        LineTo(sep.left, (short)(sep.bottom - 1));
+        ForeColor(whiteColor);
+        MoveTo((short)(sep.left + 1), sep.top);
+        LineTo((short)(sep.left + 1), (short)(sep.bottom - 1));
+        ForeColor(blackColor);
+    }
+
+    SetRect(&rule, gToolbarRect.left, (short)(gToolbarRect.bottom - 1),
+            gToolbarRect.right, gToolbarRect.bottom);
+    ForeColor(blackColor);
+    PaintRect(&rule);
+}
+
+/*
+ * Which buttons can do anything, and which picture the three that toggle are
+ * wearing. The same decisions AdjustMenus makes for the menu bar, written out
+ * again here rather than shared with it: the menu bar is the shell's and this
+ * is the window's, and what they have in common is the question, not the code
+ * that answers it.
+ */
+static void AdjustToolbarState(void)
+{
+    const GazetteArticle *open;
+    int                   count;
+    Boolean               unread;
+
+    if (gWindow == NULL || gToolbarBtn[kTBSidebar] == NULL) {
+        return;
+    }
+
+    open   = GazetteFeedsArticleAt(gSelectedArticle);
+    count  = GazetteFeedsArticleCount();
+    unread = (Boolean)(GazetteFeedsUnreadCount() > 0);
+
+    /* Two that are always available: there is always a sidebar to show or
+       hide, and always a feed to ask for again. */
+    HiliteControl(gToolbarBtn[kTBSidebar], 0);
+    HiliteControl(gToolbarBtn[kTBRefresh],
+                  (short)(GazetteCoreFeedCount() > 0 ? 0 : 255));
+
+    SetButtonIcon(gToolbarBtn[kTBMarkAll],
+                  unread ? kIconMarkAllRead : kIconMarkAllUnread);
+    HiliteControl(gToolbarBtn[kTBMarkAll], (short)(count > 0 ? 0 : 255));
+
+    SetButtonIcon(gToolbarBtn[kTBHideRead],
+                  GazetteCoreHideReadArticles() ? kIconShowRead
+                                                : kIconHideRead);
+    HiliteControl(gToolbarBtn[kTBHideRead], 0);
+
+    SetButtonIcon(gToolbarBtn[kTBMarkRead],
+                  (open != NULL && open->read) ? kIconMarkUnread
+                                               : kIconMarkRead);
+    HiliteControl(gToolbarBtn[kTBMarkRead], (short)(open != NULL ? 0 : 255));
+
+    HiliteControl(gToolbarBtn[kTBStar], (short)(open != NULL ? 0 : 255));
+    HiliteControl(gToolbarBtn[kTBNextUnread], (short)(unread ? 0 : 255));
+    HiliteControl(gToolbarBtn[kTBBrowser],
+                  (short)((open != NULL && open->link[0] != '\0') ? 0 : 255));
+
+    if (gSearchCtl != NULL) {
+        HiliteControl(gSearchCtl,
+                      (short)(GazetteFeedsTotalCount() > 0 ? 0 : 255));
+    }
+}
+
+/*
+ * The state above, and then the row redrawn to show it.
+ *
+ * Split in two because a full window update settles the state *before*
+ * DrawControls paints the hierarchy, and drawing the buttons a second time
+ * straight afterwards is a flicker on every redraw for nothing. Anything that
+ * changes the state on its own — opening an article, mostly — calls this one.
+ */
+void GazetteUIAdjustToolbar(void)
+{
+    int i;
+
+    AdjustToolbarState();
+
+    if (gWindow == NULL || GazetteCoreHideToolbar() ||
+        gToolbarBtn[kTBSidebar] == NULL) {
+        return;
+    }
+    SetPortWindowPort(gWindow);
+    for (i = 0; i < kToolbarButtons; i++) {
+        Draw1Control(gToolbarBtn[i]);
+    }
+    if (gSearchCtl != NULL) {
+        Draw1Control(gSearchCtl);
+    }
+}
+
+void GazetteUISearchText(char *out, size_t cap)
+{
+    Size size = 0;
+
+    if (out == NULL || cap == 0) {
+        return;
+    }
+    out[0] = '\0';
+    if (gSearchCtl == NULL) {
+        return;
+    }
+    if (GetControlData(gSearchCtl, kControlEntireControl,
+                       kControlEditTextTextTag, (Size)(cap - 1), (Ptr)out,
+                       &size) != noErr) {
+        size = 0;
+    }
+    if (size < 0 || (size_t)size >= cap) {
+        size = (Size)(cap - 1);
+    }
+    out[size] = '\0';
+}
+
+void GazetteUISetSearchText(const char *text)
+{
+    if (gSearchCtl == NULL) {
+        return;
+    }
+    if (text == NULL) {
+        text = "";
+    }
+    (void)SetControlData(gSearchCtl, kControlEntireControl,
+                         kControlEditTextTextTag, (Size)strlen(text),
+                         (Ptr)text);
+    if (gWindow != NULL && !GazetteCoreHideToolbar()) {
+        SetPortWindowPort(gWindow);
+        Draw1Control(gSearchCtl);
+    }
+}
+
 /* Just the text. The strip under it is the window's own background. */
 static void DrawStatusText(void)
 {
@@ -3453,6 +3866,12 @@ void GazetteUIUpdate(void)
     }
     DrawVDivider(&gVDivider2);
     DrawGrabHandle(&gVDivider2, true);
+
+    /* Before DrawControls, so the buttons and the field are drawn on the bar
+       rather than under it — and so they are drawn in the state they should
+       be in rather than the one they were left in. */
+    DrawToolbar();
+    AdjustToolbarState();
 
     /* The whole control hierarchy in one call — the two lists with their
        frames, scroll bars and focus rings, the two window headers, the
@@ -3547,6 +3966,10 @@ static void SelectArticle(int index)
     if (gReaderScroll != NULL) {
         Draw1Control(gReaderScroll);
     }
+
+    /* Half the toolbar is about the article that is open, so it moves with
+       the selection rather than waiting for the next full redraw. */
+    GazetteUIAdjustToolbar();
 }
 
 /* ------------------------------------------------------------------ */
@@ -3603,6 +4026,25 @@ static void TrackDivider(Point where, Boolean second)
 /* ------------------------------------------------------------------ */
 /* Events                                                              */
 /* ------------------------------------------------------------------ */
+
+/*
+ * A toolbar button has been pressed. Each one names a command, and the shell
+ * maps that onto the handler its menu item already uses — so a button and its
+ * menu item are the same act and there is nowhere for them to disagree.
+ */
+static void ToolbarButtonPressed(int button)
+{
+    static const int kCommands[kToolbarButtons] = {
+        kGazetteCmdHideSidebar, kGazetteCmdRefresh, kGazetteCmdMarkAllRead,
+        kGazetteCmdHideReadArticles, kGazetteCmdMarkRead,
+        kGazetteCmdMarkStarred, kGazetteCmdNextUnread, kGazetteCmdOpenInBrowser
+    };
+
+    if (button < 0 || button >= kToolbarButtons || gOnCommand == NULL) {
+        return;
+    }
+    gOnCommand(kCommands[button]);
+}
 
 /* Do what a click on this row would do. The highlight is the list's own
    business now; this is only the part the rest of the application cares
@@ -3920,6 +4362,36 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
     SetPortWindowPort(gWindow);
 
     /*
+     * The toolbar first, because it is above everything and its buttons are
+     * ordinary controls: the Control Manager tracks the press, and what comes
+     * back is whether the mouse was still on the button when it came up.
+     */
+    if (PtInRect(where, &gToolbarRect)) {
+        ControlRef hit = FindControlUnderMouse(where, gWindow, &part);
+        int        i;
+
+        if (hit == NULL) {
+            return;                 /* the bar itself, or a gap in it */
+        }
+        if (hit == gSearchCtl) {
+            (void)SetKeyboardFocus(gWindow, gSearchCtl,
+                                   kControlFocusNextPart);
+            (void)HandleControlClick(hit, where, modifiers, NULL);
+            return;
+        }
+        if (HandleControlClick(hit, where, modifiers, NULL) == 0) {
+            return;                 /* let go somewhere else */
+        }
+        for (i = 0; i < kToolbarButtons; i++) {
+            if (gToolbarBtn[i] == hit) {
+                ToolbarButtonPressed(i);
+                break;
+            }
+        }
+        return;
+    }
+
+    /*
      * The dividers are asked first. Each pane now reaches a few pixels into
      * the divider beside it, so that its scroll bar's edge lands on the
      * divider's rule — which means the two overlap, and the divider has to
@@ -4201,6 +4673,36 @@ Boolean GazetteUIKey(short key, EventModifiers modifiers)
 {
     if (gWindow == NULL) {
         return false;
+    }
+
+    /*
+     * The search box has the keyboard, so it gets the keystroke — all of them
+     * but Return, which is what says the search is finished, and Escape,
+     * which empties the box. Asked first, because every key below this means
+     * something else entirely while something is being typed.
+     */
+    {
+        ControlRef focus = NULL;
+
+        (void)GetKeyboardFocus(gWindow, &focus);
+        if (focus != NULL && focus == gSearchCtl) {
+            if (key == '\r' || key == 3) {         /* Return, Enter */
+                if (gOnCommand != NULL) {
+                    gOnCommand(kGazetteCmdSearch);
+                }
+                return true;
+            }
+            if (key == 0x1B) {                     /* Escape */
+                GazetteUISetSearchText("");
+                if (gOnCommand != NULL) {
+                    gOnCommand(kGazetteCmdSearch);
+                }
+                return true;
+            }
+            SetPortWindowPort(gWindow);
+            (void)HandleControlKey(focus, 0, (SInt16)key, modifiers);
+            return true;
+        }
     }
 
     if (key == '\t') {
@@ -4751,7 +5253,8 @@ static ControlRef MakeScroll(long reference)
 Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
                       GazetteUIArticleChosen onArticleChosen,
                       GazetteUIGroupChosen onGroupChosen,
-                      GazetteUISmartChosen onSmartChosen)
+                      GazetteUISmartChosen onSmartChosen,
+                      GazetteUICommandChosen onCommand)
 {
     OSStatus         err;
     Rect             bounds;
@@ -4763,6 +5266,7 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
 
     gOnFeedChosen    = onFeedChosen;
     gOnSmartChosen   = onSmartChosen;
+    gOnCommand       = onCommand;
     gOnArticleChosen = onArticleChosen;
     gOnGroupChosen   = onGroupChosen;
 
@@ -4828,6 +5332,8 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
      * shadow and then a black rule, and ours stopped at the shadow. The
      * black line under a header is what encloses the list beneath it.
      */
+    MakeToolbar();
+
     gSidebarHeaderCtl = MakeControl(&gSidebarHeader,
                                     kControlWindowHeaderProc, 0);
     gListHeaderCtl    = MakeControl(&gListHeader,
@@ -4928,6 +5434,14 @@ void GazetteUIClose(void)
     gArticleList       = NULL;
     gSidebarCtl        = NULL;
     gArticleCtl        = NULL;
+    {
+        int i;
+
+        for (i = 0; i < kToolbarButtons; i++) {
+            gToolbarBtn[i] = NULL;
+        }
+    }
+    gSearchCtl         = NULL;
     gSidebarHeaderCtl  = NULL;
     gListHeaderCtl     = NULL;
     gReaderCtl         = NULL;

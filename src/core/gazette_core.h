@@ -111,6 +111,9 @@ void    GazetteCoreSetHideReadFeeds(Boolean on);
 Boolean GazetteCoreHideSidebar(void);
 void    GazetteCoreSetHideSidebar(Boolean on);
 
+Boolean GazetteCoreHideToolbar(void);
+void    GazetteCoreSetHideToolbar(Boolean on);
+
 /*
  * Which sidebar lines are drawn. "Hide Read Feeds" is the only thing that
  * sets these, and it sets them from unread counts the engine does not keep —

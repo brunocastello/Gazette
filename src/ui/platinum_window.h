@@ -19,6 +19,8 @@
 #include <MacWindows.h>
 #include <Events.h>
 
+#include <stddef.h>
+
 /* For kGazetteRowFeed / kGazetteRowGroup — the sidebar's selection is one or
    the other, and the row model that says so is portable code. */
 #include "prefs/gazette_prefs.h"
@@ -45,10 +47,32 @@ typedef void (*GazetteUIGroupChosen)(int groupIndex);
    neighbours in prefs/gazette_prefs.h. */
 typedef void (*GazetteUISmartChosen)(int which);
 
+/*
+ * The toolbar's commands. Every one of them is something a menu item already
+ * does, and the shell maps these onto the very same handlers — which is the
+ * point of naming them rather than giving the window a callback per button:
+ * a toolbar that does *almost* what its menu item does is worse than no
+ * toolbar, and there is nowhere here for the two to drift apart.
+ */
+enum {
+    kGazetteCmdHideSidebar = 1,
+    kGazetteCmdRefresh,
+    kGazetteCmdMarkAllRead,
+    kGazetteCmdHideReadArticles,
+    kGazetteCmdMarkRead,
+    kGazetteCmdMarkStarred,
+    kGazetteCmdNextUnread,
+    kGazetteCmdOpenInBrowser,
+    kGazetteCmdSearch           /* the search box, on Return */
+};
+
+typedef void (*GazetteUICommandChosen)(int command);
+
 Boolean   GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
                         GazetteUIArticleChosen onArticleChosen,
                         GazetteUIGroupChosen onGroupChosen,
-                        GazetteUISmartChosen onSmartChosen);
+                        GazetteUISmartChosen onSmartChosen,
+                        GazetteUICommandChosen onCommand);
 void      GazetteUIClose(void);
 WindowRef GazetteUIWindow(void);
 
@@ -72,6 +96,27 @@ Boolean GazetteUIKey(short key, EventModifiers modifiers);
 
 /* The line along the bottom. Redraws only when the text actually changes. */
 void GazetteUISetStatus(const char *text);
+
+/* ------------------------------------------------------------------ */
+/* The toolbar                                                         */
+/* ------------------------------------------------------------------ */
+
+/*
+ * What is typed in the search box, and what to put in it. The window owns the
+ * field; the shell owns what searching means, so it reads the text out when
+ * kGazetteCmdSearch arrives and writes it back when a search is cleared from
+ * somewhere else.
+ */
+void GazetteUISearchText(char *out, size_t cap);
+void GazetteUISetSearchText(const char *text);
+
+/*
+ * Bring the toolbar's buttons into line with what the window is showing —
+ * which of them can do anything, and which picture the three that toggle are
+ * wearing. The same job AdjustMenus does for the menu bar, and called at the
+ * same moments.
+ */
+void GazetteUIAdjustToolbar(void);
 
 /*
  * The article store has been replaced — by a refresh finishing or a cache

@@ -363,6 +363,7 @@ static void TestPrefsModel(void)
     CheckLong("nothing is hidden by default", p.hideReadArticles, 0);
     CheckLong("nor are read feeds", p.hideReadFeeds, 0);
     CheckLong("nor is the sidebar", p.hideSidebar, 0);
+    CheckLong("nor is the toolbar", p.hideToolbar, 0);
     CheckTrue("the default feed is Google News",
               strstr(p.feeds[0].url, "news.google.com") != NULL);
     CheckTrue("the default feed is enabled", p.feeds[0].enabled);
@@ -523,6 +524,7 @@ static void TestPrefsRoundTrip(void)
     before.hideReadArticles = 1;
     before.hideReadFeeds    = 1;
     before.hideSidebar      = 1;
+    before.hideToolbar      = 1;
 
     len = GazettePrefsSerialize(&before, text, sizeof text);
     CheckTrue("serialize writes something", len > 0);
@@ -548,6 +550,8 @@ static void TestPrefsRoundTrip(void)
               after.hideReadFeeds, before.hideReadFeeds);
     CheckLong("round-trip keeps hide-sidebar",
               after.hideSidebar, before.hideSidebar);
+    CheckLong("round-trip keeps hide-toolbar",
+              after.hideToolbar, before.hideToolbar);
 
     /* Serialising writes the enabled feeds and the disabled ones in file
        order, and parsing re-groups them the same way, so the two lists match

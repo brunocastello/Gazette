@@ -122,6 +122,7 @@ typedef struct {
     int  hideReadArticles;
     int  hideReadFeeds;
     int  hideSidebar;
+    int  hideToolbar;
 } GazettePrefs;
 
 /* Populate p with Gazette's out-of-the-box configuration: one Google News

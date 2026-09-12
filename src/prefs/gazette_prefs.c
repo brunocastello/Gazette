@@ -138,6 +138,7 @@ void GazettePrefsSetDefaults(GazettePrefs *p)
     p->hideReadArticles = 0;
     p->hideReadFeeds    = 0;
     p->hideSidebar      = 0;
+    p->hideToolbar      = 0;
 
     GazettePrefsAddFeed(p, kStarterFeedURL, kStarterFeedTitle, -1);
 }
@@ -715,6 +716,8 @@ int GazettePrefsParse(const char *text, size_t len, GazettePrefs *p)
                                            p->hideReadFeeds) ? 1 : 0;
     p->hideSidebar      = gz_prefs_get_num(text, len, "hide-sidebar",
                                            p->hideSidebar) ? 1 : 0;
+    p->hideToolbar      = gz_prefs_get_num(text, len, "hide-toolbar",
+                                           p->hideToolbar) ? 1 : 0;
 
     if (p->refreshMinutes < 0) {
         p->refreshMinutes = 0;
@@ -884,6 +887,10 @@ size_t GazettePrefsSerialize(const GazettePrefs *p, char *out, size_t cap)
 
     Append(out, cap, &len, "hide-sidebar       = ");
     AppendNum(out, cap, &len, p->hideSidebar ? 1 : 0);
+    Append(out, cap, &len, "\r");
+
+    Append(out, cap, &len, "hide-toolbar       = ");
+    AppendNum(out, cap, &len, p->hideToolbar ? 1 : 0);
     Append(out, cap, &len, "\r\r");
 
     Append(out, cap, &len,

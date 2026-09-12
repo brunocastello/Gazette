@@ -268,6 +268,20 @@ void GazetteCoreSetHideSidebar(Boolean on)
     gPrefsDirty        = true;
 }
 
+Boolean GazetteCoreHideToolbar(void)
+{
+    return (gInited && gPrefs.hideToolbar) ? true : false;
+}
+
+void GazetteCoreSetHideToolbar(Boolean on)
+{
+    if (!gInited || gPrefs.hideToolbar == (on ? 1 : 0)) {
+        return;
+    }
+    gPrefs.hideToolbar = on ? 1 : 0;
+    gPrefsDirty        = true;
+}
+
 /* ------------------------------------------------------------------ */
 /* Which sidebar lines are drawn                                       */
 /*                                                                     */

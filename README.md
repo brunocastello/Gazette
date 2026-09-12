@@ -105,6 +105,17 @@ If a freshly built copy shows a generic application icon, the desktop database
 has not caught up — rebuild it by holding Command-Option through startup, or
 move the application to another folder and back.
 
+The window's own small icons — the sidebar's three standing folders, the mark
+on a starred headline, and one per toolbar button — are drawn the same way,
+into `Resources/Gazette_ui_icons.r`:
+
+```bash
+python3 tools/generate_ui_icons.py --out Resources/Gazette_ui_icons.r --ascii
+```
+
+Everything else the window draws is a *system* icon taken from Icon Services
+by constant, because a reader already knows what a folder means.
+
 ## Preferences
 
 Gazette keeps its settings and feed list in a plain text file called
@@ -424,10 +435,12 @@ started by hand from the Actions tab (`workflow_dispatch`).
 ├── Resources/
 │   ├── Gazette.r           # SIZE (8 MB / 4 MB), About alert, vers
 │   ├── Gazette_icon.r      # Generated icon family + BNDL/FREF — do not hand-edit
+│   ├── Gazette_ui_icons.r  # generated — see tools/generate_ui_icons.py
 │   └── Strings.r           # Placeholder for localization (not yet in the build)
 │
 ├── tools/
 │   ├── generate_icon.py         # Draws the icon and emits Gazette_icon.r
+│   ├── generate_ui_icons.py     # The sidebar's and toolbar's small icons
 │   └── generate_gnews_topics.py # Emits the Google News topic table
 │
 ├── src/

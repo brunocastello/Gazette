@@ -99,6 +99,9 @@ static void    HandleSortOrder(Boolean oldestFirst);
 static void    HandleHideReadArticles(void);
 static void    HandleHideReadFeeds(void);
 static void    HandleHideSidebar(void);
+static void    HandleHideToolbar(void);
+static void    HandleSearch(void);
+static void    ToolbarCommand(int command);
 static void    HandleFind(void);
 static void    HandleImportOPML(void);
 static void    HandleExportOPML(void);
@@ -197,7 +200,7 @@ enum {
     /* 6 is a divider */
     kViewItemHideSidebar = 7,
     /* 8 is a divider */
-    kViewItemHideToolbar = 9      /* grey until there is a toolbar */
+    kViewItemHideToolbar = 9
 };
 
 /* Sort Articles By: the two orders, one of them checked. */
@@ -324,7 +327,8 @@ static Boolean InitGazette(void)
 
     InstallAppleEventHandlers();
 
-    if (!GazetteUIOpen(ShowFeed, ShowArticle, ShowGroup, ShowSmart)) {
+    if (!GazetteUIOpen(ShowFeed, ShowArticle, ShowGroup, ShowSmart,
+                       ToolbarCommand)) {
         return false;
     }
 
@@ -415,7 +419,7 @@ static Boolean BuildMenuBar(void)
                "\pSort Articles By;(-;"
                "(Group by Feed;Hide Read Articles/H;Hide Read Feeds/H;(-;"
                "Hide Sidebar/S;(-;"
-               "(Hide Toolbar/T");
+               "Hide Toolbar/T");
     SetShiftKey(viewMenu, kViewItemHideFeeds);
     InsertMenu(viewMenu, 0);
 
@@ -769,6 +773,7 @@ static void HandleMenuChoice(long menuResult)
                 case kViewItemHideRead:    HandleHideReadArticles(); break;
                 case kViewItemHideFeeds:   HandleHideReadFeeds();    break;
                 case kViewItemHideSidebar: HandleHideSidebar();      break;
+                case kViewItemHideToolbar: HandleHideToolbar();      break;
                 default: break;
             }
             break;
@@ -883,6 +888,11 @@ static void AdjustMenus(void)
             SetMenuItemText(view, kViewItemHideSidebar, "\pShow Sidebar");
         } else {
             SetMenuItemText(view, kViewItemHideSidebar, "\pHide Sidebar");
+        }
+        if (GazetteCoreHideToolbar()) {
+            SetMenuItemText(view, kViewItemHideToolbar, "\pShow Toolbar");
+        } else {
+            SetMenuItemText(view, kViewItemHideToolbar, "\pHide Toolbar");
         }
     }
     if (sort != nil) {
@@ -1415,6 +1425,65 @@ static void HandleHideSidebar(void)
     GazetteUIViewChanged();
 }
 
+static void HandleHideToolbar(void)
+{
+    Boolean wanted = GazetteCoreHideToolbar() ? false : true;
+
+    GazetteCoreSetHideToolbar(wanted);
+    GazetteCoreSavePrefs();
+
+    GazetteUIViewChanged();
+}
+
+/*
+ * The search box, when Return has been pressed in it. The same act as Find,
+ * and it ends in the same place — an empty box is what clears a search, here
+ * as there.
+ */
+static void HandleSearch(void)
+{
+    char text[64];
+    char message[224];
+
+    GazetteUISearchText(text, sizeof text);
+    GazetteFeedsSetFilter(text);
+    GazetteUIArticlesChanged();
+
+    if (text[0] == '\0') {
+        snprintf(message, sizeof message, "%d articles.",
+                 GazetteFeedsArticleCount());
+    } else if (GazetteFeedsArticleCount() == 0) {
+        snprintf(message, sizeof message,
+                 "Nothing here contains \322%s\323.", text);
+    } else {
+        snprintf(message, sizeof message, "%d of %d articles contain "
+                 "\322%s\323.", GazetteFeedsArticleCount(),
+                 GazetteFeedsTotalCount(), text);
+    }
+    GazetteUISetStatus(message);
+}
+
+/*
+ * A toolbar button. Every one of them is a menu item's handler and nothing
+ * else — which is the whole point of the toolbar naming commands rather than
+ * carrying its own code: there is no second implementation to keep in step.
+ */
+static void ToolbarCommand(int command)
+{
+    switch (command) {
+        case kGazetteCmdHideSidebar:      HandleHideSidebar();      break;
+        case kGazetteCmdRefresh:          HandleRefresh();          break;
+        case kGazetteCmdMarkAllRead:      HandleMarkAllRead();      break;
+        case kGazetteCmdHideReadArticles: HandleHideReadArticles(); break;
+        case kGazetteCmdMarkRead:         HandleMarkRead();         break;
+        case kGazetteCmdMarkStarred:      HandleToggleStar();       break;
+        case kGazetteCmdNextUnread:       HandleNextUnread();       break;
+        case kGazetteCmdOpenInBrowser:    HandleOpenInBrowser();    break;
+        case kGazetteCmdSearch:           HandleSearch();           break;
+        default: break;
+    }
+}
+
 /*
  * Search what is on screen. That is one feed, or — since a group is readable
  * — every feed in a group, so searching a whole section of the sidebar is a
@@ -1433,6 +1502,7 @@ static void HandleFind(void)
     }
 
     GazetteFeedsSetFilter(text);
+    GazetteUISetSearchText(text);
     GazetteUIArticlesChanged();
 
     /* An empty box is how a search is cleared — which is why there is no

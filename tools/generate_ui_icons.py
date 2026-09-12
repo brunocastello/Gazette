@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
 """
-Draw the sidebar's own small icons and emit them as Rez source.
+Draw Gazette's own small icons — the sidebar's and the toolbar's — and emit
+them as Rez source.
 
-Three of them, for the three smart folders that sit above the feed list: a sun
-for Today, a blue disc for All Unread, and a yellow star for Starred. The
-fourth is the same star again at the size the headline list marks a starred
-article with.
+The sidebar's three are for the standing folders above the feed list: a sun
+for Today, a blue ring for All Unread, and a gold star for Starred, plus the
+star again at the size a starred headline is marked with.
 
-Everything else in the sidebar is a *system* icon, taken from Icon Services by
+The toolbar's are one per button. Every one of them is a verb rather than a
+thing, which is the hard part of drawing them: "mark all as read" has no
+object in the world to picture, so the set leans on one small vocabulary
+instead — a stack of bars is the list, a blue dot is unread, an open ring is
+read, and a check is "all of them".
+
+Everything else in the window is a *system* icon, taken from Icon Services by
 constant — the generic folder, the open folder, the news location, the generic
 document — because a reader already knows what those mean and drawing our own
-would only make them look foreign. These four have no system equivalent, so
-they are ours, and they are drawn here in code for the same reason the Finder
-icon is: at sixteen pixels square every pixel carries weight and nothing
-survives being resampled from larger art.
+would only make them look foreign. These have no system equivalent, so they
+are ours, and they are drawn here in code for the same reason the Finder icon
+is: at sixteen pixels square every pixel carries weight and nothing survives
+being resampled from larger art.
 
-    python3 tools/generate_row_icons.py --out Resources/Gazette_row_icons.r
-                                        [--ascii]
+    python3 tools/generate_ui_icons.py --out Resources/Gazette_ui_icons.r
+                                       [--ascii]
 
 The palette rule is the Finder icon's: components on the 51-step cube of the
 Macintosh 256-colour system palette, where the index is r*36 + g*6 + b on the
@@ -59,8 +65,14 @@ CLEAR = None
 # no shading, which is what the reference is and what sixteen pixels square
 # can actually hold.
 ORANGE = (255, 102, 0)              # the sun
-BLUE = (51, 153, 255)               # the unread ring and its centre
+BLUE = (51, 153, 255)               # unread: the sidebar's ring, and the dot
 GOLD = (255, 204, 51)               # the star
+
+# The toolbar's structural ink. Dark enough to read on Platinum's grey and on
+# a pressed button's darker grey, and the one colour most of these glyphs are
+# in: a toolbar of eight differently coloured shapes is a circus, so colour is
+# spent only where it carries meaning — blue for unread, gold for starred.
+INK = (51, 51, 51)
 
 
 def luminance(c):
@@ -96,6 +108,16 @@ def disc(px, cx, cy, r, colour):
             dy = y + 0.5 - cy
             if dx * dx + dy * dy <= r * r:
                 px[y][x] = colour
+
+
+def frame(px, x0, y0, x1, y1, colour):
+    """Inclusive one-pixel border."""
+    for x in range(x0, x1 + 1):
+        put(px, x, y0, colour)
+        put(px, x, y1, colour)
+    for y in range(y0, y1 + 1):
+        put(px, x0, y, colour)
+        put(px, x1, y, colour)
 
 
 def hollow(px, cx, cy, r):
@@ -200,6 +222,180 @@ def draw_star(cy, outer, inner):
     return px
 
 
+# --- The toolbar's icons ----------------------------------------------------
+#
+# One per button, and each one drawn to say what the button *does* rather than
+# what it acts on. The three that toggle have two drawings apiece, because a
+# button whose label changes and whose picture does not is a button that lies
+# half the time.
+
+def draw_sidebar():
+    """A pane with a band down its left edge: the sidebar, in a window."""
+    px = blank(16)
+    frame(px, 1, 2, 14, 13, INK)
+    fill(px, 2, 3, 5, 12, INK)
+    return px
+
+
+def draw_refresh():
+    """
+    A circular arrow: a ring with a gap cut out of its top right, and a head
+    on the near side of the gap pointing the way it was going. The gap is what
+    makes it an arrow rather than a doughnut, and which side the head is on is
+    what makes it turn clockwise.
+    """
+    px = blank(16)
+    disc(px, 8.0, 8.0, 6.8, INK)
+    hollow(px, 8.0, 8.0, 4.4)
+
+    # Clear the arc from a little east of north round to due east.
+    for y in range(16):
+        for x in range(16):
+            if px[y][x] is CLEAR:
+                continue
+            a = math.degrees(math.atan2(y + 0.5 - 8.0, x + 0.5 - 8.0))
+            if -95.0 <= a <= 0.0:
+                px[y][x] = CLEAR
+
+    # The head, on the northern end of what is left, pointing the way the arc
+    # was going. A triangle with its base against the arc and its apex east of
+    # it: three pixels of run is all there is room for and all it needs.
+    for i in range(4):
+        fill(px, 8 + i, 2 - (3 - i), 8 + i, 2 + (3 - i), INK)
+    return px
+
+
+def draw_bars(px, colour):
+    """The stack of lines that means "the list" in three of these."""
+    fill(px, 1, 3, 8, 4, colour)
+    fill(px, 1, 7, 8, 8, colour)
+    fill(px, 1, 11, 8, 12, colour)
+
+
+def draw_check(px, colour):
+    """A tick, two pixels thick, in the right hand third."""
+    for i in range(3):
+        fill(px, 9 + i, 8 + i, 9 + i, 9 + i, colour)
+    for i in range(5):
+        fill(px, 11 + i, 10 - i, 11 + i, 11 - i, colour)
+
+
+def draw_mark_all_read():
+    px = blank(16)
+    draw_bars(px, INK)
+    draw_check(px, INK)
+    return px
+
+
+def draw_mark_all_unread():
+    px = blank(16)
+    draw_bars(px, INK)
+    disc(px, 12.5, 8.0, 3.0, BLUE)
+    return px
+
+
+def draw_eye(px, colour):
+    """
+    An almond with a pupil in it.
+
+    Drawn column by column from a half-height that follows a parabola, and
+    each column joined to the one before it.
+
+    A parabola rather than the ellipse this started as: an ellipse is flat
+    across the middle and blunt at the ends, which at sixteen pixels comes out
+    as a rounded rectangle with a blob in it — a camera, not an eye. The
+    parabola tapers all the way to its ends, which is what gives the almond
+    its corners. Joining each column to the one before matters for the same
+    reason either way: taking the two edge pixels on their own leaves the
+    outline dotted wherever the curve climbs faster than a pixel a column.
+    """
+    prev = None
+    for x in range(1, 15):
+        t = (x + 0.5 - 8.0) / 7.0
+        h = 4.2 * (1.0 - t * t)
+        top = int(8.0 - h)
+        bot = int(8.0 + h) - 1
+        if prev is not None:
+            fill(px, x, min(top, prev[0]), x, max(top, prev[0]), colour)
+            fill(px, x, min(bot, prev[1]), x, max(bot, prev[1]), colour)
+        else:
+            put(px, x, top, colour)
+            put(px, x, bot, colour)
+        prev = (top, bot)
+    disc(px, 8.0, 8.0, 1.8, colour)
+
+
+def draw_hide_read():
+    """
+    Hiding the ones that have been read: an eye struck through. The slash
+    carries a pixel of clearance either side of it, so that it reads as
+    crossing the eye rather than as part of it — cleared first and drawn
+    second, which is the only order that leaves the clearance under the line.
+    """
+    px = blank(16)
+    draw_eye(px, INK)
+
+    for i in range(1, 15):
+        put(px, i, i, CLEAR)
+        put(px, i, i + 1, CLEAR)
+        put(px, i + 1, i, CLEAR)
+    for i in range(1, 15):
+        put(px, i, i, INK)
+    return px
+
+
+def draw_show_read():
+    """And showing them again: the same eye, open."""
+    px = blank(16)
+    draw_eye(px, INK)
+    return px
+
+
+def draw_unread_dot():
+    """Mark as Unread: a filled dot, which is what unread looks like."""
+    px = blank(16)
+    disc(px, 8.0, 8.0, 5.2, BLUE)
+    return px
+
+
+def draw_read_ring():
+    """Mark as Read: the same dot emptied out."""
+    px = blank(16)
+    disc(px, 8.0, 8.0, 5.2, BLUE)
+    hollow(px, 8.0, 8.0, 3.4)
+    return px
+
+
+def draw_next_unread():
+    """A dot with an arrow under it: on to the next one not yet read."""
+    px = blank(16)
+    disc(px, 8.0, 3.5, 3.0, BLUE)
+    fill(px, 7, 7, 8, 10, INK)
+    for i in range(4):
+        fill(px, 4 + i, 10 + i, 11 - i, 10 + i, INK)
+    return px
+
+
+def draw_browser():
+    """
+    A window with an arrow leaving it through the top right — which is what
+    every "open this somewhere else" has looked like since before this machine
+    was built. The window is small and low so the arrow has room to be an
+    arrow; at this size the two cannot both be full height.
+    """
+    px = blank(16)
+    frame(px, 0, 6, 9, 15, INK)
+    fill(px, 1, 7, 8, 8, INK)           # its title bar
+
+    # The shaft, out through the corner, and the head at the end of it.
+    for i in range(6):
+        put(px, 8 + i, 7 - i, INK)
+        put(px, 9 + i, 7 - i, INK)
+    fill(px, 10, 0, 15, 1, INK)         # the head's top edge
+    fill(px, 14, 0, 15, 5, INK)         # and its right edge
+    return px
+
+
 # --- Rez emission -----------------------------------------------------------
 
 def hexrows(data, per=16, indent="\t"):
@@ -245,13 +441,13 @@ def family(px, res_id, name):
 
 
 HEADER = """/*
- * Gazette_row_icons.r - the sidebar's own small icons.
+ * Gazette_ui_icons.r - the sidebar's and the toolbar's own small icons.
  *
  * DO NOT EDIT. Regenerate with:
- *   python3 tools/generate_row_icons.py --out Resources/Gazette_row_icons.r
+ *   python3 tools/generate_ui_icons.py --out Resources/Gazette_ui_icons.r
  *
- * 16x16 families only: these are drawn in list rows and nowhere else, so
- * there is no 32x32 member to carry. GetIconSuite reads them by ID out of the
+ * 16x16 families only: these are drawn in list rows and on toolbar buttons
+ * and nowhere else, so there is no 32x32 member to carry. GetIconSuite reads them by ID out of the
  * application's own resource fork and PlotIconSuite draws them, which is the
  * one path that does not need an Icon Services registration -- the system
  * icons beside them in the sidebar have no resource IDs to read, and these
@@ -261,7 +457,7 @@ HEADER = """/*
  * Gazette_icon.r records: Rez runs against whichever RIncludes the toolchain
  * has linked, and a resource file with no includes does not care which.
  *
- * IDs are the kGazetteIcon* constants in src/ui/platinum_window.c.
+ * IDs are the kIcon* constants in src/ui/platinum_window.c.
  */
 """
 
@@ -290,6 +486,20 @@ def main():
         # so that it does not out-shout the headline beside it.
         (130, "Starred", draw_star(8.4, 7.4, 3.8)),
         (131, "Starred Article", draw_star(8.6, 6.0, 3.1)),
+
+        # The toolbar. The three pairs are the toggles: each button shows the
+        # drawing for what it would do next, the way its menu item shows the
+        # words for it.
+        (132, "Sidebar", draw_sidebar()),
+        (133, "Refresh", draw_refresh()),
+        (134, "Mark All as Read", draw_mark_all_read()),
+        (135, "Mark All as Unread", draw_mark_all_unread()),
+        (136, "Hide Read Articles", draw_hide_read()),
+        (137, "Show Read Articles", draw_show_read()),
+        (138, "Mark as Read", draw_read_ring()),
+        (139, "Mark as Unread", draw_unread_dot()),
+        (140, "Next Unread", draw_next_unread()),
+        (141, "Open in Browser", draw_browser()),
     ]
 
     if args.ascii:
