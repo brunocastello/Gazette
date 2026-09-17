@@ -1622,25 +1622,17 @@ static void Layout(void)
         short split2  = (short)(split + gListWidth);
         /*
          * The row the black rule is on — the window frame's when there is
-         * no toolbar, the toolbar's own when there is — and the row after
-         * it, where the headers begin.
-         *
-         * The headers begin *under* the rule, not on it. A Window Header is
-         * drawn to sit beneath a title bar's black edge: its own first row
-         * is its white highlight, and it rules no black of its own along
-         * the top. Started on the rule's row it painted that highlight over
-         * the rule, and the bar above stood on nothing while each header
-         * floated a white line below it. Started one row down, the rule is
-         * the toolbar's, the highlight is the header's, and the two meet the
-         * way Outlook Express's do: black, then white, then the grey.
-         *
-         * The article's column still reaches up to the rule's row, for the
-         * reason its comment gives.
+         * no toolbar, the toolbar's own when there is — and the headers
+         * begin *on* it. A Window Header rules a black line of its own
+         * along its first row, so started on the rule that line and the
+         * rule are one; started a row lower (which was tried) the two
+         * stacked into a line two pixels thick. The article's column begins
+         * on the rule's row too, for the reason its own comment gives.
          */
         short top     = (short)(bounds.top + toolbar);
         short rule    = (short)(top - 1);
-        short headTop = top;
-        short headBot = (short)(top + gHeaderHeight + 1);
+        short headTop = rule;
+        short headBot = (short)(top + gHeaderHeight);
 
         /*
          * The border runs the whole height of the window, top to bottom,
