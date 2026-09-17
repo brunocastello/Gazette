@@ -299,7 +299,7 @@ typedef struct {
 
 typedef struct {
     Rect        bounds;
-    short       wide;       /* with its caption, the wider of the two it can wear */
+    short       wide;       /* with the caption it is wearing */
     short       narrow;     /* icon only */
     Boolean     captioned;  /* which of those it is showing just now */
     const char *caption;    /* what it says just now */
@@ -311,6 +311,7 @@ typedef struct {
 
 static ToolButton gToolBtn[kToolbarButtons];
 static short      gToolHover   = -1;    /* the button under the mouse, or -1 */
+static Boolean    gToolbarStale;        /* a caption changed: lay the row out again */
 static short      gToolPressed = -1;    /* the one held down, or -1 */
 static MenuRef    gNewMenu;             /* New Feed... and New Group... */
 static ControlRef gSearchCtl;
@@ -3681,6 +3682,25 @@ static short CaptionWidth(const char *text)
 }
 
 /*
+ * How wide a button is with a given caption on it: the same air either side
+ * of the icon and the words on every button, whatever the words are. A
+ * toggling button therefore changes width with its words, and the row is
+ * laid out again when one does — the buttons beside it move by the
+ * difference, which is the price of the padding being the same on all of
+ * them. The port's font has to be the captions' when this is called.
+ */
+static short ToolWidth(int i, const char *caption)
+{
+    short width = (short)(kToolInset + kIconSize + kToolIconText +
+                          CaptionWidth(caption) + kToolPadRight);
+
+    if (i == kTBNew) {
+        width = (short)(width + kToolGlyphGap + kToolGlyph);
+    }
+    return width;
+}
+
+/*
  * What a button wears. The suite is loaded once per picture and kept until
  * it changes, which for most of them is never.
  */
@@ -3708,8 +3728,24 @@ static void SetToolState(int i, Boolean enabled, const char *caption,
         (b->caption == NULL || strcmp(b->caption, caption) != 0)) {
         b->caption = caption;
         b->dirty   = true;
+        UseCaptionFont();
+        b->wide       = ToolWidth(i, caption);
+        gToolbarStale = true;
     }
     SetToolIcon(b, resID);
+}
+
+/* The row laid out again after a caption changed its width. */
+static void RelayoutToolbar(void)
+{
+    Rect bounds;
+
+    if (gWindow == NULL) {
+        return;
+    }
+    GetWindowPortBounds(gWindow, &bounds);
+    LayoutToolbar(&bounds);
+    gToolbarStale = false;
 }
 
 static void MakeToolbar(void)
@@ -3722,18 +3758,10 @@ static void MakeToolbar(void)
     UseCaptionFont();
     for (i = 0; i < kToolbarButtons; i++) {
         const ToolSpec *spec = &kToolSpec[i];
-        short           text = CaptionWidth(spec->caption);
-        short           other = CaptionWidth(spec->otherCaption);
 
-        if (other > text) {
-            text = other;
-        }
-        gToolBtn[i].wide   = (short)(kToolInset + kIconSize + kToolIconText +
-                                     text + kToolPadRight);
+        gToolBtn[i].wide   = ToolWidth(i, spec->caption);
         gToolBtn[i].narrow = (short)(kToolInset + kIconSize + kToolInset);
         if (i == kTBNew) {
-            gToolBtn[i].wide   = (short)(gToolBtn[i].wide + kToolGlyphGap +
-                                         kToolGlyph);
             gToolBtn[i].narrow = (short)(gToolBtn[i].narrow + kToolGlyphGap +
                                          kToolGlyph);
         }
@@ -3959,6 +3987,7 @@ static void AdjustToolbarState(void)
     if (gWindow == NULL) {
         return;
     }
+    SetPortWindowPort(gWindow);     /* a changed caption is measured here */
 
     open   = GazetteFeedsArticleAt(gSelectedArticle);
     count  = GazetteFeedsArticleCount();
@@ -4018,10 +4047,11 @@ static void AdjustToolbarState(void)
 }
 
 /*
- * The state above, and then only the buttons it changed redrawn to show it.
- * A full window update draws the whole bar after settling the state, so it
- * does not come through here; anything that changes the state on its own —
- * opening an article, mostly — does.
+ * The state above, and then only the buttons it changed redrawn to show it
+ * — unless a caption changed its width, when the row is laid out and drawn
+ * again whole. A full window update draws the whole bar after settling the
+ * state, so it does not come through here; anything that changes the state
+ * on its own — opening an article, mostly — does.
  */
 void GazetteUIAdjustToolbar(void)
 {
@@ -4033,9 +4063,14 @@ void GazetteUIAdjustToolbar(void)
         return;
     }
     SetPortWindowPort(gWindow);
-    for (i = 0; i < kToolbarButtons; i++) {
-        if (gToolBtn[i].dirty) {
-            DrawToolButton(i);
+    if (gToolbarStale) {
+        RelayoutToolbar();
+        DrawToolbar();
+    } else {
+        for (i = 0; i < kToolbarButtons; i++) {
+            if (gToolBtn[i].dirty) {
+                DrawToolButton(i);
+            }
         }
     }
     if (gSearchCtl != NULL) {
@@ -4307,6 +4342,9 @@ void GazetteUIUpdate(void)
        rather than the one it was left in; and before DrawControls, so the
        field is drawn on the bar rather than under it. */
     AdjustToolbarState();
+    if (gToolbarStale) {
+        RelayoutToolbar();
+    }
     DrawToolbar();
 
     /* The whole control hierarchy in one call — the two lists with their
