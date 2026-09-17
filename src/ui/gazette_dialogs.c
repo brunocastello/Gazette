@@ -34,9 +34,27 @@ enum {
 
 enum {
     kFeedItemTitle = 5,
-    kFeedItemURL   = 7,
-    kFeedItemGroup = 9
+    kFeedItemURL   = 7
 };
+
+/*
+ * The Group popup is a control of the dialog's window rather than an item
+ * of its DITL: Retro68's Rez cannot compile a Control item, so the code
+ * makes it, at the place the DITL leaves for it, and the filter hands it
+ * its clicks — ModalDialog only tracks items. kControlPopupButtonProc plus
+ * the fixed-width variant; -12345 for the menu ID says there is no menu
+ * resource, the menu is handed in by handle.
+ */
+enum {
+    kFeedPopupProc   = 401,
+    kPopupNoMenuID   = -12345,
+    kFeedPopupTop    = 106,
+    kFeedPopupLeft   = 88,
+    kFeedPopupBottom = 126,
+    kFeedPopupRight  = 240
+};
+
+static ControlHandle gFeedPopup;    /* while the feed dialog is up */
 
 /* The Group popup's menu, built here from the groups there are. An ID after
    every menu the shell and the window make. */
