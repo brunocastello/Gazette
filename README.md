@@ -135,7 +135,10 @@ feed-off = https://example.com/feed.xml | A feed that is switched off
 
 `#` or `;` starts a comment, the separator is `=` or `:`, keys are
 case-insensitive, and a feed line is `<url> | <title> | <home page>` with the
-title and the home page optional. The home page is the site the feed is for,
+title and the home page optional. The lines are in the sidebar's order: a
+`group = Name` line (or `group-closed = Name`) opens a group, the feed lines
+after it belong to it, and a `group-end = 1` line closes it, so that a feed
+below a group can be a top-level feed rather than the group's last. The home page is the site the feed is for,
 learned from the feed itself on its first refresh and written back here; it is
 what the sidebar's Open Home Page and Copy Home Page URL use.
 Gazette writes CR line endings the way OS 9 text files do, but reads CR, LF and

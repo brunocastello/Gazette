@@ -374,14 +374,14 @@ int GazetteCoreImportOPML(const char *text, size_t len)
     return added;
 }
 
-int GazetteCoreMoveFeed(int from, int to, int group)
+int GazetteCoreMoveFeed(int feed, GazettePlace place)
 {
     int index;
 
     if (!gInited) {
         return -1;
     }
-    index = GazettePrefsMoveFeed(&gPrefs, from, to, group);
+    index = GazettePrefsMoveFeed(&gPrefs, feed, place);
     if (index >= 0) {
         gPrefsDirty = true;
     }
@@ -420,18 +420,26 @@ Boolean GazetteCoreRenameGroup(int index, const char *name)
     return true;
 }
 
-int GazetteCoreMoveGroup(int from, int to)
+int GazetteCoreMoveGroup(int group, GazettePlace place)
 {
     int index;
 
     if (!gInited) {
         return -1;
     }
-    index = GazettePrefsMoveGroup(&gPrefs, from, to);
+    index = GazettePrefsMoveGroup(&gPrefs, group, place);
     if (index >= 0) {
         gPrefsDirty = true;
     }
     return index;
+}
+
+int GazetteCoreSequence(GazetteSidebarRow *out)
+{
+    if (!gInited) {
+        return 0;
+    }
+    return GazettePrefsSequence(&gPrefs, out);
 }
 
 void GazetteCoreSetGroupCollapsed(int index, Boolean collapsed)

@@ -92,27 +92,39 @@ size_t GazetteOPMLWrite(const GazettePrefs *p, char *out, size_t cap)
     Append(out, cap, &len, "  </head>\r");
     Append(out, cap, &len, "  <body>\r");
 
-    /* Top-level feeds first, then each group's — the sidebar's order, which
-       is the order the feeds array is already held in. */
-    for (i = 0; i < p->feedCount; i++) {
-        if (p->feeds[i].group < 0) {
-            AppendFeed(out, cap, &len, &p->feeds[i], 0);
-        }
-    }
+    /* The sidebar's order, top to bottom: a top-level feed is an outline of
+       its own, a group is an outline with its feeds inside it, and the two
+       come in whatever order the user keeps them. */
+    {
+        static GazetteSidebarRow seq[kGazetteMaxFeeds + kGazetteMaxGroups];
+        int count  = GazettePrefsSequence(p, seq);
+        int inside = 0;
 
-    for (g = 0; g < p->groupCount; g++) {
-        Append(out, cap, &len, "    <outline text=\"");
-        AppendEscaped(out, cap, &len, p->groups[g].name);
-        Append(out, cap, &len, "\" title=\"");
-        AppendEscaped(out, cap, &len, p->groups[g].name);
-        Append(out, cap, &len, "\">\r");
-
-        for (i = 0; i < p->feedCount; i++) {
-            if (p->feeds[i].group == g) {
-                AppendFeed(out, cap, &len, &p->feeds[i], 1);
+        for (i = 0; i < count; i++) {
+            if (seq[i].kind == kGazetteRowGroup) {
+                if (inside) {
+                    Append(out, cap, &len, "    </outline>\r");
+                }
+                g = seq[i].index;
+                Append(out, cap, &len, "    <outline text=\"");
+                AppendEscaped(out, cap, &len, p->groups[g].name);
+                Append(out, cap, &len, "\" title=\"");
+                AppendEscaped(out, cap, &len, p->groups[g].name);
+                Append(out, cap, &len, "\">\r");
+                inside = 1;
+            } else if (p->feeds[seq[i].index].group < 0) {
+                if (inside) {
+                    Append(out, cap, &len, "    </outline>\r");
+                    inside = 0;
+                }
+                AppendFeed(out, cap, &len, &p->feeds[seq[i].index], 0);
+            } else {
+                AppendFeed(out, cap, &len, &p->feeds[seq[i].index], 1);
             }
         }
-        Append(out, cap, &len, "    </outline>\r");
+        if (inside) {
+            Append(out, cap, &len, "    </outline>\r");
+        }
     }
 
     Append(out, cap, &len, "  </body>\r");

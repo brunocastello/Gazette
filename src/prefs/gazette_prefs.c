@@ -56,49 +56,165 @@ typedef char gazette_prefs_text_buffer_is_large_enough[
 /* ------------------------------------------------------------------ */
 
 /*
- * The feeds array is kept in sidebar order: the top-level feeds first, then
- * each group's feeds in group order, relative order preserved throughout.
+ * The sidebar is one sequence: top-level feeds and groups in the user's
+ * order, each group's feeds standing where the group does. Two things carry
+ * it. The feeds array is held in drawing order, top to bottom, with each
+ * group's feeds contiguous. And each group records how many top-level feeds
+ * come before its row — `after` — which is what lets a group stand between
+ * two top-level feeds rather than after all of them, and what survives the
+ * feeds around it being reordered.
  *
- * Keeping it that way rather than sorting on demand means the sidebar, the
- * serialiser and a drag all read the same sequence, and none of them has to
- * re-derive it. Every mutation below restores the invariant before returning.
+ * Keeping the array in drawing order rather than sorting on demand means the
+ * sidebar, the serialiser and a drag all read the same sequence, and none of
+ * them has to re-derive it. Every mutation below restores the invariant
+ * before returning, through RebuildOrder.
+ */
+
+/* How many feeds are at the top level. */
+static int TopCount(const GazettePrefs *p)
+{
+    int n = 0;
+    int i;
+
+    for (i = 0; i < p->feedCount; i++) {
+        if (p->feeds[i].group < 0) {
+            n++;
+        }
+    }
+    return n;
+}
+
+/* A top-level feed's ordinal among the top-level feeds, or -1. */
+static int TopOrdinal(const GazettePrefs *p, int feed)
+{
+    int t = 0;
+    int i;
+
+    if (feed < 0 || feed >= p->feedCount || p->feeds[feed].group >= 0) {
+        return -1;
+    }
+    for (i = 0; i < feed; i++) {
+        if (p->feeds[i].group < 0) {
+            t++;
+        }
+    }
+    return t;
+}
+
+/* The index of the top-level feed with this ordinal, or -1 when there are
+   not that many: the place one past the last. */
+static int TopFeedAt(const GazettePrefs *p, int ordinal)
+{
+    int t = 0;
+    int i;
+
+    for (i = 0; i < p->feedCount; i++) {
+        if (p->feeds[i].group < 0) {
+            if (t == ordinal) {
+                return i;
+            }
+            t++;
+        }
+    }
+    return -1;
+}
+
+/*
+ * The sequence, from the array and the groups' positions: before the
+ * top-level feed with ordinal t come the groups whose `after` is t, in group
+ * order, each followed by its feeds in array order; after the last top-level
+ * feed come the rest. A feed naming a group that no longer exists is a
+ * top-level feed — it would otherwise vanish.
+ */
+int GazettePrefsSequence(const GazettePrefs *p, GazetteSidebarRow *out)
+{
+    int n = 0;
+    int t = 0;
+    int g = 0;
+    int i;
+    int j;
+
+    if (p == NULL || out == NULL) {
+        return 0;
+    }
+
+    for (i = 0; i <= p->feedCount; i++) {
+        int top = (i < p->feedCount &&
+                   (p->feeds[i].group < 0 ||
+                    p->feeds[i].group >= p->groupCount));
+
+        if (i < p->feedCount && !top) {
+            continue;               /* a group's feed: emitted with the group */
+        }
+
+        /* Every group standing before this top-level feed — or, past the
+           last feed, every group left. */
+        while (g < p->groupCount &&
+               (i == p->feedCount || p->groups[g].after <= t)) {
+            out[n].kind  = kGazetteRowGroup;
+            out[n].index = g;
+            n++;
+            for (j = 0; j < p->feedCount; j++) {
+                if (p->feeds[j].group == g) {
+                    out[n].kind  = kGazetteRowFeed;
+                    out[n].index = j;
+                    n++;
+                }
+            }
+            g++;
+        }
+        if (i < p->feedCount) {
+            out[n].kind  = kGazetteRowFeed;
+            out[n].index = i;
+            n++;
+            t++;
+        }
+    }
+    return n;
+}
+
+/*
+ * Put the array back into drawing order: the order the sequence reads it in.
+ * Applied as a permutation in place, following each cycle, so this costs one
+ * feed of scratch rather than a copy of the whole array. Along the way the
+ * groups' positions are clamped to the top-level feeds there are, and any
+ * feed naming a group that is gone is adopted by the top level.
  */
 static void RebuildOrder(GazettePrefs *p)
 {
+    static GazetteSidebarRow seq[kGazetteMaxFeeds + kGazetteMaxGroups];
     int order[kGazetteMaxFeeds];
     int where[kGazetteMaxFeeds];
     int n = 0;
-    int g;
+    int count;
+    int top;
     int i;
 
-    /* Collect indices group by group, which is the order we want them in.
-       A feed naming a group that no longer exists is a top-level feed: it
-       would otherwise vanish, and it has to be adopted here rather than
-       appended afterwards, because the top level being a prefix of the array
-       is what the sidebar's row arithmetic reads. */
     for (i = 0; i < p->feedCount; i++) {
         if (p->feeds[i].group >= p->groupCount) {
             p->feeds[i].group = -1;
         }
-        if (p->feeds[i].group < 0) {
-            order[n++] = i;
+    }
+    top = TopCount(p);
+    for (i = 0; i < p->groupCount; i++) {
+        if (p->groups[i].after < 0) {
+            p->groups[i].after = 0;
+        }
+        if (p->groups[i].after > top) {
+            p->groups[i].after = top;
         }
     }
-    for (g = 0; g < p->groupCount; g++) {
-        for (i = 0; i < p->feedCount; i++) {
-            if (p->feeds[i].group == g) {
-                order[n++] = i;
-            }
+
+    count = GazettePrefsSequence(p, seq);
+    for (i = 0; i < count; i++) {
+        if (seq[i].kind == kGazetteRowFeed) {
+            order[n++] = seq[i].index;
         }
     }
     if (n != p->feedCount) {
         return;                     /* cannot happen; refuse to scramble */
     }
 
-    /*
-     * Apply the permutation in place, following each cycle, so this costs one
-     * feed of scratch rather than a copy of the whole 83 KB array.
-     */
     for (i = 0; i < n; i++) {
         where[order[i]] = i;
     }
@@ -163,6 +279,7 @@ int GazettePrefsAddGroup(GazettePrefs *p, const char *name)
     g = &p->groups[p->groupCount];
     memset(g, 0, sizeof *g);
     gz_copy_n(g->name, sizeof g->name, name, strlen(name));
+    g->after = TopCount(p);         /* a new group goes at the end */
 
     return p->groupCount++;
 }
@@ -175,8 +292,24 @@ int GazettePrefsRemoveGroup(GazettePrefs *p, int index)
         return 0;
     }
 
-    /* The feeds are not the group's to take with it: removing a folder should
-       never silently unsubscribe anything, so they move to the top level. */
+    /*
+     * The feeds are not the group's to take with it: removing a folder should
+     * never silently unsubscribe anything, so they move to the top level —
+     * in place, where the group stood, which the groups below have to make
+     * room for. The array is in drawing order, so they are already in the
+     * right place in it; only the groups' positions move.
+     */
+    {
+        int members = GazettePrefsGroupFeedCount(p, index);
+        int at      = p->groups[index].after;
+
+        for (i = 0; i < p->groupCount; i++) {
+            if (i != index && (p->groups[i].after > at ||
+                               (p->groups[i].after == at && i > index))) {
+                p->groups[i].after += members;
+            }
+        }
+    }
     for (i = 0; i < p->feedCount; i++) {
         if (p->feeds[i].group == index) {
             p->feeds[i].group = -1;
@@ -206,55 +339,104 @@ int GazettePrefsRenameGroup(GazettePrefs *p, int index, const char *name)
     return 1;
 }
 
-int GazettePrefsMoveGroup(GazettePrefs *p, int from, int to)
+int GazettePrefsMoveGroup(GazettePrefs *p, int group, GazettePlace place)
 {
     GazetteGroupPref moved;
+    int              newTo[kGazetteMaxGroups];
+    int              after;
+    int              at;            /* its index once the others close up */
     int              i;
+    int              k;
 
-    if (p == NULL || from < 0 || from >= p->groupCount) {
+    if (p == NULL || group < 0 || group >= p->groupCount) {
         return -1;
     }
-    if (to < 0) {
-        to = 0;
-    }
-    if (to >= p->groupCount) {
-        to = p->groupCount - 1;
-    }
-    if (to == from) {
-        return from;
+
+    /* Where it goes: a position among the top-level feeds, and an index
+       among the groups once it has been taken out. */
+    switch (place.where) {
+        case kGazettePlaceBeforeGroup:
+        case kGazettePlaceAfterGroup:
+            if (place.ref < 0 || place.ref >= p->groupCount ||
+                place.ref == group) {
+                return -1;
+            }
+            after = p->groups[place.ref].after;
+            at    = place.ref - (place.ref > group ? 1 : 0);
+            if (place.where == kGazettePlaceAfterGroup) {
+                at++;
+            }
+            break;
+
+        case kGazettePlaceAfterFeed:
+        case kGazettePlaceBeforeFeed: {
+            int t = TopOrdinal(p, place.ref);
+
+            if (t < 0) {
+                return -1;          /* only a top-level feed is a neighbour */
+            }
+            after = (place.where == kGazettePlaceAfterFeed) ? t + 1 : t;
+            /* Directly after (or before) the feed: ahead of the groups that
+               already stand at that position. */
+            at = 0;
+            for (i = 0; i < p->groupCount; i++) {
+                if (i != group && p->groups[i].after < after) {
+                    at++;
+                }
+            }
+            break;
+        }
+
+        case kGazettePlaceListStart:
+            after = 0;
+            at    = 0;
+            break;
+
+        case kGazettePlaceListEnd:
+            after = TopCount(p);
+            at    = p->groupCount - 1;
+            break;
+
+        default:
+            return -1;              /* a group does not go inside a group */
     }
 
-    moved = p->groups[from];
+    if (at < 0) {
+        at = 0;
+    }
+    if (at > p->groupCount - 1) {
+        at = p->groupCount - 1;
+    }
 
-    /* Renumber the feeds to follow their group to its new index. */
-    for (i = 0; i < p->feedCount; i++) {
-        int g = p->feeds[i].group;
+    /* Take it out, close up, put it back at `at`, and tell the feeds. */
+    moved = p->groups[group];
+    for (i = group; i < p->groupCount - 1; i++) {
+        p->groups[i] = p->groups[i + 1];
+    }
+    for (i = p->groupCount - 1; i > at; i--) {
+        p->groups[i] = p->groups[i - 1];
+    }
+    p->groups[at]       = moved;
+    p->groups[at].after = after;
 
-        if (g < 0) {
+    for (i = 0, k = 0; i < p->groupCount; i++) {
+        if (i == group) {
+            newTo[i] = at;
             continue;
         }
-        if (g == from) {
-            p->feeds[i].group = to;
-        } else if (from < to && g > from && g <= to) {
-            p->feeds[i].group = g - 1;
-        } else if (from > to && g >= to && g < from) {
-            p->feeds[i].group = g + 1;
+        if (k == at) {
+            k++;
+        }
+        newTo[i] = k++;
+    }
+    for (i = 0; i < p->feedCount; i++) {
+        if (p->feeds[i].group >= 0 && p->feeds[i].group < p->groupCount) {
+            p->feeds[i].group = newTo[p->feeds[i].group];
         }
     }
-
-    if (from < to) {
-        for (i = from; i < to; i++) {
-            p->groups[i] = p->groups[i + 1];
-        }
-    } else {
-        for (i = from; i > to; i--) {
-            p->groups[i] = p->groups[i - 1];
-        }
-    }
-    p->groups[to] = moved;
 
     RebuildOrder(p);
-    return to;
+    return at;
 }
 
 int GazettePrefsFirstFeedInGroup(const GazettePrefs *p, int group)
@@ -291,18 +473,13 @@ int GazettePrefsGroupFeedCount(const GazettePrefs *p, int group)
 /* ------------------------------------------------------------------ */
 /* The sidebar's rows                                                  */
 /*                                                                     */
-/* All of this is arithmetic over the order RebuildOrder maintains: the */
-/* top-level feeds are a prefix of the array, and each group's feeds    */
-/* are contiguous after them, in group order. Nothing here searches.    */
+/* The sequence above, with the three standing views in front of it    */
+/* and the hidden and the shut left out: a hidden feed or group takes  */
+/* no row, and a shut group's feeds take none. Every question about a  */
+/* row is answered by building the rows and looking — 128 feeds is a   */
+/* walk nobody will ever measure.                                      */
 /* ------------------------------------------------------------------ */
 
-/*
- * Every one of these walks the feed list in drawing order rather than doing
- * arithmetic over it. The order is still what RebuildOrder maintains — the
- * top-level feeds first, then each group's, contiguous — but a hidden feed
- * takes no row, and once rows and feeds no longer march in step there is no
- * arithmetic to do. 128 feeds is a walk nobody will ever measure.
- */
 static int FeedShown(const GazettePrefs *p, int i)
 {
     return !p->feeds[i].hidden;
@@ -311,6 +488,45 @@ static int FeedShown(const GazettePrefs *p, int i)
 static int GroupShown(const GazettePrefs *p, int g)
 {
     return !p->groups[g].hidden;
+}
+
+static int BuildRows(const GazettePrefs *p, GazetteSidebarRow *rows)
+{
+    static GazetteSidebarRow seq[kGazetteMaxFeeds + kGazetteMaxGroups];
+    int count;
+    int n = 0;
+    int i;
+    int shownGroup = -1;            /* the open, shown group whose feeds follow */
+
+    for (i = 0; i < kGazetteSmartCount; i++) {
+        rows[n].kind  = kGazetteRowSmart;
+        rows[n].index = i;
+        n++;
+    }
+
+    count = GazettePrefsSequence(p, seq);
+    for (i = 0; i < count; i++) {
+        if (seq[i].kind == kGazetteRowGroup) {
+            int g = seq[i].index;
+
+            shownGroup = (GroupShown(p, g) && !p->groups[g].collapsed) ? g
+                                                                        : -1;
+            if (GroupShown(p, g)) {
+                rows[n++] = seq[i];
+            }
+        } else {
+            int f     = seq[i].index;
+            int group = p->feeds[f].group;
+
+            if (!FeedShown(p, f)) {
+                continue;
+            }
+            if (group < 0 || group == shownGroup) {
+                rows[n++] = seq[i];
+            }
+        }
+    }
+    return n;
 }
 
 int GazettePrefsRowForSmart(int which)
@@ -330,121 +546,46 @@ const char *GazettePrefsSmartName(int which)
 
 int GazettePrefsRowCount(const GazettePrefs *p)
 {
-    int n = kGazetteSmartCount;     /* the three standing views come first */
-    int i;
-    int g;
+    static GazetteSidebarRow rows[kGazetteSmartCount + kGazetteMaxFeeds +
+                                  kGazetteMaxGroups];
 
     if (p == NULL) {
         return 0;
     }
-    for (i = 0; i < p->feedCount && p->feeds[i].group < 0; i++) {
-        if (FeedShown(p, i)) {
-            n++;
-        }
-    }
-    for (g = 0; g < p->groupCount; g++) {
-        if (!GroupShown(p, g)) {
-            continue;
-        }
-        n++;
-        if (p->groups[g].collapsed) {
-            continue;
-        }
-        for (i = 0; i < p->feedCount; i++) {
-            if (p->feeds[i].group == g && FeedShown(p, i)) {
-                n++;
-            }
-        }
-    }
-    return n;
+    return BuildRows(p, rows);
 }
 
 int GazettePrefsRowAt(const GazettePrefs *p, int row, GazetteSidebarRow *out)
 {
-    int i;
-    int g;
+    static GazetteSidebarRow rows[kGazetteSmartCount + kGazetteMaxFeeds +
+                                  kGazetteMaxGroups];
+    int n;
 
     if (p == NULL || out == NULL || row < 0) {
         return 0;
     }
-
-    if (row < kGazetteSmartCount) {
-        out->kind  = kGazetteRowSmart;
-        out->index = row;
-        return 1;
+    n = BuildRows(p, rows);
+    if (row >= n) {
+        return 0;
     }
-    row -= kGazetteSmartCount;
-
-    for (i = 0; i < p->feedCount && p->feeds[i].group < 0; i++) {
-        if (!FeedShown(p, i)) {
-            continue;
-        }
-        if (row-- == 0) {
-            out->kind  = kGazetteRowFeed;
-            out->index = i;
-            return 1;
-        }
-    }
-
-    for (g = 0; g < p->groupCount; g++) {
-        if (!GroupShown(p, g)) {
-            continue;
-        }
-        if (row-- == 0) {
-            out->kind  = kGazetteRowGroup;
-            out->index = g;
-            return 1;
-        }
-        if (p->groups[g].collapsed) {
-            continue;
-        }
-        for (i = 0; i < p->feedCount; i++) {
-            if (p->feeds[i].group != g || !FeedShown(p, i)) {
-                continue;
-            }
-            if (row-- == 0) {
-                out->kind  = kGazetteRowFeed;
-                out->index = i;
-                return 1;
-            }
-        }
-    }
-    return 0;
+    *out = rows[row];
+    return 1;
 }
 
-/* Both of these are the walk above, stopped when it reaches what was asked
-   for. Written out twice rather than through a callback: two short loops read
-   better here than one indirect one. */
 int GazettePrefsRowForGroup(const GazettePrefs *p, int group)
 {
-    int row = kGazetteSmartCount;
+    static GazetteSidebarRow rows[kGazetteSmartCount + kGazetteMaxFeeds +
+                                  kGazetteMaxGroups];
+    int n;
     int i;
-    int g;
 
-    if (p == NULL || group < 0 || group >= p->groupCount ||
-        !GroupShown(p, group)) {
+    if (p == NULL || group < 0 || group >= p->groupCount) {
         return -1;
     }
-    for (i = 0; i < p->feedCount && p->feeds[i].group < 0; i++) {
-        if (FeedShown(p, i)) {
-            row++;
-        }
-    }
-    for (g = 0; g < p->groupCount; g++) {
-        if (!GroupShown(p, g)) {
-            continue;
-        }
-        if (g == group) {
-            return row;
-        }
-        row++;
-        if (p->groups[g].collapsed) {
-            continue;
-        }
-        for (i = 0; i < p->feedCount; i++) {
-            if (p->feeds[i].group == g && FeedShown(p, i)) {
-                row++;
-            }
+    n = BuildRows(p, rows);
+    for (i = 0; i < n; i++) {
+        if (rows[i].kind == kGazetteRowGroup && rows[i].index == group) {
+            return i;
         }
     }
     return -1;
@@ -452,38 +593,21 @@ int GazettePrefsRowForGroup(const GazettePrefs *p, int group)
 
 int GazettePrefsRowForFeed(const GazettePrefs *p, int feed)
 {
-    int group;
-    int row;
+    static GazetteSidebarRow rows[kGazetteSmartCount + kGazetteMaxFeeds +
+                                  kGazetteMaxGroups];
+    int n;
     int i;
 
-    if (p == NULL || feed < 0 || feed >= p->feedCount ||
-        !FeedShown(p, feed)) {
+    if (p == NULL || feed < 0 || feed >= p->feedCount) {
         return -1;
     }
-
-    group = p->feeds[feed].group;
-    if (group < 0) {
-        row = kGazetteSmartCount;
-        for (i = 0; i < feed; i++) {
-            if (FeedShown(p, i)) {
-                row++;
-            }
-        }
-        return row;
-    }
-
-    if (group >= p->groupCount || p->groups[group].collapsed ||
-        !GroupShown(p, group)) {
-        return -1;              /* drawn nowhere: its group is shut or gone */
-    }
-
-    row = GazettePrefsRowForGroup(p, group) + 1;
-    for (i = 0; i < feed; i++) {
-        if (p->feeds[i].group == group && FeedShown(p, i)) {
-            row++;
+    n = BuildRows(p, rows);
+    for (i = 0; i < n; i++) {
+        if (rows[i].kind == kGazetteRowFeed && rows[i].index == feed) {
+            return i;
         }
     }
-    return row;
+    return -1;                      /* drawn nowhere: hidden, or its group shut */
 }
 
 void GazettePrefsShowAll(GazettePrefs *p)
@@ -556,19 +680,54 @@ int GazettePrefsAddFeed(GazettePrefs *p, const char *url, const char *title,
     return GazettePrefsFindFeed(p, url);
 }
 
-int GazettePrefsRemoveFeed(GazettePrefs *p, const char *url)
+/* Take a feed out of the array, closing up behind it — and, for a top-level
+   feed, moving up the groups that stood below it. */
+static void RemoveFeedAt(GazettePrefs *p, int index)
 {
-    int index = GazettePrefsFindFeed(p, url);
+    int t = TopOrdinal(p, index);
     int i;
 
-    if (index < 0) {
-        return 0;
+    if (t >= 0) {
+        for (i = 0; i < p->groupCount; i++) {
+            if (p->groups[i].after > t) {
+                p->groups[i].after--;
+            }
+        }
     }
     for (i = index; i < p->feedCount - 1; i++) {
         p->feeds[i] = p->feeds[i + 1];
     }
     memset(&p->feeds[p->feedCount - 1], 0, sizeof p->feeds[0]);
     p->feedCount--;
+}
+
+/* Put a feed into the array at an index, making room. */
+static void InsertFeedAt(GazettePrefs *p, int index, const GazetteFeedPref *f)
+{
+    int i;
+
+    if (index < 0) {
+        index = 0;
+    }
+    if (index > p->feedCount) {
+        index = p->feedCount;
+    }
+    for (i = p->feedCount; i > index; i--) {
+        p->feeds[i] = p->feeds[i - 1];
+    }
+    p->feeds[index] = *f;
+    p->feedCount++;
+}
+
+int GazettePrefsRemoveFeed(GazettePrefs *p, const char *url)
+{
+    int index = GazettePrefsFindFeed(p, url);
+
+    if (index < 0) {
+        return 0;
+    }
+    RemoveFeedAt(p, index);
+    RebuildOrder(p);
     return 1;
 }
 
@@ -630,41 +789,124 @@ int GazettePrefsSetFeedHome(GazettePrefs *p, int index, const char *home)
     return 1;
 }
 
-int GazettePrefsMoveFeed(GazettePrefs *p, int from, int to, int group)
+int GazettePrefsMoveFeed(GazettePrefs *p, int feed, GazettePlace place)
 {
     GazetteFeedPref moved;
+    int             ref = place.ref;
+    int             at;             /* the index it goes in at */
     int             i;
 
-    if (p == NULL || from < 0 || from >= p->feedCount) {
+    if (p == NULL || feed < 0 || feed >= p->feedCount) {
         return -1;
     }
-    if (group < -1 || group >= p->groupCount) {
-        group = -1;
+    if ((place.where == kGazettePlaceAfterFeed ||
+         place.where == kGazettePlaceBeforeFeed) &&
+        (ref < 0 || ref >= p->feedCount || ref == feed)) {
+        return -1;
     }
-    if (to < 0) {
-        to = 0;
-    }
-    if (to > p->feedCount - 1) {
-        to = p->feedCount - 1;
+    if ((place.where == kGazettePlaceGroupStart ||
+         place.where == kGazettePlaceGroupEnd ||
+         place.where == kGazettePlaceBeforeGroup ||
+         place.where == kGazettePlaceAfterGroup) &&
+        (ref < 0 || ref >= p->groupCount)) {
+        return -1;
     }
 
-    moved       = p->feeds[from];
-    moved.group = group;
+    /* Out first, so that everything below is measured in a list it is not
+       in — and a feed it was measured against may have moved up one. */
+    moved = p->feeds[feed];
+    RemoveFeedAt(p, feed);
+    if ((place.where == kGazettePlaceAfterFeed ||
+         place.where == kGazettePlaceBeforeFeed) && ref > feed) {
+        ref--;
+    }
 
-    if (from < to) {
-        for (i = from; i < to; i++) {
-            p->feeds[i] = p->feeds[i + 1];
+    switch (place.where) {
+        case kGazettePlaceAfterFeed:
+        case kGazettePlaceBeforeFeed: {
+            int t = TopOrdinal(p, ref);
+
+            moved.group = p->feeds[ref].group;
+            at = (place.where == kGazettePlaceAfterFeed) ? ref + 1 : ref;
+            if (t >= 0) {
+                /* Beside a top-level feed: the groups standing below the
+                   pair move down one. Before it, the new feed takes its
+                   ordinal and the groups that stood before it still do. */
+                int keep = (place.where == kGazettePlaceAfterFeed) ? t : t - 1;
+
+                for (i = 0; i < p->groupCount; i++) {
+                    if (p->groups[i].after > keep) {
+                        p->groups[i].after++;
+                    }
+                }
+            }
+            break;
         }
-    } else {
-        for (i = from; i > to; i--) {
-            p->feeds[i] = p->feeds[i - 1];
-        }
-    }
-    p->feeds[to] = moved;
 
-    /* The drop position and the target group can disagree — dropping onto a
-       collapsed group, say. The group wins, and RebuildOrder puts the feed
-       where that decision implies. */
+        case kGazettePlaceGroupStart:
+        case kGazettePlaceGroupEnd: {
+            int first = GazettePrefsFirstFeedInGroup(p, ref);
+            int last  = -1;
+
+            for (i = 0; i < p->feedCount; i++) {
+                if (p->feeds[i].group == ref) {
+                    last = i;
+                }
+            }
+            moved.group = ref;
+            if (first < 0) {
+                at = p->feedCount;  /* an empty group: RebuildOrder places it */
+            } else {
+                at = (place.where == kGazettePlaceGroupStart) ? first
+                                                              : last + 1;
+            }
+            break;
+        }
+
+        case kGazettePlaceBeforeGroup:
+        case kGazettePlaceAfterGroup: {
+            /* At the top level, with the ordinal the group stands at: the
+               group itself, and those beside it in order, move down one
+               when the feed lands above them. */
+            int t = p->groups[ref].after;
+
+            moved.group = -1;
+            for (i = 0; i < p->groupCount; i++) {
+                if (p->groups[i].after > t ||
+                    (p->groups[i].after == t &&
+                     (place.where == kGazettePlaceBeforeGroup ? i >= ref
+                                                              : i > ref))) {
+                    p->groups[i].after++;
+                }
+            }
+            at = TopFeedAt(p, t);
+            if (at < 0) {
+                at = p->feedCount;
+            }
+            break;
+        }
+
+        case kGazettePlaceListStart:
+            moved.group = -1;
+            for (i = 0; i < p->groupCount; i++) {
+                p->groups[i].after++;
+            }
+            at = 0;
+            break;
+
+        case kGazettePlaceListEnd:
+            moved.group = -1;
+            at = p->feedCount;
+            break;
+
+        default:
+            /* Nowhere it can go: back where it was, group and all. */
+            InsertFeedAt(p, feed, &moved);
+            RebuildOrder(p);
+            return -1;
+    }
+
+    InsertFeedAt(p, at, &moved);
     RebuildOrder(p);
     return GazettePrefsFindFeed(p, moved.url);
 }
@@ -779,10 +1021,21 @@ int GazettePrefsParse(const char *text, size_t len, GazettePrefs *p)
 
         if (gz_stricmp(key, "group") == 0 ||
             gz_stricmp(key, "group-closed") == 0) {
+            /* A group stands where its line does: after however many
+               top-level feeds the file has named so far, which AddGroup
+               counts. */
             group = GazettePrefsAddGroup(p, value);
             if (group >= 0 && gz_stricmp(key, "group-closed") == 0) {
                 p->groups[group].collapsed = 1;
             }
+            continue;
+        }
+
+        /* Back to the top level: the feeds after this are nobody's. A file
+           from before there was such a line has none, and reads as it
+           always did. */
+        if (gz_stricmp(key, "group-end") == 0) {
+            group = -1;
             continue;
         }
 
@@ -803,7 +1056,12 @@ int GazettePrefsParse(const char *text, size_t len, GazettePrefs *p)
                 memset(&p->feeds[i], 0, sizeof p->feeds[i]);
             }
             p->feedCount = 0;
-            sawAnyFeed   = 1;
+            /* And the groups seen so far stood after the starter, which
+               is gone: they stand at the top now. */
+            for (i = 0; i < p->groupCount; i++) {
+                p->groups[i].after = 0;
+            }
+            sawAnyFeed = 1;
         }
 
         SplitFeedValue(value, url, sizeof url, title, sizeof title,
@@ -942,25 +1200,35 @@ size_t GazettePrefsSerialize(const GazettePrefs *p, char *out, size_t cap)
            "# feed = <url> | <title> | <home page>   "
            "(feed-off = the same, disabled)\r");
     Append(out, cap, &len,
-           "# Feeds after a group line belong to it; feeds before any belong "
-           "to none.\r\r");
+           "# Feeds after a group line belong to it, up to a group-end line; "
+           "feeds before any belong to none.\r\r");
 
-    for (i = 0; i < p->feedCount; i++) {
-        if (p->feeds[i].group < 0) {
-            AppendFeed(out, cap, &len, &p->feeds[i]);
-        }
-    }
+    /* In the sidebar's own order, top to bottom. A top-level feed that
+       follows a group's feeds is announced by a group-end line, without
+       which it would read as the group's. */
+    {
+        static GazetteSidebarRow seq[kGazetteMaxFeeds + kGazetteMaxGroups];
+        int count   = GazettePrefsSequence(p, seq);
+        int inGroup = 0;
 
-    for (g = 0; g < p->groupCount; g++) {
-        Append(out, cap, &len, "\r");
-        Append(out, cap, &len,
-               p->groups[g].collapsed ? "group-closed = " : "group        = ");
-        Append(out, cap, &len, p->groups[g].name);
-        Append(out, cap, &len, "\r");
-
-        for (i = 0; i < p->feedCount; i++) {
-            if (p->feeds[i].group == g) {
-                AppendFeed(out, cap, &len, &p->feeds[i]);
+        for (i = 0; i < count; i++) {
+            if (seq[i].kind == kGazetteRowGroup) {
+                g = seq[i].index;
+                Append(out, cap, &len, "\r");
+                Append(out, cap, &len,
+                       p->groups[g].collapsed ? "group-closed = "
+                                              : "group        = ");
+                Append(out, cap, &len, p->groups[g].name);
+                Append(out, cap, &len, "\r");
+                inGroup = 1;
+            } else if (p->feeds[seq[i].index].group < 0) {
+                if (inGroup) {
+                    Append(out, cap, &len, "group-end    = 1\r\r");
+                    inGroup = 0;
+                }
+                AppendFeed(out, cap, &len, &p->feeds[seq[i].index]);
+            } else {
+                AppendFeed(out, cap, &len, &p->feeds[seq[i].index]);
             }
         }
     }

@@ -1629,7 +1629,10 @@ static void HandleToggleEnabled(void)
  * Whether a feed or a group can take a step up or down. A feed steps among
  * the feeds of its own group — the feeds are held in sidebar order and a
  * group's are contiguous, so its neighbour is the next index over, and the
- * step stops where the group does. A group steps among the groups.
+ * step stops where the group does. A top-level feed's neighbour is likewise
+ * the next index over, when that is a top-level feed too: a group standing
+ * between two top-level feeds stops the step, which a drag does not mind.
+ * A group steps among the groups.
  */
 static Boolean CanMoveStep(int kind, int index, int delta)
 {
@@ -1648,20 +1651,28 @@ static Boolean CanMoveStep(int kind, int index, int delta)
 
 static void HandleMoveStep(int delta)
 {
-    int kind  = 0;
-    int index = 0;
-    int moved;
+    GazettePlace place;
+    int          kind  = 0;
+    int          index = 0;
+    int          moved;
 
     if (!GazetteUISelection(&kind, &index) ||
         !CanMoveStep(kind, index, delta)) {
         return;
     }
 
+    /* A step is a hop over the neighbour: after it going down, before it
+       going up. The neighbour is the next feed in the group — or the next
+       group — which is what CanMoveStep has just checked exists. */
+    place.ref = index + delta;
     if (kind == kGazetteRowFeed) {
-        moved = GazetteCoreMoveFeed(index, index + delta,
-                                    GazetteCoreFeedGroup(index));
+        place.where = (delta > 0) ? kGazettePlaceAfterFeed
+                                  : kGazettePlaceBeforeFeed;
+        moved = GazetteCoreMoveFeed(index, place);
     } else {
-        moved = GazetteCoreMoveGroup(index, index + delta);
+        place.where = (delta > 0) ? kGazettePlaceAfterGroup
+                                  : kGazettePlaceBeforeGroup;
+        moved = GazetteCoreMoveGroup(index, place);
     }
     if (moved < 0) {
         return;
@@ -2110,10 +2121,11 @@ static void HandleExportOPML(void)
 
 static void HandleMoveToGroup(short item)
 {
-    int kind  = 0;
-    int index = 0;
-    int group;
-    int moved;
+    GazettePlace place;
+    int          kind  = 0;
+    int          index = 0;
+    int          group;
+    int          moved;
 
     if (!GazetteUISelection(&kind, &index) || kind != kGazetteRowFeed) {
         return;
@@ -2127,9 +2139,16 @@ static void HandleMoveToGroup(short item)
         return;                     /* the divider */
     }
 
-    /* The last position in the list; the preferences then put the feed at the
-       end of the group it now belongs to, which is where a new one goes. */
-    moved = GazetteCoreMoveFeed(index, GazetteCoreFeedCount() - 1, group);
+    /* The end of the group it is going to — or, for the top level, the end
+       of the whole list, which is where a new feed goes. */
+    if (group < 0) {
+        place.where = kGazettePlaceListEnd;
+        place.ref   = 0;
+    } else {
+        place.where = kGazettePlaceGroupEnd;
+        place.ref   = group;
+    }
+    moved = GazetteCoreMoveFeed(index, place);
     if (moved < 0) {
         return;
     }

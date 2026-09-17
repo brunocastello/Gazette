@@ -143,9 +143,10 @@ void GazetteCoreShowAllRows(void);
  */
 int GazetteCoreImportOPML(const char *text, size_t len);
 
-/* Move a feed to a position and into a group. Returns its new index, or -1.
-   This is what a drag in the sidebar lands on. */
-int     GazetteCoreMoveFeed(int from, int to, int group);
+/* Move a feed to a place — see GazettePlace in prefs/gazette_prefs.h.
+   Returns its new index, or -1. This is what a drag in the sidebar lands
+   on, and what the Move commands ask for. */
+int     GazetteCoreMoveFeed(int feed, GazettePlace place);
 
 /* Returns the new group's index, or -1. */
 int     GazetteCoreAddGroup(const char *name);
@@ -154,7 +155,11 @@ int     GazetteCoreAddGroup(const char *name);
    them: a folder should never silently take subscriptions with it. */
 Boolean GazetteCoreRemoveGroup(int index);
 Boolean GazetteCoreRenameGroup(int index, const char *name);
-int     GazetteCoreMoveGroup(int from, int to);
+int     GazetteCoreMoveGroup(int group, GazettePlace place);
+
+/* The sidebar's full sequence below the standing views, hidden and shut or
+   not; see GazettePrefsSequence. */
+int     GazetteCoreSequence(GazetteSidebarRow *out);
 void    GazetteCoreSetGroupCollapsed(int index, Boolean collapsed);
 
 #ifdef __cplusplus

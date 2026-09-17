@@ -88,6 +88,14 @@ typedef struct {
     char name[kGazetteGroupLen];
     int  collapsed;             /* the sidebar's disclosure triangle */
     int  hidden;                /* runtime only; see above */
+    /*
+     * Where the group's row stands among the top-level feeds: how many of
+     * them come before it. The sidebar is one sequence of top-level feeds
+     * and groups, in the user's order, and this is what puts a group
+     * between two top-level feeds rather than after all of them. Groups
+     * with the same count stand together, in group order.
+     */
+    int  after;
 } GazetteGroupPref;
 
 typedef struct {
@@ -110,9 +118,10 @@ typedef struct {
     int  groupCount;
 
     /*
-     * Feeds in sidebar order: top-level ones first, then each group's in
-     * turn. Kept that way rather than sorted on demand, because the order is
-     * the user's and a redraw is not the place to be re-deriving it.
+     * Feeds in sidebar order — the order the rows are drawn in, top to
+     * bottom, with each group's feeds contiguous where the group stands.
+     * Kept that way rather than sorted on demand, because the order is the
+     * user's and a redraw is not the place to be re-deriving it.
      */
     GazetteFeedPref feeds[kGazetteMaxFeeds];
     int  feedCount;
@@ -164,9 +173,32 @@ int GazettePrefsRemoveFeed(GazettePrefs *p, const char *url);
 /* Index of the feed with this URL, or -1. */
 int GazettePrefsFindFeed(const GazettePrefs *p, const char *url);
 
-/* Move a feed to a new position in the list, and into a group. This is what a
-   drag lands on. Returns the feed's new index, or -1. */
-int GazettePrefsMoveFeed(GazettePrefs *p, int from, int to, int group);
+/*
+ * A place in the sidebar's order, named by what it is next to. This is what
+ * a drag lands on and what the Move commands ask for, and it is named this
+ * way because that is how a place in a list is described: after this feed,
+ * at the end of that group, above this group. `ref` is the feed or the group
+ * the place is beside; the two ends of the list need none.
+ */
+enum {
+    kGazettePlaceAfterFeed = 0,     /* right after feed ref, in its group */
+    kGazettePlaceBeforeFeed,        /* right before feed ref, in its group */
+    kGazettePlaceGroupStart,        /* first in group ref */
+    kGazettePlaceGroupEnd,          /* last in group ref */
+    kGazettePlaceBeforeGroup,       /* at the top level, right above group ref */
+    kGazettePlaceAfterGroup,        /* at the top level, right below group ref */
+    kGazettePlaceListStart,         /* at the top level, first of all */
+    kGazettePlaceListEnd            /* at the top level, last of all */
+};
+
+typedef struct {
+    int where;                  /* one of the kGazettePlace constants */
+    int ref;                    /* the feed or group it refers to */
+} GazettePlace;
+
+/* Move a feed to a place. Returns the feed's new index, or -1. A feed cannot
+   be placed beside itself; that comes back as -1 too. */
+int GazettePrefsMoveFeed(GazettePrefs *p, int feed, GazettePlace place);
 
 /* Rename a feed. Returns 1 on success. */
 int GazettePrefsRenameFeed(GazettePrefs *p, int index, const char *title);
@@ -201,8 +233,11 @@ int GazettePrefsRemoveGroup(GazettePrefs *p, int index);
 
 int GazettePrefsRenameGroup(GazettePrefs *p, int index, const char *name);
 
-/* Move a group, and its feeds with it. Returns its new index, or -1. */
-int GazettePrefsMoveGroup(GazettePrefs *p, int from, int to);
+/* Move a group, and its feeds with it, to a place: above or below another
+   group, after or before a top-level feed, or either end of the list — a
+   group does not go inside a group, so the two places inside one are
+   refused. Returns its new index, or -1. */
+int GazettePrefsMoveGroup(GazettePrefs *p, int group, GazettePlace place);
 
 /* Index of the first feed in a group, or -1 when it has none. */
 int GazettePrefsFirstFeedInGroup(const GazettePrefs *p, int group);
@@ -247,6 +282,14 @@ typedef struct {
     int kind;                   /* kGazetteRowGroup or kGazetteRowFeed */
     int index;                  /* into groups[] or feeds[] accordingly */
 } GazetteSidebarRow;
+
+/*
+ * The full sequence of the sidebar below the standing views — every group,
+ * with its feeds after it, and every top-level feed, in order, whether or
+ * not anything is hidden or shut. Returns how many were written to out,
+ * which holds at most kGazetteMaxFeeds + kGazetteMaxGroups.
+ */
+int GazettePrefsSequence(const GazettePrefs *p, GazetteSidebarRow *out);
 
 /* How many rows the sidebar shows. Hidden feeds and hidden groups are not
    rows: they are drawn nowhere and counted nowhere. */

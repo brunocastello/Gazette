@@ -1811,6 +1811,9 @@ static void TestGroups(void)
     p.refreshMinutes = 30;
     p.maxArticles    = 100;
 
+    /* The sidebar is one sequence, and a group stands where it was added:
+       after the top-level feeds there were at the time. */
+    GazettePrefsAddFeed(&p, "https://e/top", "Top", -1);
     CheckLong("a group can be added", GazettePrefsAddGroup(&p, "News"), 0);
     CheckLong("and another", GazettePrefsAddGroup(&p, "Blogs"), 1);
     CheckLong("an empty group name is refused",
@@ -1821,13 +1824,13 @@ static void TestGroups(void)
               GazettePrefsAddGroup(&p, "News") == 2);
     GazettePrefsRemoveGroup(&p, 2);
 
-    GazettePrefsAddFeed(&p, "https://e/top", "Top", -1);
     GazettePrefsAddFeed(&p, "https://e/n1", "N1", 0);
     GazettePrefsAddFeed(&p, "https://e/b1", "B1", 1);
     GazettePrefsAddFeed(&p, "https://e/n2", "N2", 0);
 
-    /* Top-level feeds first, then each group's in turn. The array is held in
-       that order so the window, the file and a drag all read one sequence. */
+    /* Each group's feeds together, where the group stands. The array is
+       held in that order so the window, the file and a drag all read one
+       sequence. */
     CheckOrder("feeds are held in sidebar order", &p, "Top,N1,N2,B1");
     CheckLong("group feed counts", GazettePrefsGroupFeedCount(&p, 0), 2);
     CheckLong("the other group", GazettePrefsGroupFeedCount(&p, 1), 1);
@@ -1844,7 +1847,12 @@ static void TestGroups(void)
               GazettePrefsRenameGroup(&p, 9, "No"), 0);
 
     /* Moving a group takes its feeds with it. */
-    CheckLong("a group can be moved", GazettePrefsMoveGroup(&p, 1, 0), 0);
+    {
+        GazettePlace above = { kGazettePlaceBeforeGroup, 0 };
+
+        CheckLong("a group can be moved", GazettePrefsMoveGroup(&p, 1, above),
+                  0);
+    }
     CheckOrder("its feeds move with it", &p, "Top,B1,N1,N2");
     CheckStr("and it is where it was put", p.groups[0].name, "Weblogs");
     CheckStr("the other shifted along", p.groups[1].name, "News");
@@ -1860,34 +1868,64 @@ static void TestGroups(void)
               p.feeds[GazettePrefsFindFeed(&p, "https://e/n1")].group, 0);
 
     {
-        /* A drag: the feed lands in the group it was dropped on, wherever the
-           drop position claimed to be. */
+        /* A drag: a feed lands at the place it was dropped on, named by what
+           it is beside. */
         GazettePrefs q;
+        GazettePlace place;
 
         memset(&q, 0, sizeof q);
-        GazettePrefsAddGroup(&q, "G");
         GazettePrefsAddFeed(&q, "https://e/1", "One", -1);
         GazettePrefsAddFeed(&q, "https://e/2", "Two", -1);
+        GazettePrefsAddGroup(&q, "G");
         GazettePrefsAddFeed(&q, "https://e/3", "Three", 0);
         CheckOrder("before the drag", &q, "One,Two,Three");
 
+        place.where = kGazettePlaceGroupEnd;
+        place.ref   = 0;
         CheckTrue("dragging into a group works",
-                  GazettePrefsMoveFeed(&q, 0, 2, 0) >= 0);
+                  GazettePrefsMoveFeed(&q, 0, place) >= 0);
         CheckOrder("the dragged feed joins the group", &q, "Two,Three,One");
         CheckLong("and is in it",
                   q.feeds[GazettePrefsFindFeed(&q, "https://e/1")].group, 0);
 
+        place.where = kGazettePlaceListStart;
         CheckTrue("dragging back out works",
-                  GazettePrefsMoveFeed(&q, 2, 0, -1) >= 0);
+                  GazettePrefsMoveFeed(&q, 2, place) >= 0);
         CheckOrder("and it returns to the top", &q, "One,Two,Three");
+        CheckLong("at the top level",
+                  q.feeds[GazettePrefsFindFeed(&q, "https://e/1")].group, -1);
 
         /* Reordering within the top level. */
+        place.where = kGazettePlaceAfterFeed;
+        place.ref   = 1;
         CheckTrue("reordering within a level works",
-                  GazettePrefsMoveFeed(&q, 0, 1, -1) >= 0);
+                  GazettePrefsMoveFeed(&q, 0, place) >= 0);
         CheckOrder("swapped", &q, "Two,One,Three");
 
+        /* Below a group, at the top level: the sequence is not "top-level
+           first" — a feed stands wherever it was put. */
+        place.where = kGazettePlaceAfterGroup;
+        place.ref   = 0;
+        CheckTrue("a feed can go below a group",
+                  GazettePrefsMoveFeed(&q, 0, place) >= 0);
+        CheckOrder("and stands there", &q, "One,Three,Two");
+        CheckLong("at the top level still",
+                  q.feeds[GazettePrefsFindFeed(&q, "https://e/2")].group, -1);
+        CheckLong("with the group standing before it", q.groups[0].after, 1);
+
+        /* And a group can stand between two top-level feeds. */
+        place.where = kGazettePlaceAfterFeed;
+        place.ref   = GazettePrefsFindFeed(&q, "https://e/2");
+        CheckLong("a group can go after a top-level feed",
+                  GazettePrefsMoveGroup(&q, 0, place), 0);
+        CheckOrder("its feed goes with it", &q, "One,Two,Three");
+        CheckLong("and it stands after both feeds", q.groups[0].after, 2);
+
         CheckLong("moving a feed that is not there fails",
-                  GazettePrefsMoveFeed(&q, 9, 0, -1), -1);
+                  GazettePrefsMoveFeed(&q, 9, place), -1);
+        place.where = kGazettePlaceGroupEnd;
+        CheckLong("a group does not go inside a group",
+                  GazettePrefsMoveGroup(&q, 0, place), -1);
     }
 
     {
@@ -1961,9 +1999,9 @@ static void TestSidebarRows(void)
     GazetteSidebarRow row;
 
     memset(&p, 0, sizeof p);
+    GazettePrefsAddFeed(&p, "https://e/top", "Top", -1);
     GazettePrefsAddGroup(&p, "News");
     GazettePrefsAddGroup(&p, "Blogs");
-    GazettePrefsAddFeed(&p, "https://e/top", "Top", -1);
     GazettePrefsAddFeed(&p, "https://e/n1", "N1", 0);
     GazettePrefsAddFeed(&p, "https://e/n2", "N2", 0);
     GazettePrefsAddFeed(&p, "https://e/b1", "B1", 1);
@@ -2003,8 +2041,16 @@ static void TestSidebarRows(void)
     CheckRows("an empty group is still a line", &p,
               SMART "Top,[News],N1,N2,[Blogs],B1,[Empty]");
 
+    /* A top-level feed added now goes to the very end, below the groups —
+       and the rows draw it there. */
+    GazettePrefsAddFeed(&p, "https://e/last", "Last", -1);
+    CheckRows("a top-level feed can stand below the groups", &p,
+              SMART "Top,[News],N1,N2,[Blogs],B1,[Empty],Last");
+    CheckLong("and has the last row", GazettePrefsRowForFeed(&p, 4),
+              7 + kGazetteSmartCount);
+
     CheckLong("a row past the end is not a row",
-              GazettePrefsRowAt(&p, 7 + kGazetteSmartCount, &row), 0);
+              GazettePrefsRowAt(&p, 8 + kGazetteSmartCount, &row), 0);
     CheckLong("nor is a negative one", GazettePrefsRowAt(&p, -1, &row), 0);
     CheckLong("a feed that is not there has no row",
               GazettePrefsRowForFeed(&p, 99), -1);
@@ -2035,10 +2081,10 @@ static void TestHiddenRows(void)
     GazettePrefs p;
 
     memset(&p, 0, sizeof p);
-    GazettePrefsAddGroup(&p, "News");
-    GazettePrefsAddGroup(&p, "Blogs");
     GazettePrefsAddFeed(&p, "https://e/top", "Top", -1);
     GazettePrefsAddFeed(&p, "https://e/t2", "Top2", -1);
+    GazettePrefsAddGroup(&p, "News");
+    GazettePrefsAddGroup(&p, "Blogs");
     GazettePrefsAddFeed(&p, "https://e/n1", "N1", 0);
     GazettePrefsAddFeed(&p, "https://e/n2", "N2", 0);
     GazettePrefsAddFeed(&p, "https://e/b1", "B1", 1);
@@ -2092,11 +2138,13 @@ static void TestGroupParsing(void)
         "feed = https://e/n1 | N1\r"
         "feed-off = https://e/n2 | N2\r"
         "group-closed = Blogs\r"
-        "feed = https://e/b1 | B1\r";
+        "feed = https://e/b1 | B1\r"
+        "group-end = 1\r"
+        "feed = https://e/after | After\r";
     GazettePrefs p;
 
     CheckLong("parse reads every feed",
-              GazettePrefsParse(text, sizeof text - 1, &p), 4);
+              GazettePrefsParse(text, sizeof text - 1, &p), 5);
     CheckLong("and every group", p.groupCount, 2);
     CheckStr("group names", p.groups[0].name, "News");
     CheckStr("and the second", p.groups[1].name, "Blogs");
@@ -2105,12 +2153,32 @@ static void TestGroupParsing(void)
     CheckStr("the country is read", p.country, "BR");
 
     /* Membership is carried by the order of the lines and nothing else. */
-    CheckOrder("the tree is in sidebar order", &p, "Loose,N1,N2,B1");
+    CheckOrder("the tree is in sidebar order", &p, "Loose,N1,N2,B1,After");
     CheckLong("a feed before any group is top-level", p.feeds[0].group, -1);
     CheckLong("a feed after one belongs to it", p.feeds[1].group, 0);
     CheckLong("and so does the next", p.feeds[2].group, 0);
     CheckLong("until the following group", p.feeds[3].group, 1);
     CheckLong("feed-off is still disabled", p.feeds[2].enabled, 0);
+    CheckLong("a feed after group-end is top-level again",
+              p.feeds[4].group, -1);
+    CheckLong("the groups stand after the one top-level feed before them",
+              p.groups[1].after, 1);
+
+    {
+        /* And that survives being written and read back. */
+        char         out[kGazettePrefsTextMax];
+        size_t       n = GazettePrefsSerialize(&p, out, sizeof out);
+        GazettePrefs q;
+
+        CheckTrue("a mixed order serialises", n > 0);
+        CheckTrue("with a group-end before the trailing feed",
+                  strstr(out, "group-end") != NULL);
+        GazettePrefsParse(out, n, &q);
+        CheckOrder("and reads back in the same order", &q,
+                   "Loose,N1,N2,B1,After");
+        CheckLong("with the trailing feed at the top level",
+                  q.feeds[4].group, -1);
+    }
 
     {
         /* Groups declared with no feeds at all still exist, and the starter
