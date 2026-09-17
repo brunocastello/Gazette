@@ -10,8 +10,7 @@
  */
 
 #include "Processes.r"      /* 'SIZE'          */
-#include "Dialogs.r"        /* 'ALRT', 'DITL', 'dftb' */
-#include "Controls.r"       /* 'CNTL'          */
+#include "Dialogs.r"        /* 'ALRT', 'DITL'  */
 #include "MacTypes.r"       /* 'vers'          */
 
 /* Must match the enum in src/ui/gazette_dialogs.c. */
@@ -20,10 +19,7 @@
 #define kConfirmAlertID  131
 #define kFeedGroupCNTL   129    /* the feed dialog's Group popup */
 
-/* The popup takes no menu resource: -12345 tells the CDEF so, and the
-   dialog code builds the menu from the groups there are and hands it in. */
-#define kPopupNoMenu     -12345
-#define kPopupFixedWidth 401    /* kControlPopupButtonProc + fixed width */
+
 
 /* ------------------------------------------------------------------ */
 /* SIZE — memory partition                                             */
@@ -167,38 +163,46 @@ resource 'DITL' (kFeedDialogID, "Feed") {
     }
 };
 
-/* The description is set a size down from the fields, in the application
-   font: it is a note, not a label. One entry per item, and only the
-   third says anything. */
-resource 'dftb' (kFeedDialogID) {
-    versionZero {
-        {
-            skipItem {},
-            skipItem {},
-            dataItem { kDialogFontUseFontMask | kDialogFontUseSizeMask,
-                       3 /* Geneva */, 10, 0, 0, 0,
-                       0, 0, 0, 0, 0, 0, "" },
-            skipItem {},
-            skipItem {},
-            skipItem {},
-            skipItem {},
-            skipItem {},
-            skipItem {}
-        }
-    }
+/*
+ * The description is set a size down from the fields, in the application
+ * font: it is a note, not a label. One entry per item, and only the third
+ * says anything: flags $0005 (font and size), font 3 (Geneva), size 10,
+ * then style, mode, justification, two colours and an empty font name.
+ *
+ * Raw bytes rather than the Dialogs.r template, for the reason the icons
+ * are: Retro68's Rez falls over on the template's switch-inside-an-array,
+ * and a data block does not care which Rez reads it. The layout is the
+ * template's, version 0, item by item, nothing aligned.
+ */
+data 'dftb' (kFeedDialogID, "Feed") {
+    $"0000 0009"                    /* version 0, nine items */
+    $"0000 0000"                    /* 1, 2: as they are */
+    $"0001 0005 0003 000A 0000 0000 0000"
+    $"0000 0000 0000 0000 0000 0000 00"   /* 3: Geneva 10 */
+    $"0000 0000 0000 0000 0000 0000"      /* 4 to 9: as they are */
 };
 
-/* The Group popup: the width of its rectangle, and no title of its own —
-   the label beside it is a static text item, aligned with the others. */
-resource 'CNTL' (kFeedGroupCNTL, "Group") {
-    { 106, 88, 126, 240 },
-    kPopupNoMenu,               /* value: the menu ID, and there is none */
-    visible,
-    -1,                         /* max: work the title's width out; it is empty */
-    0,                          /* min */
-    kPopupFixedWidth,
-    0,
-    ""
+/*
+ * The Group popup: the width of its rectangle, and no title of its own —
+ * the label beside it is a static text item, aligned with the others. The
+ * value is the menu ID, and -12345 tells the CDEF there is no menu resource
+ * to load: the dialog code builds the menu from the groups there are and
+ * hands it in by handle. Max -1 has the control work out its (empty)
+ * title's width; the proc is kControlPopupButtonProc plus the fixed-width
+ * variant, 401.
+ *
+ * Raw bytes, as the dftb above: the CNTL template's procID is an enum of
+ * the classic CDEFs and the popup's 401 is not among them.
+ */
+data 'CNTL' (kFeedGroupCNTL, "Group") {
+    $"006A 0058 007E 00F0"          /* bounds: 106, 88, 126, 240 */
+    $"CFC7"                         /* value: -12345, no menu resource */
+    $"0100"                         /* visible, and the fill byte */
+    $"FFFF"                         /* max: -1 */
+    $"0000"                         /* min */
+    $"0191"                         /* procID: 401 */
+    $"0000 0000"                    /* refCon */
+    $"00"                           /* title: "" */
 };
 
 resource 'DLOG' (kNameDialogID, "Name") {
