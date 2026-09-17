@@ -107,7 +107,7 @@ resource 'DITL' (kAboutAlertID, "About Gazette") {
 
 resource 'DLOG' (kFeedDialogID, "Feed") {
     { 0, 0, 174, 340 },
-    movableDBoxProc,            /* a title bar, to say New from Edit */
+    dBoxProc,                   /* BISECT: was movableDBoxProc */
     invisible,
     noGoAway,
     0x0,
@@ -184,7 +184,7 @@ data 'dftb' (kFeedDialogID, "Feed") {
 resource 'vers' (1) {
     0x00,                           /* major revision, BCD    */
     0x10,                           /* minor revision, BCD    */
-    final,                          /* release stage          */
+    development,                    /* BISECT: was final */
     0x00,                           /* non-final release #    */
     0,                              /* region code: verUS     */
     "0.1.0",
