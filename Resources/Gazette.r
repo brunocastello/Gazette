@@ -17,8 +17,6 @@
 #define kFeedDialogID    129
 #define kNameDialogID    130
 #define kConfirmAlertID  131
-#define kFeedGroupCNTL   129    /* the feed dialog's Group popup */
-
 
 
 /* ------------------------------------------------------------------ */
@@ -158,8 +156,8 @@ resource 'DITL' (kFeedDialogID, "Feed") {
         { 108, 16, 124, 84 },
         StaticText { disabled, "Group:" };
 
-        { 106, 88, 126, 240 },
-        Control { enabled, kFeedGroupCNTL };
+        /* The Group popup is not an item: the dialog code makes it, at
+           { 106, 88, 126, 240 }, from the groups there are. */
     }
 };
 
@@ -175,110 +173,12 @@ resource 'DITL' (kFeedDialogID, "Feed") {
  * template's, version 0, item by item, nothing aligned.
  */
 data 'dftb' (kFeedDialogID, "Feed") {
-    $"0000 0009"                    /* version 0, nine items */
+    $"0000 0008"                    /* version 0, eight items */
     $"0000 0000"                    /* 1, 2: as they are */
     $"0001 0005 0003 000A 0000 0000 0000"
     $"0000 0000 0000 0000 0000 0000 00"   /* 3: Geneva 10 */
-    $"0000 0000 0000 0000 0000 0000"      /* 4 to 9: as they are */
+    $"0000 0000 0000 0000 0000"           /* 4 to 8: as they are */
 };
-
-/*
- * The Group popup: the width of its rectangle, and no title of its own —
- * the label beside it is a static text item, aligned with the others. The
- * value is the menu ID, and -12345 tells the CDEF there is no menu resource
- * to load: the dialog code builds the menu from the groups there are and
- * hands it in by handle. Max -1 has the control work out its (empty)
- * title's width; the proc is kControlPopupButtonProc plus the fixed-width
- * variant, 401.
- *
- * Raw bytes, as the dftb above: the CNTL template's procID is an enum of
- * the classic CDEFs and the popup's 401 is not among them.
- */
-data 'CNTL' (kFeedGroupCNTL, "Group") {
-    $"006A 0058 007E 00F0"          /* bounds: 106, 88, 126, 240 */
-    $"CFC7"                         /* value: -12345, no menu resource */
-    $"0100"                         /* visible, and the fill byte */
-    $"FFFF"                         /* max: -1 */
-    $"0000"                         /* min */
-    $"0191"                         /* procID: 401 */
-    $"0000 0000"                    /* refCon */
-    $"00"                           /* title: "" */
-};
-
-resource 'DLOG' (kNameDialogID, "Name") {
-    { 0, 0, 116, 320 },
-    dBoxProc,
-    invisible,
-    noGoAway,
-    0x0,
-    kNameDialogID,
-    "",
-    centerMainScreen
-};
-
-resource 'dlgx' (kNameDialogID) {
-    versionZero {
-        kDialogFlagsUseThemeBackground | kDialogFlagsUseThemeControls
-    }
-};
-
-resource 'DITL' (kNameDialogID, "Name") {
-    {
-        { 82, 244, 102, 304 },
-        Button { enabled, "OK" };
-
-        { 82, 172, 102, 232 },
-        Button { enabled, "Cancel" };
-
-        /* The prompt is set at runtime — one dialog serves "New Group",
-           "Rename Group" and "Rename Feed". */
-        { 14, 16, 46, 304 },
-        StaticText { disabled, "" };
-
-        { 52, 16, 68, 304 },
-        EditText { enabled, "" };
-    }
-};
-
-/* Removing a feed or a group is not undoable, so it asks first. CautionAlert
-   draws the caution icon itself; the text starts clear of it. */
-resource 'ALRT' (kConfirmAlertID, "Confirm") {
-    { 0, 0, 124, 360 },
-    kConfirmAlertID,
-    {
-        OK, visible, silent;
-        OK, visible, silent;
-        OK, visible, silent;
-        OK, visible, silent
-    },
-    alertPositionMainScreen
-};
-
-resource 'alrx' (kConfirmAlertID) {
-    versionOne {
-        kDialogFlagsUseThemeBackground | kDialogFlagsUseThemeControls,
-        0,
-        kUseThemeWindow,
-        ""
-    }
-};
-
-resource 'DITL' (kConfirmAlertID, "Confirm") {
-    {
-        { 90, 280, 110, 340 },
-        Button { enabled, "Remove" };
-
-        { 90, 208, 110, 268 },
-        Button { enabled, "Cancel" };
-
-        { 12, 70, 80, 340 },
-        StaticText { disabled, "^0" };
-    }
-};
-
-/* ------------------------------------------------------------------ */
-/* vers — shown by the Finder's Get Info window                        */
-/* ------------------------------------------------------------------ */
 
 /* The number is src/gazette_version.h's, written out because Rez cannot
    read that header. */

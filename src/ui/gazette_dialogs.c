@@ -82,6 +82,25 @@ static pascal Boolean GazetteDialogFilter(DialogRef dialog, EventRecord *event,
         }
         return false;
     }
+
+    /* A click on the Group popup: ModalDialog tracks only its items, and
+       the popup is not one, so it is tracked here — the CDEF runs the menu
+       with the -1 action — and reported as no item at all. */
+    if (event != NULL && event->what == mouseDown && gFeedPopup != NULL &&
+        dialog != NULL) {
+        Point         where = event->where;
+        ControlHandle hit   = NULL;
+
+        SetPortDialogPort(dialog);
+        GlobalToLocal(&where);
+        if (FindControl(where, GetDialogWindow(dialog), &hit) != 0 &&
+            hit == gFeedPopup) {
+            (void)HandleControlClick(gFeedPopup, where, event->modifiers,
+                                     (ControlActionUPP)-1L);
+            *item = 0;
+            return true;
+        }
+    }
     return StdFilterProc(dialog, event, item);
 }
 
@@ -216,9 +235,7 @@ Boolean GazetteAskFeed(GazetteFeedDialog *d)
     DialogRef     dialog;
     ControlHandle popup = NULL;
     MenuRef       menu  = NULL;
-    Handle        handle;
     Rect          box;
-    short         type;
     Str255        title;
     Boolean       ok;
 
@@ -238,23 +255,26 @@ Boolean GazetteAskFeed(GazetteFeedDialog *d)
     SetItemText(dialog, kFeedItemTitle, d->title);
     SetItemText(dialog, kFeedItemURL, d->url);
 
-    /* The popup is a control item, so its item handle is the control. */
-    GetDialogItem(dialog, kFeedItemGroup, &type, &handle, &box);
-    if (handle != NULL) {
-        popup = (ControlHandle)handle;
-        menu  = GroupMenu(d->groups, d->groupCount);
-        if (menu != NULL) {
-            (void)SetControlData(popup, kControlEntireControl,
-                                 kControlPopupButtonMenuHandleTag,
-                                 sizeof menu, (Ptr)&menu);
-            SetControlMinimum(popup, 1);
-            SetControlMaximum(popup, CountMenuItems(menu));
-            SetControlValue(popup,
-                            (d->group >= 0 && d->group < d->groupCount)
-                                ? (short)(kGroupFirstItem + d->group)
-                                : kGroupItemTop);
-        }
+    /* The popup, made here at the place the DITL leaves for it. */
+    SetRect(&box, kFeedPopupLeft, kFeedPopupTop, kFeedPopupRight,
+            kFeedPopupBottom);
+    menu = GroupMenu(d->groups, d->groupCount);
+    if (menu != NULL) {
+        popup = NewControl(GetDialogWindow(dialog), &box, "\p", true,
+                           kPopupNoMenuID, 0, -1, kFeedPopupProc, 0);
     }
+    if (popup != NULL) {
+        (void)SetControlData(popup, kControlEntireControl,
+                             kControlPopupButtonMenuHandleTag,
+                             sizeof menu, (Ptr)&menu);
+        SetControlMinimum(popup, 1);
+        SetControlMaximum(popup, CountMenuItems(menu));
+        SetControlValue(popup,
+                        (d->group >= 0 && d->group < d->groupCount)
+                            ? (short)(kGroupFirstItem + d->group)
+                            : kGroupItemTop);
+    }
+    gFeedPopup = popup;
 
     /* The name first: it is what the user has in their head, and the one a
        new feed most often leaves empty, so the cursor starts in the field
@@ -279,7 +299,8 @@ Boolean GazetteAskFeed(GazetteFeedDialog *d)
         }
     }
 
-    DisposeDialog(dialog);
+    gFeedPopup = NULL;
+    DisposeDialog(dialog);              /* takes the popup with the window */
     if (menu != NULL) {
         DeleteMenu(kGroupPopupMenuID);
         DisposeMenu(menu);
