@@ -97,6 +97,7 @@ static void    HandleCopyHomeURL(void);
 static Boolean OpenURL(const char *url);
 static void    RebuildGroupMenu(MenuRef menu, int feedIndex);
 static void    AdjustMarkAllItem(MenuRef menu, MenuItemIndex item);
+static void    AdjustRefreshItem(MenuRef menu, MenuItemIndex item);
 static void    ShowSidebarContextMenu(int kind, int index, Point global);
 static void    ShowSmart(int which);
 static void    ResumeFullText(void);
@@ -260,36 +261,40 @@ enum {
     kMoveToFirstGroup = 3
 };
 
-/* The contextual menus' items. */
+/* The contextual menus' items. Each begins with Refresh, then Mark All as
+   Read: what is done to a row most often, nearest the mouse. */
 enum {
-    kCtxSmartMarkAll = 1
+    kCtxSmartRefresh = 1,
+    kCtxSmartMarkAll = 2
 };
 enum {
-    kCtxGroupMarkAll = 1,
-    /* 2 is a divider */
-    kCtxGroupEnabled = 3,
-    kCtxGroupMove    = 4,
-    /* 5 is a divider */
-    kCtxGroupEdit    = 6,
-    kCtxGroupDelete  = 7
+    kCtxGroupRefresh = 1,
+    kCtxGroupMarkAll = 2,
+    /* 3 is a divider */
+    kCtxGroupEnabled = 4,
+    kCtxGroupMove    = 5,
+    /* 6 is a divider */
+    kCtxGroupEdit    = 7,
+    kCtxGroupDelete  = 8
 };
 enum {
     kCtxGroupMoveUp   = 1,
     kCtxGroupMoveDown = 2
 };
 enum {
-    kCtxFeedMarkAll  = 1,
-    /* 2 is a divider */
-    kCtxFeedHome     = 3,
-    /* 4 is a divider */
-    kCtxFeedCopyURL  = 5,
-    kCtxFeedCopyHome = 6,
-    /* 7 is a divider */
-    kCtxFeedEnabled  = 8,
-    kCtxFeedMove     = 9,
-    /* 10 is a divider */
-    kCtxFeedEdit     = 11,
-    kCtxFeedDelete   = 12
+    kCtxFeedRefresh  = 1,
+    kCtxFeedMarkAll  = 2,
+    /* 3 is a divider */
+    kCtxFeedHome     = 4,
+    /* 5 is a divider */
+    kCtxFeedCopyURL  = 6,
+    kCtxFeedCopyHome = 7,
+    /* 8 is a divider */
+    kCtxFeedEnabled  = 9,
+    kCtxFeedMove     = 10,
+    /* 11 is a divider */
+    kCtxFeedEdit     = 12,
+    kCtxFeedDelete   = 13
 };
 
 /*
@@ -540,14 +545,14 @@ static Boolean BuildMenuBar(void)
     if (ctx == nil) {
         return false;
     }
-    AppendMenu(ctx, "\pMark All as Read");
+    AppendMenu(ctx, "\pRefresh;Mark All as Read");
     InsertMenu(ctx, hierMenu);
 
     ctx = NewMenu(kMenuCtxGroup, "\p");
     if (ctx == nil) {
         return false;
     }
-    AppendMenu(ctx, "\pMark All as Read;(-;Turn Off;Move;(-;"
+    AppendMenu(ctx, "\pRefresh;Mark All as Read;(-;Turn Off;Move;(-;"
                     "Edit Group\311;Delete");
     InsertMenu(ctx, hierMenu);
     SetMenuItemHierarchicalID(ctx, kCtxGroupMove, kMenuCtxGroupMove);
@@ -563,7 +568,7 @@ static Boolean BuildMenuBar(void)
     if (ctx == nil) {
         return false;
     }
-    AppendMenu(ctx, "\pMark All as Read;(-;Open Home Page;(-;"
+    AppendMenu(ctx, "\pRefresh;Mark All as Read;(-;Open Home Page;(-;"
                     "Copy Feed URL;Copy Home Page URL;(-;Turn Off;Move;(-;"
                     "Edit Feed\311;Delete");
     InsertMenu(ctx, hierMenu);
@@ -953,13 +958,16 @@ static void HandleMenuChoice(long menuResult)
         /* The sidebar's contextual menus. Each item is a menu bar item's
            handler and nothing else, for the reason the toolbar's are. */
         case kMenuCtxSmart:
-            if (menuItem == kCtxSmartMarkAll) {
-                HandleMarkAllRead();
+            switch (menuItem) {
+                case kCtxSmartRefresh: HandleRefresh();     break;
+                case kCtxSmartMarkAll: HandleMarkAllRead(); break;
+                default: break;
             }
             break;
 
         case kMenuCtxGroup:
             switch (menuItem) {
+                case kCtxGroupRefresh: HandleRefresh();         break;
                 case kCtxGroupMarkAll: HandleMarkAllRead();     break;
                 case kCtxGroupEnabled: HandleToggleEnabled();   break;
                 case kCtxGroupEdit:    HandleEditGroup();       break;
@@ -978,6 +986,7 @@ static void HandleMenuChoice(long menuResult)
 
         case kMenuCtxFeed:
             switch (menuItem) {
+                case kCtxFeedRefresh:  HandleRefresh();         break;
                 case kCtxFeedMarkAll:  HandleMarkAllRead();     break;
                 case kCtxFeedHome:     HandleOpenHomePage();    break;
                 case kCtxFeedCopyURL:  HandleCopyFeedURL();     break;
@@ -1294,6 +1303,7 @@ static void ShowSidebarContextMenu(int kind, int index, Point global)
         case kGazetteRowSmart:
             menu = GetMenuHandle(kMenuCtxSmart);
             if (menu != nil) {
+                AdjustRefreshItem(menu, kCtxSmartRefresh);
                 AdjustMarkAllItem(menu, kCtxSmartMarkAll);
             }
             break;
@@ -1305,6 +1315,7 @@ static void ShowSidebarContextMenu(int kind, int index, Point global)
             if (menu == nil) {
                 return;
             }
+            AdjustRefreshItem(menu, kCtxGroupRefresh);
             AdjustMarkAllItem(menu, kCtxGroupMarkAll);
             SetMenuItemText(menu, kCtxGroupEnabled,
                             GazetteCoreGroupEnabled(index) ? "\pTurn Off"
@@ -1333,6 +1344,7 @@ static void ShowSidebarContextMenu(int kind, int index, Point global)
             if (menu == nil) {
                 return;
             }
+            AdjustRefreshItem(menu, kCtxFeedRefresh);
             AdjustMarkAllItem(menu, kCtxFeedMarkAll);
             /* The site is learned from the feed on its first refresh; until
                then there is nothing to open or to copy. */
@@ -1384,10 +1396,22 @@ static void ShowSidebarContextMenu(int kind, int index, Point global)
     }
 }
 
+/* Refresh, on a contextual menu: available whenever the toolbar's is —
+   there is a feed to ask for, and nothing already being fetched. */
+static void AdjustRefreshItem(MenuRef menu, MenuItemIndex item)
+{
+    if (GazetteCoreFeedCount() > 0 &&
+        GazetteFeedsRefreshGetState() != kGazetteRefreshRunning) {
+        MacEnableMenuItem(menu, item);
+    } else {
+        DisableMenuItem(menu, item);
+    }
+}
+
 /*
- * The contextual menus' first item, which turns round the way the Article
- * menu's does: with something left unread it reads the rest, and with
- * nothing left it puts it all back.
+ * The contextual menus' Mark All item, which turns round the way the
+ * Article menu's does: with something left unread it reads the rest, and
+ * with nothing left it puts it all back.
  */
 static void AdjustMarkAllItem(MenuRef menu, MenuItemIndex item)
 {
