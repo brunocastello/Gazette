@@ -564,6 +564,9 @@ static void RunGazette(void)
             ResumeFullText();
             CheckAutoRefresh();
         }
+        /* Either way, the window has a look at where the mouse is: the
+           toolbar's buttons answer it without an event of their own. */
+        GazetteUIIdle();
     }
 }
 
@@ -1480,6 +1483,8 @@ static void ToolbarCommand(int command)
         case kGazetteCmdNextUnread:       HandleNextUnread();       break;
         case kGazetteCmdOpenInBrowser:    HandleOpenInBrowser();    break;
         case kGazetteCmdSearch:           HandleSearch();           break;
+        case kGazetteCmdNewFeed:          HandleNewFeed();          break;
+        case kGazetteCmdNewGroup:         HandleNewGroup();         break;
         default: break;
     }
 }

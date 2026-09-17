@@ -48,10 +48,12 @@
 #include <Controls.h>
 #include <ControlDefinitions.h>
 #include <DateTimeUtils.h>
+#include <Events.h>   /* GetMouse and StillDown, for the toolbar's buttons */
 #include <Folders.h>   /* kOnSystemDisk, which GetIconRef wants */
 #include <Fonts.h>
 #include <Icons.h>
 #include <Lists.h>
+#include <Menus.h>
 #include <Quickdraw.h>
 #include <QuickdrawText.h>
 #include <Scrap.h>
@@ -141,13 +143,21 @@ enum {
      * instead.
      */
     kToolbarHeight = 27,        /* 26 of grey, and the rule under it */
-    kToolbarButton = 22,        /* a button's square */
+    kToolbarButton = 22,        /* a button's height; its width is its caption's */
     kToolbarPad    = 6,         /* window edge to the first button */
-    kToolbarGap    = 1,         /* between buttons of one group */
-    kToolbarGroup  = 12,        /* the least space between two groups */
-    kSearchWidth   = 150,
+    kToolbarGap    = 3,         /* between buttons of one group */
+    kToolbarGroup  = 6,         /* either side of the separator between two */
+    kToolInset     = 4,         /* a button's edge to its icon */
+    kToolIconText  = 3,         /* its icon to its caption */
+    kToolPadRight  = 5,         /* its caption to its edge */
+    kToolGlyph     = 7,         /* the menu triangle after New, and */
+    kToolGlyphGap  = 4,         /* the room between the caption and it */
+    kToolbarCaptionSize = 9,    /* the application font at 9, as OE's is */
+    kSearchWidth   = 100,
     kSearchHeight  = 16,        /* a Geneva 10 field, frame included */
     kSearchFontSize = 10,
+    kSearchIconGap = 3,         /* the glass to the field */
+    kToolbarNewMenuID = 136,    /* after main.cpp's 128..135 */
 
     /* The focus border's thickness, and therefore how far a row has to keep
        clear of the edge of the view it is in. */
@@ -254,14 +264,20 @@ static ControlUserPaneFocusUPP gPaneFocusUPP;
    Where a list's rows actually are is a question for the list, and
    GetListViewBounds answers it. */
 /*
- * The toolbar's buttons, in the order they are laid out. Each one is a Bevel
- * Button — a real control, so the Control Manager tracks the press, draws the
- * pressed and disabled states, and knows how to put an icon suite on a button
- * — and each one carries a command from platinum_window.h that the shell maps
- * onto the handler its menu item already uses.
+ * The toolbar's buttons, in the order they are laid out. Each one carries a
+ * command from platinum_window.h that the shell maps onto the handler its
+ * menu item already uses.
+ *
+ * They are drawn and tracked here rather than being Bevel Buttons, which is
+ * the one place this window draws what a control might have — because no
+ * control draws this. The look is Outlook Express's: a button is flat until
+ * the mouse is over it, raises a one-pixel Platinum frame while it is, and
+ * goes inset for as long as it is held down. A Bevel Button wears its frame
+ * all the time, and a row of nine framed tiles is a different toolbar.
  */
 enum {
-    kTBSidebar = 0,
+    kTBNew = 0,
+    kTBSidebar,
     kTBRefresh,
     kTBMarkAll,
     kTBHideRead,
@@ -272,11 +288,32 @@ enum {
     kToolbarButtons
 };
 
-static ControlRef gToolbarBtn[kToolbarButtons];
+/* One icon: the system's by reference, or ours by suite. Declared here
+   because a toolbar button holds one; the lists' are further down. */
+typedef struct {
+    IconRef ref;                /* the system's, or NULL */
+    Handle  suite;              /* ours, or NULL */
+} RowIcon;
+
+typedef struct {
+    Rect        bounds;
+    short       width;      /* settled once, for the wider of its two captions */
+    const char *caption;    /* what it says just now */
+    short       iconID;     /* and what it wears */
+    RowIcon     icon;
+    Boolean     enabled;
+    Boolean     dirty;      /* changed since it was last drawn */
+} ToolButton;
+
+static ToolButton gToolBtn[kToolbarButtons];
+static short      gToolHover   = -1;    /* the button under the mouse, or -1 */
+static short      gToolPressed = -1;    /* the one held down, or -1 */
+static MenuRef    gNewMenu;             /* New Feed... and New Group... */
 static ControlRef gSearchCtl;
 static Rect       gToolbarRect;     /* the grey, and the rule along its foot */
-static Rect       gToolbarSep[2];   /* between one group and the next */
+static Rect       gToolbarSep[3];   /* between one group and the next */
 static short      gToolbarSepCount;
+static Rect       gFindIconRect;    /* the glass beside the search field */
 
 static Rect gSidebarPane;
 static Rect gSidebarHeader;
@@ -461,7 +498,9 @@ static void MakeToolbar(void);
 static void DrawToolbar(void);
 static void ToolbarButtonPressed(int button);
 static void AdjustToolbarState(void);
-static void SetButtonIcon(ControlRef button, short resID);
+static void DrawToolButton(int i);
+static void TrackToolButton(int i);
+static void PopNewMenu(void);
 
 /* ------------------------------------------------------------------ */
 /* Small helpers                                                       */
@@ -1374,99 +1413,76 @@ static void SizeListPane(ControlRef control, ListHandle list,
 }
 
 /*
- * Where the toolbar's buttons go.
+ * Where the toolbar's buttons go: left to right in four groups, an etched
+ * separator between one group and the next, and the search field pinned to
+ * the right hand end with the glass beside it — Outlook Express's row, with
+ * our verbs on it.
  *
- * Three groups, and each one begins over the column it acts on: the first
- * over the sidebar, the second over the headline list, the third over the
- * article. That is what the design asked for and it is also what makes the
- * toolbar legible without labels — a button's meaning is half in its picture
- * and half in which column it is standing over.
- *
- * "Begins over" and not "is centred on": a group never starts before the
- * previous one has ended, so a narrow sidebar simply pushes the next group
- * along instead of running the two together. With the sidebar hidden the
- * first column is not there at all and the whole row closes up, which the
- * same rule handles without knowing about it.
+ * Each button is as wide as its caption needs, settled once in MakeToolbar
+ * for the wider of the two captions a toggling button can wear, so that a
+ * button changing its words does not move the ones beside it.
  */
-static void LayoutToolbar(const Rect *bounds, short listLeft, short readerLeft)
+static void LayoutToolbar(const Rect *bounds)
 {
+    /* The first button of each group after the first. */
     static const short kGroupStart[3] = { kTBSidebar, kTBMarkAll, kTBMarkRead };
-    static const short kGroupEnd[3]   = { kTBMarkAll, kTBMarkRead,
-                                          kToolbarButtons };
-    short top  = (short)(gToolbarRect.top +
-                         ((kToolbarHeight - 1 - kToolbarButton) / 2));
-    short want[3];
-    short at;
-    short prevEnd = 0;
-    short g;
+    short top = (short)(gToolbarRect.top +
+                        ((kToolbarHeight - 1 - kToolbarButton) / 2));
+    short at  = (short)(bounds->left + kToolbarPad);
+    short g   = 0;
     short i;
 
     gToolbarSepCount = 0;
 
-    want[0] = (short)(bounds->left + kToolbarPad);
-    want[1] = listLeft;
-    want[2] = readerLeft;
-
-    at = want[0];
-    for (g = 0; g < 3; g++) {
-        if (want[g] > at) {
-            at = want[g];
-        }
-        if (g > 0 && gToolbarSepCount < 2) {
+    for (i = 0; i < kToolbarButtons; i++) {
+        if (g < 3 && i == kGroupStart[g]) {
             /*
-             * Halfway between the two groups rather than a fixed distance
-             * from the second: a group pushed right by its column leaves a
-             * gap wider than the one the layout asked for, and a separator
-             * measured off one end of it hangs off that group instead of
-             * dividing the two.
-             *
              * The line itself is Platinum's etched separator — a dark column
              * and a white one, measured off Outlook Express's toolbar, and
              * the same pair the window's own grooves are built from.
              */
-            short mid = (short)((prevEnd + at) / 2);
+            short left = (short)(at - kToolbarGap + kToolbarGroup);
 
-            SetRect(&gToolbarSep[gToolbarSepCount], (short)(mid - 1),
-                    (short)(gToolbarRect.top + 1), (short)(mid + 1),
+            SetRect(&gToolbarSep[gToolbarSepCount], left,
+                    (short)(gToolbarRect.top + 1), (short)(left + 2),
                     (short)(gToolbarRect.bottom - 2));
             gToolbarSepCount++;
+            at = (short)(left + 2 + kToolbarGroup);
+            g++;
         }
-        for (i = kGroupStart[g]; i < kGroupEnd[g]; i++) {
-            Rect r;
-
-            SetRect(&r, at, top, (short)(at + kToolbarButton),
-                    (short)(top + kToolbarButton));
-            if (gToolbarBtn[i] != NULL) {
-                SetControlBounds(gToolbarBtn[i], &r);
-            }
-            at = (short)(at + kToolbarButton + kToolbarGap);
-        }
-        prevEnd = (short)(at - kToolbarGap);
-        at      = (short)(prevEnd + kToolbarGroup);
+        SetRect(&gToolBtn[i].bounds, at, top,
+                (short)(at + gToolBtn[i].width), (short)(top + kToolbarButton));
+        at = (short)(at + gToolBtn[i].width + kToolbarGap);
     }
 
-    /* The search box is pinned to the right hand end, and gives way to the
-       buttons rather than the other way round: a field a few pixels narrow is
-       still a field, and a button pushed off the edge is gone. */
-    if (gSearchCtl != NULL) {
-        Rect r;
-        short left  = (short)(bounds->right - kToolbarPad - kSearchWidth);
-        short right = (short)(bounds->right - kToolbarPad);
+    /* The glass and the field are pinned to the right hand end, and give way
+       to the buttons rather than the other way round: a field a few pixels
+       narrow is still a field, and a button pushed off the edge is gone. */
+    {
+        short right    = (short)(bounds->right - kToolbarPad);
+        short left     = (short)(right - kSearchWidth);
+        short iconLeft = (short)(left - kSearchIconGap - kIconSize);
+        short fieldTop = (short)(top + (kToolbarButton - kSearchHeight) / 2);
 
-        if (left < at) {
-            left = at;
+        if (iconLeft < at) {
+            iconLeft = at;
+            left     = (short)(iconLeft + kIconSize + kSearchIconGap);
         }
-        /* Centred on the buttons' own middle rather than hung from their
-           top: sixteen in a square of twenty-two leaves three above and
-           three below. */
-        SetRect(&r, left, (short)(top + (kToolbarButton - kSearchHeight) / 2),
-                right,
-                (short)(top + (kToolbarButton - kSearchHeight) / 2 +
-                        kSearchHeight));
-        if (r.right <= r.left) {
-            r.right = r.left;       /* nothing left to draw in */
+        SetRect(&gFindIconRect, iconLeft,
+                (short)(top + (kToolbarButton - kIconSize) / 2),
+                (short)(iconLeft + kIconSize),
+                (short)(top + (kToolbarButton - kIconSize) / 2 + kIconSize));
+
+        if (gSearchCtl != NULL) {
+            Rect r;
+
+            SetRect(&r, left, fieldTop, right,
+                    (short)(fieldTop + kSearchHeight));
+            if (r.right <= r.left) {
+                r.right = r.left;       /* nothing left to draw in */
+            }
+            SetControlBounds(gSearchCtl, &r);
         }
-        SetControlBounds(gSearchCtl, &r);
     }
 }
 
@@ -1663,9 +1679,7 @@ static void Layout(void)
                 (short)(gReaderPane.right - kScrollWidth),
                 (short)(gReaderPane.bottom - 1));
 
-        /* Last, because each group of buttons begins over the column it acts
-           on and the columns have only just been settled. */
-        LayoutToolbar(&bounds, gListPane.left, gReaderPane.left);
+        LayoutToolbar(&bounds);
     }
 
     /* End to end. The strip's own rule is the line between it and the panes
@@ -1686,15 +1700,10 @@ static void Layout(void)
         SetControlVisibility(gSidebarHeaderCtl, !noSidebar, false);
     }
     {
-        /* The whole row goes away together, buttons and field alike. */
+        /* The buttons are drawn by the bar and go with it; the field is a
+           control and has to be told. */
         Boolean showing = (Boolean)!GazetteCoreHideToolbar();
-        int     i;
 
-        for (i = 0; i < kToolbarButtons; i++) {
-            if (gToolbarBtn[i] != NULL) {
-                SetControlVisibility(gToolbarBtn[i], showing, false);
-            }
-        }
         if (gSearchCtl != NULL) {
             SetControlVisibility(gSearchCtl, showing, false);
         }
@@ -2297,17 +2306,13 @@ static void DrawDisclosure(const Rect *cell, short left, Boolean open)
  * under a creator code so that they could be asked for the same way as the
  * system's would be ceremony with nothing at the end of it.
  */
-typedef struct {
-    IconRef ref;                /* the system's, or NULL */
-    Handle  suite;              /* ours, or NULL */
-} RowIcon;
-
 static RowIcon gFolderIcon;
 static RowIcon gOpenFolderIcon;
 static RowIcon gFeedIcon;
 static RowIcon gDocIcon;
 static RowIcon gSmartIcon[kGazetteSmartCount];
 static RowIcon gStarIcon;       /* the mark on a starred headline */
+static RowIcon gFindIcon;       /* the glass beside the toolbar's search field */
 
 /* Resource IDs, and they have to agree with tools/generate_ui_icons.py. */
 enum {
@@ -2363,6 +2368,7 @@ static void LoadRowIcons(void)
     OwnIcon(&gSmartIcon[kGazetteSmartUnread], kIconAllUnread);
     OwnIcon(&gSmartIcon[kGazetteSmartStarred], kIconStarred);
     OwnIcon(&gStarIcon, kIconStarredSmall);
+    OwnIcon(&gFindIcon, kIconFind);
 }
 
 static void ReleaseRowIcon(RowIcon *icon)
@@ -2389,6 +2395,11 @@ static void ReleaseRowIcons(void)
         ReleaseRowIcon(&gSmartIcon[i]);
     }
     ReleaseRowIcon(&gStarIcon);
+    ReleaseRowIcon(&gFindIcon);
+    for (i = 0; i < kToolbarButtons; i++) {
+        ReleaseRowIcon(&gToolBtn[i].icon);
+        gToolBtn[i].iconID = 0;
+    }
 }
 
 /*
@@ -3567,63 +3578,126 @@ static void DrawGrabHandle(const Rect *divider, Boolean vertical)
 /* ------------------------------------------------------------------ */
 /* The toolbar                                                         */
 /*                                                                     */
-/* Eight Bevel Buttons and an edit field, which is as much of it as is  */
-/* ours: the Control Manager tracks a press, draws the pressed and the  */
-/* disabled states, puts the icon on, and takes the keystrokes in the   */
-/* field. What is left here is where they go, what picture each one is  */
-/* wearing, and which of them can do anything just now.                 */
+/* Nine buttons drawn and tracked here, and an Edit Text for the search */
+/* field, which the Control Manager draws and takes the keystrokes for. */
+/* The buttons are ours because their look is Outlook Express's, and   */
+/* nothing in the Control Manager draws a button that is flat until the */
+/* mouse reaches it: see the notes on gToolBtn.                        */
 /* ------------------------------------------------------------------ */
 
 /*
- * The picture on a button. The Bevel Button CDEF takes an icon *suite by
- * resource ID* and loads it itself, which is why the toolbar's icons do not
- * go through the RowIcon pair the lists use — there is nothing for this end
- * to hold on to.
+ * What each button wears and says. The second icon and caption are for the
+ * buttons that toggle — each shows what it would do next, the way its menu
+ * item does — and the width is settled for the wider of the two captions so
+ * that the row holds still when one of them changes its words.
  */
-static void SetButtonIcon(ControlRef button, short resID)
-{
-    ControlButtonContentInfo info;
+typedef struct {
+    short       icon;
+    short       otherIcon;      /* or 0 */
+    const char *caption;
+    const char *otherCaption;   /* or NULL */
+} ToolSpec;
 
-    if (button == NULL) {
-        return;
-    }
-    info.contentType = kControlContentIconSuiteRes;
-    info.u.resID     = resID;
-    (void)SetControlData(button, kControlEntireControl,
-                         kControlBevelButtonContentTag, sizeof info,
-                         (Ptr)&info);
+static const ToolSpec kToolSpec[kToolbarButtons] = {
+    { kIconNew,         0,                  "New",                NULL },
+    { kIconSidebar,     0,                  "Hide Sidebar",       "Show Sidebar" },
+    { kIconRefresh,     0,                  "Refresh",            NULL },
+    { kIconMarkAllRead, kIconMarkAllUnread, "Mark All as Read",   "Mark All as Unread" },
+    { kIconHideRead,    kIconShowRead,      "Hide Read Articles", "Show Read Articles" },
+    { kIconMarkRead,    kIconMarkUnread,    "Mark as Read",       "Mark as Unread" },
+    { kIconStarred,     0,                  "Mark as Starred",    "Remove Star" },
+    { kIconNextUnread,  0,                  "Next Unread",        NULL },
+    { kIconBrowser,     0,                  "Open in Browser",    NULL }
+};
+
+/* The captions' font, in the current port. */
+static void UseCaptionFont(void)
+{
+    TextFont(gViewFont);
+    TextSize(kToolbarCaptionSize);
+    TextFace(normal);
 }
 
-static ControlRef MakeToolbarButton(short resID)
+static short CaptionWidth(const char *text)
 {
-    Rect       r;
-    ControlRef c;
+    if (text == NULL) {
+        return 0;
+    }
+    return TextWidth(text, 0, (short)strlen(text));
+}
 
-    /* Laid out properly by LayoutToolbar a moment later; born somewhere
-       harmless so that creating one never draws in the wrong place. */
-    SetRect(&r, 0, 0, kToolbarButton, kToolbarButton);
+/*
+ * What a button wears. The suite is loaded once per picture and kept until
+ * it changes, which for most of them is never.
+ */
+static void SetToolIcon(ToolButton *b, short resID)
+{
+    if (b->iconID == resID) {
+        return;
+    }
+    ReleaseRowIcon(&b->icon);
+    OwnIcon(&b->icon, resID);
+    b->iconID = resID;
+    b->dirty  = true;
+}
 
-    /*
-     * The small bevel, not the normal one: a toolbar of eight normal bevels
-     * is a row of raised tiles, and Platinum's small bevel is the quiet
-     * square that Sherlock and the Finder's own button bars are drawn with.
-     */
-    c = MakeControl(&r, kControlBevelButtonSmallBevelProc, 0);
-    SetButtonIcon(c, resID);
-    return c;
+static void SetToolState(int i, Boolean enabled, const char *caption,
+                         short resID)
+{
+    ToolButton *b = &gToolBtn[i];
+
+    if (b->enabled != enabled) {
+        b->enabled = enabled;
+        b->dirty   = true;
+    }
+    if (b->caption != caption &&
+        (b->caption == NULL || strcmp(b->caption, caption) != 0)) {
+        b->caption = caption;
+        b->dirty   = true;
+    }
+    SetToolIcon(b, resID);
 }
 
 static void MakeToolbar(void)
 {
-    static const short kIcons[kToolbarButtons] = {
-        kIconSidebar, kIconRefresh, kIconMarkAllRead, kIconHideRead,
-        kIconMarkRead, kIconStarred, kIconNextUnread, kIconBrowser
-    };
     Rect r;
     int  i;
 
+    /* Widths first, in the captions' font, with the window's port current:
+       MeasureFonts has already settled which font that is. */
+    UseCaptionFont();
     for (i = 0; i < kToolbarButtons; i++) {
-        gToolbarBtn[i] = MakeToolbarButton(kIcons[i]);
+        const ToolSpec *spec = &kToolSpec[i];
+        short           text = CaptionWidth(spec->caption);
+        short           other = CaptionWidth(spec->otherCaption);
+
+        if (other > text) {
+            text = other;
+        }
+        gToolBtn[i].width = (short)(kToolInset + kIconSize + kToolIconText +
+                                    text + kToolPadRight);
+        if (i == kTBNew) {
+            gToolBtn[i].width = (short)(gToolBtn[i].width + kToolGlyphGap +
+                                        kToolGlyph);
+        }
+        gToolBtn[i].caption = spec->caption;
+        gToolBtn[i].enabled = true;
+        gToolBtn[i].dirty   = true;
+        SetToolIcon(&gToolBtn[i], spec->icon);
+    }
+    gToolHover   = -1;
+    gToolPressed = -1;
+
+    /*
+     * New is a menu, not a command: a feed or a group, and the button pops
+     * the choice under itself. The menu lives in the hierarchical list —
+     * where PopUpMenuSelect can find it and the menu bar cannot — under an
+     * ID after the shell's own.
+     */
+    gNewMenu = NewMenu(kToolbarNewMenuID, "\pNew");
+    if (gNewMenu != NULL) {
+        AppendMenu(gNewMenu, "\pNew Feed\311;New Group\311");
+        InsertMenu(gNewMenu, hierMenu);
     }
 
     SetRect(&r, 0, 0, kSearchWidth, kSearchHeight);
@@ -3646,9 +3720,113 @@ static void MakeToolbar(void)
     }
 }
 
+static void DisposeToolbar(void)
+{
+    if (gNewMenu != NULL) {
+        DeleteMenu(kToolbarNewMenuID);
+        DisposeMenu(gNewMenu);
+        gNewMenu = NULL;
+    }
+    gToolHover   = -1;
+    gToolPressed = -1;
+}
+
 /*
- * The bar itself: the window's own grey, a black rule along its foot, and an
- * etched separator between one group of buttons and the next.
+ * One button, in whichever state it is in.
+ *
+ * At rest it is its icon and its caption on the bar's own grey and nothing
+ * else. Under the mouse it gains Platinum's raised frame — white along the
+ * top and left, dark along the bottom and right — and nothing else changes.
+ * Held down, the frame turns over and the grey behind it darkens, which is
+ * what every pressed Platinum button does. Disabled, the icon is plotted
+ * dimmed and the caption in the grayish text mode, which is how the Control
+ * Manager greys a title, and the mouse is not answered.
+ */
+static void DrawToolButton(int i)
+{
+    ToolButton *b = &gToolBtn[i];
+    Rect        r = b->bounds;
+    Boolean     pressed = (Boolean)(gToolPressed == i);
+    Boolean     raised  = (Boolean)(gToolHover == i && b->enabled && !pressed);
+    FontInfo    info;
+    short       baseline;
+    short       x;
+
+    if (gWindow == NULL || GazetteCoreHideToolbar()) {
+        return;
+    }
+    SetPortWindowPort(gWindow);
+
+    if (pressed) {
+        PaintGrey(&r, 0xBB);
+    } else {
+        EraseWith(&r, kThemeBrushDialogBackgroundActive);
+    }
+
+    if (raised || pressed) {
+        /* The frame: light on one diagonal, dark on the other, and which is
+           which is the whole difference between raised and pressed. */
+        if (pressed) {
+            GreyPen(0x55);
+        } else {
+            ForeColor(whiteColor);
+        }
+        MoveTo(r.left, (short)(r.bottom - 1));
+        LineTo(r.left, r.top);
+        LineTo((short)(r.right - 1), r.top);
+        if (pressed) {
+            ForeColor(whiteColor);
+        } else {
+            GreyPen(0x55);
+        }
+        MoveTo((short)(r.right - 1), (short)(r.top + 1));
+        LineTo((short)(r.right - 1), (short)(r.bottom - 1));
+        LineTo((short)(r.left + 1), (short)(r.bottom - 1));
+        ForeColor(blackColor);
+    }
+
+    x = (short)(r.left + kToolInset);
+    PlotRowIcon(x, (short)(r.top + (kToolbarButton - kIconSize) / 2),
+                &b->icon, b->enabled);
+    x = (short)(x + kIconSize + kToolIconText);
+
+    UseCaptionFont();
+    GetFontInfo(&info);
+    baseline = (short)(r.top +
+                       (kToolbarButton - (info.ascent + info.descent)) / 2 +
+                       info.ascent);
+    ForeColor(blackColor);
+    TextMode(b->enabled ? srcOr : grayishTextOr);
+    MoveTo(x, baseline);
+    if (b->caption != NULL) {
+        DrawText(b->caption, 0, (short)strlen(b->caption));
+    }
+
+    if (i == kTBNew) {
+        /* The menu's triangle: seven wide, four tall, point down, centred
+           on the button's middle row, in the caption's own grey when the
+           button is off. */
+        short left = (short)(r.right - kToolPadRight - kToolGlyph);
+        short top  = (short)(r.top + kToolbarButton / 2 - 2);
+        short k;
+
+        if (!b->enabled) {
+            GreyPen(0x77);
+        }
+        for (k = 0; k < 4; k++) {
+            MoveTo((short)(left + k), (short)(top + k));
+            LineTo((short)(left + kToolGlyph - 1 - k), (short)(top + k));
+        }
+        ForeColor(blackColor);
+    }
+    TextMode(srcOr);
+    b->dirty = false;
+}
+
+/*
+ * The bar itself: the window's own grey, a black rule along its foot, the
+ * etched separators between the groups, the buttons, and the glass beside
+ * the search field. The field is a control and DrawControls paints it.
  *
  * The rule is the toolbar's own and not the headers'. Both draw on the same
  * row — the headers' top edges land there — but the article has no header,
@@ -3681,6 +3859,11 @@ static void DrawToolbar(void)
         ForeColor(blackColor);
     }
 
+    for (i = 0; i < kToolbarButtons; i++) {
+        DrawToolButton(i);
+    }
+    PlotRowIcon(gFindIconRect.left, gFindIconRect.top, &gFindIcon, true);
+
     SetRect(&rule, gToolbarRect.left, (short)(gToolbarRect.bottom - 1),
             gToolbarRect.right, gToolbarRect.bottom);
     ForeColor(blackColor);
@@ -3688,50 +3871,77 @@ static void DrawToolbar(void)
 }
 
 /*
- * Which buttons can do anything, and which picture the three that toggle are
- * wearing. The same decisions AdjustMenus makes for the menu bar, written out
- * again here rather than shared with it: the menu bar is the shell's and this
- * is the window's, and what they have in common is the question, not the code
- * that answers it.
+ * Which buttons can do anything, and which picture and words the ones that
+ * toggle are wearing. The same decisions AdjustMenus makes for the menu bar,
+ * written out again here rather than shared with it: the menu bar is the
+ * shell's and this is the window's, and what they have in common is the
+ * question, not the code that answers it.
+ *
+ * Only the state. Whoever calls this draws whatever it changed — the full
+ * update draws the whole bar anyway, and anything else draws the buttons it
+ * dirtied and nothing more.
  */
 static void AdjustToolbarState(void)
 {
     const GazetteArticle *open;
     int                   count;
     Boolean               unread;
+    Boolean               hidden;
 
-    if (gWindow == NULL || gToolbarBtn[kTBSidebar] == NULL) {
+    if (gWindow == NULL) {
         return;
     }
 
     open   = GazetteFeedsArticleAt(gSelectedArticle);
     count  = GazetteFeedsArticleCount();
     unread = (Boolean)(GazetteFeedsUnreadCount() > 0);
+    hidden = GazetteCoreHideReadArticles();
 
-    /* Two that are always available: there is always a sidebar to show or
-       hide, and always a feed to ask for again. */
-    HiliteControl(gToolbarBtn[kTBSidebar], 0);
-    HiliteControl(gToolbarBtn[kTBRefresh],
-                  (short)(GazetteCoreFeedCount() > 0 ? 0 : 255));
+    /* Two that are always available: there is always something to make,
+       and always a sidebar to show or hide. */
+    SetToolState(kTBNew, true, kToolSpec[kTBNew].caption,
+                 kToolSpec[kTBNew].icon);
+    SetToolState(kTBSidebar, true,
+                 GazetteCoreHideSidebar() ? kToolSpec[kTBSidebar].otherCaption
+                                          : kToolSpec[kTBSidebar].caption,
+                 kToolSpec[kTBSidebar].icon);
+    SetToolState(kTBRefresh, (Boolean)(GazetteCoreFeedCount() > 0),
+                 kToolSpec[kTBRefresh].caption, kToolSpec[kTBRefresh].icon);
 
-    SetButtonIcon(gToolbarBtn[kTBMarkAll],
-                  unread ? kIconMarkAllRead : kIconMarkAllUnread);
-    HiliteControl(gToolbarBtn[kTBMarkAll], (short)(count > 0 ? 0 : 255));
+    SetToolState(kTBMarkAll, (Boolean)(count > 0),
+                 unread ? kToolSpec[kTBMarkAll].caption
+                        : kToolSpec[kTBMarkAll].otherCaption,
+                 unread ? kToolSpec[kTBMarkAll].icon
+                        : kToolSpec[kTBMarkAll].otherIcon);
+    SetToolState(kTBHideRead, true,
+                 hidden ? kToolSpec[kTBHideRead].otherCaption
+                        : kToolSpec[kTBHideRead].caption,
+                 hidden ? kToolSpec[kTBHideRead].otherIcon
+                        : kToolSpec[kTBHideRead].icon);
 
-    SetButtonIcon(gToolbarBtn[kTBHideRead],
-                  GazetteCoreHideReadArticles() ? kIconShowRead
-                                                : kIconHideRead);
-    HiliteControl(gToolbarBtn[kTBHideRead], 0);
+    SetToolState(kTBMarkRead, (Boolean)(open != NULL),
+                 (open != NULL && open->read)
+                     ? kToolSpec[kTBMarkRead].otherCaption
+                     : kToolSpec[kTBMarkRead].caption,
+                 (open != NULL && open->read)
+                     ? kToolSpec[kTBMarkRead].otherIcon
+                     : kToolSpec[kTBMarkRead].icon);
+    SetToolState(kTBStar, (Boolean)(open != NULL),
+                 (open != NULL && open->starred)
+                     ? kToolSpec[kTBStar].otherCaption
+                     : kToolSpec[kTBStar].caption,
+                 kToolSpec[kTBStar].icon);
+    SetToolState(kTBNextUnread, unread, kToolSpec[kTBNextUnread].caption,
+                 kToolSpec[kTBNextUnread].icon);
+    SetToolState(kTBBrowser,
+                 (Boolean)(open != NULL && open->link[0] != '\0'),
+                 kToolSpec[kTBBrowser].caption, kToolSpec[kTBBrowser].icon);
 
-    SetButtonIcon(gToolbarBtn[kTBMarkRead],
-                  (open != NULL && open->read) ? kIconMarkUnread
-                                               : kIconMarkRead);
-    HiliteControl(gToolbarBtn[kTBMarkRead], (short)(open != NULL ? 0 : 255));
-
-    HiliteControl(gToolbarBtn[kTBStar], (short)(open != NULL ? 0 : 255));
-    HiliteControl(gToolbarBtn[kTBNextUnread], (short)(unread ? 0 : 255));
-    HiliteControl(gToolbarBtn[kTBBrowser],
-                  (short)((open != NULL && open->link[0] != '\0') ? 0 : 255));
+    /* A button that has just gone dead is not under the mouse any more,
+       whatever the mouse thinks. */
+    if (gToolHover >= 0 && !gToolBtn[gToolHover].enabled) {
+        gToolHover = -1;
+    }
 
     if (gSearchCtl != NULL) {
         HiliteControl(gSearchCtl,
@@ -3740,12 +3950,10 @@ static void AdjustToolbarState(void)
 }
 
 /*
- * The state above, and then the row redrawn to show it.
- *
- * Split in two because a full window update settles the state *before*
- * DrawControls paints the hierarchy, and drawing the buttons a second time
- * straight afterwards is a flicker on every redraw for nothing. Anything that
- * changes the state on its own — opening an article, mostly — calls this one.
+ * The state above, and then only the buttons it changed redrawn to show it.
+ * A full window update draws the whole bar after settling the state, so it
+ * does not come through here; anything that changes the state on its own —
+ * opening an article, mostly — does.
  */
 void GazetteUIAdjustToolbar(void)
 {
@@ -3753,16 +3961,146 @@ void GazetteUIAdjustToolbar(void)
 
     AdjustToolbarState();
 
-    if (gWindow == NULL || GazetteCoreHideToolbar() ||
-        gToolbarBtn[kTBSidebar] == NULL) {
+    if (gWindow == NULL || GazetteCoreHideToolbar()) {
         return;
     }
     SetPortWindowPort(gWindow);
     for (i = 0; i < kToolbarButtons; i++) {
-        Draw1Control(gToolbarBtn[i]);
+        if (gToolBtn[i].dirty) {
+            DrawToolButton(i);
+        }
     }
     if (gSearchCtl != NULL) {
         Draw1Control(gSearchCtl);
+    }
+}
+
+/*
+ * The mouse has moved, or may have: called from the event loop whenever it
+ * has a moment. The button under the mouse raises its frame and the one it
+ * has just left drops it, and that is all hovering is — no delay, and no
+ * tooltip, which OE has and which nothing here needs with the captions on
+ * the buttons.
+ *
+ * Not while a button is being held down, when the press is tracking the
+ * mouse itself; not while another window is in front, when the mouse is
+ * theirs; and not while the window is in the background.
+ */
+void GazetteUIIdle(void)
+{
+    Point p;
+    short over = -1;
+    short i;
+
+    if (gWindow == NULL || !gActive || GazetteCoreHideToolbar() ||
+        gToolPressed >= 0 || FrontWindow() != gWindow) {
+        return;
+    }
+    SetPortWindowPort(gWindow);
+    GetMouse(&p);
+
+    if (PtInRect(p, &gToolbarRect)) {
+        for (i = 0; i < kToolbarButtons; i++) {
+            if (gToolBtn[i].enabled && PtInRect(p, &gToolBtn[i].bounds)) {
+                over = i;
+                break;
+            }
+        }
+    }
+    if (over != gToolHover) {
+        short was = gToolHover;
+
+        gToolHover = over;
+        if (was >= 0) {
+            DrawToolButton(was);
+        }
+        if (over >= 0) {
+            DrawToolButton(over);
+        }
+    }
+}
+
+/*
+ * A press on a button: inset while the mouse stays on it, flat again the
+ * moment it leaves, and the command fires only if it is let go on the
+ * button — which is what every button on this machine has done since 1984,
+ * and what the Control Manager would have done for us had it been drawing.
+ */
+static void TrackToolButton(int i)
+{
+    ToolButton *b = &gToolBtn[i];
+    Boolean     inside = true;
+
+    if (!b->enabled) {
+        return;
+    }
+    if (i == kTBNew) {
+        PopNewMenu();
+        return;
+    }
+
+    gToolHover   = (short)i;
+    gToolPressed = (short)i;
+    DrawToolButton(i);
+
+    while (StillDown()) {
+        Point   p;
+        Boolean now;
+
+        GetMouse(&p);
+        now = PtInRect(p, &b->bounds);
+        if (now != inside) {
+            inside       = now;
+            gToolPressed = (short)(now ? i : -1);
+            DrawToolButton(i);
+        }
+    }
+
+    gToolPressed = -1;
+    if (!inside) {
+        gToolHover = -1;
+    }
+    DrawToolButton(i);
+
+    if (inside) {
+        ToolbarButtonPressed(i);
+    }
+}
+
+/*
+ * New: the menu drops from under the button, and the button stays pressed
+ * for as long as the menu is up. The choice comes back as a menu ID and an
+ * item, and only our own menu's items are anyone's business.
+ */
+static void PopNewMenu(void)
+{
+    ToolButton *b = &gToolBtn[kTBNew];
+    Point       where;
+    long        choice;
+
+    if (gNewMenu == NULL) {
+        return;
+    }
+
+    gToolHover   = kTBNew;
+    gToolPressed = kTBNew;
+    DrawToolButton(kTBNew);
+
+    where.h = b->bounds.left;
+    where.v = b->bounds.bottom;
+    LocalToGlobal(&where);
+    choice = PopUpMenuSelect(gNewMenu, where.v, where.h, 0);
+
+    gToolPressed = -1;
+    gToolHover   = -1;
+    DrawToolButton(kTBNew);
+
+    if ((short)(choice >> 16) == kToolbarNewMenuID && gOnCommand != NULL) {
+        switch ((short)(choice & 0xFFFF)) {
+            case 1:  gOnCommand(kGazetteCmdNewFeed);  break;
+            case 2:  gOnCommand(kGazetteCmdNewGroup); break;
+            default: break;
+        }
     }
 }
 
@@ -3897,11 +4235,11 @@ void GazetteUIUpdate(void)
     DrawVDivider(&gVDivider2);
     DrawGrabHandle(&gVDivider2, true);
 
-    /* Before DrawControls, so the buttons and the field are drawn on the bar
-       rather than under it — and so they are drawn in the state they should
-       be in rather than the one they were left in. */
-    DrawToolbar();
+    /* The state first, so the bar is drawn in the state it should be in
+       rather than the one it was left in; and before DrawControls, so the
+       field is drawn on the bar rather than under it. */
     AdjustToolbarState();
+    DrawToolbar();
 
     /* The whole control hierarchy in one call — the two lists with their
        frames, scroll bars and focus rings, the two window headers, the
@@ -4065,12 +4403,14 @@ static void TrackDivider(Point where, Boolean second)
 static void ToolbarButtonPressed(int button)
 {
     static const int kCommands[kToolbarButtons] = {
+        0,                      /* New is a menu; see PopNewMenu */
         kGazetteCmdHideSidebar, kGazetteCmdRefresh, kGazetteCmdMarkAllRead,
         kGazetteCmdHideReadArticles, kGazetteCmdMarkRead,
         kGazetteCmdMarkStarred, kGazetteCmdNextUnread, kGazetteCmdOpenInBrowser
     };
 
-    if (button < 0 || button >= kToolbarButtons || gOnCommand == NULL) {
+    if (button < 0 || button >= kToolbarButtons || gOnCommand == NULL ||
+        kCommands[button] == 0) {
         return;
     }
     gOnCommand(kCommands[button]);
@@ -4392,33 +4732,27 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
     SetPortWindowPort(gWindow);
 
     /*
-     * The toolbar first, because it is above everything and its buttons are
-     * ordinary controls: the Control Manager tracks the press, and what comes
-     * back is whether the mouse was still on the button when it came up.
+     * The toolbar first, because it is above everything. Its buttons are
+     * ours and track their own press; the search field is a control and the
+     * Control Manager takes the click.
      */
     if (PtInRect(where, &gToolbarRect)) {
-        ControlRef hit = FindControlUnderMouse(where, gWindow, &part);
+        ControlRef hit;
         int        i;
 
-        if (hit == NULL) {
-            return;                 /* the bar itself, or a gap in it */
+        for (i = 0; i < kToolbarButtons; i++) {
+            if (PtInRect(where, &gToolBtn[i].bounds)) {
+                TrackToolButton(i);
+                return;
+            }
         }
-        if (hit == gSearchCtl) {
+        hit = FindControlUnderMouse(where, gWindow, &part);
+        if (hit != NULL && hit == gSearchCtl) {
             (void)SetKeyboardFocus(gWindow, gSearchCtl,
                                    kControlFocusNextPart);
             (void)HandleControlClick(hit, where, modifiers, NULL);
-            return;
         }
-        if (HandleControlClick(hit, where, modifiers, NULL) == 0) {
-            return;                 /* let go somewhere else */
-        }
-        for (i = 0; i < kToolbarButtons; i++) {
-            if (gToolbarBtn[i] == hit) {
-                ToolbarButtonPressed(i);
-                break;
-            }
-        }
-        return;
+        return;                     /* the bar itself, or a gap in it */
     }
 
     /*
@@ -4771,6 +5105,14 @@ void GazetteUIActivate(Boolean active)
         return;
     }
     gActive = active;
+
+    /* Whatever was under the mouse is not ours to raise any more. */
+    if (!active && gToolHover >= 0) {
+        short was = gToolHover;
+
+        gToolHover = -1;
+        DrawToolButton(was);
+    }
 
     /* The lists grey their own scroll bars and selections. */
     if (gSidebarList != NULL) {
@@ -5464,13 +5806,7 @@ void GazetteUIClose(void)
     gArticleList       = NULL;
     gSidebarCtl        = NULL;
     gArticleCtl        = NULL;
-    {
-        int i;
-
-        for (i = 0; i < kToolbarButtons; i++) {
-            gToolbarBtn[i] = NULL;
-        }
-    }
+    DisposeToolbar();
     gSearchCtl         = NULL;
     gSidebarHeaderCtl  = NULL;
     gListHeaderCtl     = NULL;

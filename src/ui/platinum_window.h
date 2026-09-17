@@ -63,7 +63,9 @@ enum {
     kGazetteCmdMarkStarred,
     kGazetteCmdNextUnread,
     kGazetteCmdOpenInBrowser,
-    kGazetteCmdSearch           /* the search box, on Return */
+    kGazetteCmdSearch,          /* the search box, on Return */
+    kGazetteCmdNewFeed,         /* the two halves of the New button's menu */
+    kGazetteCmdNewGroup
 };
 
 typedef void (*GazetteUICommandChosen)(int command);
@@ -86,6 +88,14 @@ void GazetteUIActivate(Boolean active);
 
 /* A click in the content region, in local coordinates. */
 void GazetteUIClick(Point where, EventModifiers modifiers);
+
+/*
+ * A moment with nothing else to do. The toolbar's buttons raise their frame
+ * under the mouse the way Outlook Express's do, and this is where the window
+ * looks to see where the mouse is: call it from the event loop's idle branch
+ * and after every event, and it costs a GetMouse and a few PtInRects.
+ */
+void GazetteUIIdle(void);
 
 /*
  * A keystroke, with the modifiers that came with it. Returns true when the
