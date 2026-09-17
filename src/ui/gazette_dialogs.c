@@ -66,7 +66,7 @@ enum {
 };
 
 static ControlHandle gFeedPopup;    /* while the feed dialog is up */
-static ControlHandle gNote;         /* the note, while either dialog is up */
+static ControlHandle gNote;         /* the feed dialog's note, while it is up */
 static UserItemUPP   gDrawItem;     /* made once, kept */
 
 /* The user items' draw procedure: whichever control stands on the item. */
@@ -428,7 +428,7 @@ Boolean GazetteAskName(const char *windowTitle, const char *prompt,
     CopyCStringToPascal(windowTitle != NULL ? windowTitle : "", title);
     SetWTitle(GetDialogWindow(dialog), title);
 
-    gNote = MakeNote(dialog, kNameItemPrompt, prompt);
+    SetItemText(dialog, kNameItemPrompt, prompt);
     SetItemText(dialog, kNameItemText, name);
     SelectDialogItemText(dialog, kNameItemText, 0, 32767);
 
@@ -439,7 +439,6 @@ Boolean GazetteAskName(const char *windowTitle, const char *prompt,
         ok = (name[0] != '\0');
     }
 
-    gNote = NULL;
     DisposeDialog(dialog);
     return ok;
 }

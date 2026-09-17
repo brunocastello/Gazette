@@ -150,9 +150,10 @@ resource 'DITL' (kNameDialogID, "Name") {
         Button { enabled, "Cancel" };
 
         /* The prompt is set at runtime — one dialog serves New Group, Edit
-           Group and Find — on a user item, as the feed dialog's note is. */
+           Group and Find — and stays in the dialog font: it is the question
+           the dialog asks, not a note under it. */
         { 14, 16, 46, 304 },
-        UserItem { disabled };
+        StaticText { disabled, "" };
 
         { 52, 16, 68, 304 },
         EditText { enabled, "" };
