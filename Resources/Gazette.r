@@ -161,23 +161,7 @@ resource 'DITL' (kFeedDialogID, "Feed") {
     }
 };
 
-/*
- * The description is set a size down from the fields, in the application
- * font: it is a note, not a label. One entry per item, and only the third
- * says anything: flags $0005 (font and size), font 3 (Geneva), size 10,
- * then style, mode, justification, two colours and an empty font name.
- *
- * Raw bytes rather than the Dialogs.r template, for the reason the icons
- * are: Retro68's Rez falls over on the template's switch-inside-an-array,
- * and a data block does not care which Rez reads it. The layout is the
- * template's, version 0, item by item, nothing aligned.
- */
-/* version 0, eight items; 1 and 2 as they are; 3 Geneva 10 (flags $0005,
-   font 3, size 10, the rest zero, an empty name); 4 to 8 as they are. */
-data 'dftb' (kFeedDialogID, "Feed") {
-    $"0000 0008 0000 0000 0001 0005 0003 000A 0000 0000 0000 0000 0000 0000"
-    $"0000 0000 0000 0000 0000 0000 0000 0000 00"
-};
+/* BISECT: dftb removed */
 
 /* The number is src/gazette_version.h's, written out because Rez cannot
    read that header. */
