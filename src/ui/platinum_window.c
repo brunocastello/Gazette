@@ -48,6 +48,7 @@
 #include <Controls.h>
 #include <ControlDefinitions.h>
 #include <DateTimeUtils.h>
+#include <Drag.h>     /* WaitMouseMoved: a press that becomes a drag */
 #include <Events.h>   /* GetMouse and StillDown, for the toolbar's buttons */
 #include <Folders.h>   /* kOnSystemDisk, which GetIconRef wants */
 #include <Fonts.h>
@@ -4639,16 +4640,398 @@ static Boolean HitDisclosure(Point where)
     return true;
 }
 
+/* ------------------------------------------------------------------ */
+/* Dragging a row                                                      */
+/*                                                                     */
+/* A feed or a group picked up and put down somewhere else in the      */
+/* sidebar, the way the Finder's list view reorders: a press that       */
+/* moves is a drag, an insertion line follows the mouse between the    */
+/* rows, a closed group under the mouse is framed to say "into here",  */
+/* the list scrolls when the mouse reaches its edge, and letting go    */
+/* moves the row. The core's MoveFeed and MoveGroup were written for   */
+/* exactly this, so what is here is the tracking and the arithmetic    */
+/* that turns a place between two rows into a place in the model.      */
+/*                                                                     */
+/* Tracked here rather than through the Drag Manager, which is built   */
+/* for carrying things between applications and draws a translucent   */
+/* outline to do it. A row moving within its own list is the Finder's  */
+/* own gesture, and the Finder draws it this way.                      */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    Boolean valid;
+    Boolean into;       /* into a closed group: its row is framed */
+    int     gap;        /* else before row `gap`; the row count means after the last */
+    int     row;        /* the framed group's row, when into */
+} DropSpot;
+
+static Boolean SameDropSpot(const DropSpot *a, const DropSpot *b)
+{
+    if (a->valid != b->valid) {
+        return false;
+    }
+    if (!a->valid) {
+        return true;
+    }
+    return (Boolean)(a->into == b->into &&
+                     (a->into ? a->row == b->row : a->gap == b->gap));
+}
+
+/*
+ * Where between the rows the mouse is: the gap above the row it is on when
+ * it is in that row's upper half, the gap below it otherwise. Above the
+ * first visible row is the gap above it; below the last, the gap below.
+ * A closed group's row is a place of its own, and comes back as `into`.
+ */
+static void GapAtPoint(Point where, DropSpot *out)
+{
+    ListBounds visible;
+    Rect       view;
+    Cell       cell;
+    int        count = GazetteCoreSidebarRowCount();
+
+    out->valid = true;
+    out->into  = false;
+    out->row   = -1;
+    ListView(gSidebarList, &view);
+    GetListVisibleCells(gSidebarList, &visible);
+
+    cell.h = 0;
+    for (cell.v = visible.top; cell.v < visible.bottom && cell.v < count;
+         cell.v++) {
+        GazetteSidebarRow row;
+        Rect              r;
+
+        LRect(&r, cell, gSidebarList);
+        if (!PtInRect(where, &r)) {
+            continue;
+        }
+        if (GazetteCoreSidebarRowAt(cell.v, &row) &&
+            row.kind == kGazetteRowGroup &&
+            GazetteCoreGroupCollapsed(row.index)) {
+            out->into = true;
+            out->row  = cell.v;
+            out->gap  = cell.v;
+            return;
+        }
+        out->gap = (where.v < (r.top + r.bottom) / 2) ? cell.v : cell.v + 1;
+        return;
+    }
+    if (where.v < view.top) {
+        out->gap = visible.top;
+    } else {
+        out->gap = (visible.bottom < count) ? visible.bottom : count;
+    }
+}
+
+/* The first and the last feed of a group, or -1 for an empty one. */
+static int FirstFeedInGroup(int group)
+{
+    int i;
+
+    for (i = 0; i < GazetteCoreFeedCount(); i++) {
+        if (GazetteCoreFeedGroup(i) == group) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int LastFeedInGroup(int group)
+{
+    int i;
+
+    for (i = GazetteCoreFeedCount() - 1; i >= 0; i--) {
+        if (GazetteCoreFeedGroup(i) == group) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/*
+ * Turn a gap into a feed's new place: the group it lands in and the index
+ * MoveFeed wants, which is the index the feed will occupy — after the row
+ * above the gap, which is what decides everything. After a standing view
+ * is the top of the top level; after a top-level feed, or a group's feed,
+ * is after that feed in its group; after an open group's own row is the
+ * top of that group; after a closed group's row is the end of it, there
+ * being nowhere else after a closed group that a feed can go. False when
+ * the place is where the feed already is.
+ */
+static Boolean ResolveFeedDrop(const DropSpot *spot, int from, int *group,
+                               int *to)
+{
+    GazetteSidebarRow before;
+    int               gap = spot->gap;
+    int               first;
+
+    if (spot->into) {
+        if (!GazetteCoreSidebarRowAt(spot->row, &before) ||
+            before.kind != kGazetteRowGroup) {
+            return false;
+        }
+        /* The end of the group — which is a move even from inside it,
+           unless the feed is its last already. */
+        if (LastFeedInGroup(before.index) == from) {
+            return false;
+        }
+        *group = before.index;
+        *to    = GazetteCoreFeedCount() - 1;
+        return true;
+    }
+
+    /* Nothing goes above, or between, the three standing views: a drop up
+       there is a drop at the top of the feeds. */
+    if (gap < kGazetteSmartCount) {
+        gap = kGazetteSmartCount;
+    }
+    if (gap < 1 || !GazetteCoreSidebarRowAt(gap - 1, &before)) {
+        return false;
+    }
+
+    switch (before.kind) {
+        case kGazetteRowSmart:
+            *group = -1;
+            first  = (GazetteCoreFeedCount() > 0 &&
+                      GazetteCoreFeedGroup(0) < 0) ? 0 : -1;
+            if (first < 0) {
+                *to = 0;
+            } else if (first == from) {
+                return false;
+            } else {
+                *to = (first < from) ? first : first - 1;
+            }
+            return true;
+
+        case kGazetteRowFeed:
+            if (before.index == from) {
+                return false;
+            }
+            *group = GazetteCoreFeedGroup(before.index);
+            *to    = (before.index < from) ? before.index + 1 : before.index;
+            if (*to == from) {
+                return false;       /* already right after it */
+            }
+            return true;
+
+        case kGazetteRowGroup:
+            *group = before.index;
+            if (GazetteCoreGroupCollapsed(before.index)) {
+                *to = GazetteCoreFeedCount() - 1;
+                return (Boolean)(LastFeedInGroup(before.index) != from);
+            }
+            first = FirstFeedInGroup(before.index);
+            if (first < 0) {
+                *to = from;         /* an empty group: the group is the move */
+            } else if (first == from) {
+                return false;
+            } else {
+                *to = (first < from) ? first : first - 1;
+            }
+            return true;
+
+        default:
+            return false;
+    }
+}
+
+/*
+ * A group lands only between groups. The gap the mouse is in is carried
+ * down to the next group's row — or to the end — and that is both where
+ * the line is drawn and where the group goes. A group cannot go above the
+ * top-level feeds, which come before every group.
+ */
+static Boolean ResolveGroupDrop(DropSpot *spot, int from, int *to)
+{
+    GazetteSidebarRow row;
+    int               count = GazetteCoreSidebarRowCount();
+    int               r;
+    int               target = GazetteCoreGroupCount();      /* the end */
+
+    spot->into = false;
+    for (r = spot->gap; r < count; r++) {
+        if (GazetteCoreSidebarRowAt(r, &row) && row.kind == kGazetteRowGroup) {
+            target    = row.index;
+            spot->gap = r;
+            break;
+        }
+    }
+    if (r >= count) {
+        spot->gap = count;
+    }
+    if (target == from || target == from + 1) {
+        return false;               /* just above or just below itself */
+    }
+    *to = (target > from) ? target - 1 : target;
+    return true;
+}
+
+/*
+ * The mark for a spot, drawn in XOR so that drawing it again takes it away:
+ * a line two pixels tall across the gap, or a frame round a closed group's
+ * row. Nothing is drawn for a gap that has scrolled out of view.
+ */
+static void ToggleDropSpot(const DropSpot *spot)
+{
+    ListBounds visible;
+    Rect       view;
+    Rect       r;
+    Cell       cell;
+    int        count = GazetteCoreSidebarRowCount();
+
+    if (!spot->valid) {
+        return;
+    }
+    ListView(gSidebarList, &view);
+    GetListVisibleCells(gSidebarList, &visible);
+    cell.h = 0;
+
+    PenNormal();
+    PenMode(patXor);
+
+    if (spot->into) {
+        if (spot->row < visible.top || spot->row >= visible.bottom) {
+            PenNormal();
+            return;
+        }
+        cell.v = (short)spot->row;
+        LRect(&r, cell, gSidebarList);
+        PenSize(2, 2);
+        FrameRect(&r);
+    } else {
+        short y;
+
+        if (spot->gap < count) {
+            if (spot->gap < visible.top || spot->gap >= visible.bottom) {
+                PenNormal();
+                return;
+            }
+            cell.v = (short)spot->gap;
+            LRect(&r, cell, gSidebarList);
+            y = r.top;
+        } else {
+            if (count == 0 || count - 1 < visible.top ||
+                count - 1 >= visible.bottom) {
+                PenNormal();
+                return;
+            }
+            cell.v = (short)(count - 1);
+            LRect(&r, cell, gSidebarList);
+            y = r.bottom;
+        }
+        SetRect(&r, view.left, (short)(y - 1), view.right, (short)(y + 1));
+        PaintRect(&r);
+    }
+    PenNormal();
+}
+
+static void TrackSidebarDrag(const GazetteSidebarRow *what)
+{
+    DropSpot      shown;
+    DropSpot      spot;
+    unsigned long lastScroll = 0;
+    int           to    = 0;
+    int           group = -1;
+    int           moved;
+
+    shown.valid = false;
+
+    while (StillDown()) {
+        ListBounds visible;
+        Rect       view;
+        Point      p;
+        int        count = GazetteCoreSidebarRowCount();
+
+        GetMouse(&p);
+        ListView(gSidebarList, &view);
+        GetListVisibleCells(gSidebarList, &visible);
+
+        /* At either edge the list scrolls a row at a time, a few ticks
+           apart, with the mark lifted while it does. */
+        if (TickCount() - lastScroll >= 4) {
+            short step = 0;
+
+            if (p.v < view.top && visible.top > 0) {
+                step = -1;
+            } else if (p.v >= view.bottom && visible.bottom < count) {
+                step = 1;
+            }
+            if (step != 0) {
+                ToggleDropSpot(&shown);
+                shown.valid = false;
+                LScroll(0, step, gSidebarList);
+                lastScroll = TickCount();
+            }
+        }
+
+        GapAtPoint(p, &spot);
+        if (what->kind == kGazetteRowFeed) {
+            spot.valid = ResolveFeedDrop(&spot, what->index, &group, &to);
+        } else {
+            spot.valid = ResolveGroupDrop(&spot, what->index, &to);
+        }
+        if (!SameDropSpot(&spot, &shown)) {
+            ToggleDropSpot(&shown);
+            ToggleDropSpot(&spot);
+            shown = spot;
+        }
+    }
+    ToggleDropSpot(&shown);
+
+    if (!shown.valid) {
+        return;
+    }
+
+    if (what->kind == kGazetteRowFeed) {
+        moved = GazetteCoreMoveFeed(what->index, to, group);
+    } else {
+        moved = GazetteCoreMoveGroup(what->index, to);
+    }
+    if (moved < 0) {
+        return;
+    }
+    (void)GazetteCoreSavePrefs();
+    GazetteUIFeedsChanged();
+
+    /* The row that was carried stays chosen, where it landed. A feed is
+       chosen the way a click chooses it, so what the list shows is the
+       feed the sidebar says it is. */
+    if (what->kind == kGazetteRowFeed) {
+        GazetteUIChooseRow(kGazetteRowFeed, moved);
+    } else {
+        GazetteUISelectGroup(moved);
+    }
+}
+
 static void SidebarClicked(Point where, EventModifiers modifiers)
 {
     GazetteSidebarRow row;
     Rect              rows;
+    Cell              cell;
     int               at;
 
     /* The triangle's own column opens and shuts a group; the rest of the
        line selects it, the way a folder behaves in a list view. */
     if (HitDisclosure(where)) {
         return;
+    }
+
+    /* A press on a feed or a group that moves before it lets go is a drag.
+       The three standing views stay where they are, and are not picked up.
+       WaitMouseMoved waits until the mouse has moved or the button is up,
+       so the click below tracks a press that is still down or takes the
+       release, either of which LClick is happy with. */
+    if (CellAtPoint(gSidebarList, where, &cell) &&
+        GazetteCoreSidebarRowAt(cell.v, &row) &&
+        row.kind != kGazetteRowSmart) {
+        Point global = where;
+
+        LocalToGlobal(&global);
+        if (WaitMouseMoved(global)) {
+            TrackSidebarDrag(&row);
+            return;
+        }
     }
 
     ListView(gSidebarList, &rows);
