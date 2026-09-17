@@ -444,13 +444,14 @@ static void TestPrefsParse(void)
     static const char text[] =
         "refresh-minutes = 5\r"
         "max-articles = 25\r"
-        "feed = https://a.example/rss | Feed A\r"
+        "feed = https://a.example/rss | Feed A | https://a.example/\r"
         "feed-off = https://b.example/rss | Feed B\r"
-        "feed = https://c.example/rss\r";
+        "feed = https://c.example/rss\r"
+        "feed = https://d.example/rss | Odd | Title\r";
     GazettePrefs p;
 
     CheckLong("parse reads every feed",
-              GazettePrefsParse(text, sizeof text - 1, &p), 3);
+              GazettePrefsParse(text, sizeof text - 1, &p), 4);
     CheckLong("parse reads refresh-minutes", p.refreshMinutes, 5);
     CheckLong("parse reads max-articles", p.maxArticles, 25);
 
@@ -466,6 +467,16 @@ static void TestPrefsParse(void)
     CheckStr("third feed url", p.feeds[2].url, "https://c.example/rss");
     CheckStr("a feed with no title uses its URL",
              p.feeds[2].title, "https://c.example/rss");
+
+    /* The third field is the site the feed is for. A line from before there
+       was one has no site; and a pipe in a title is a pipe in a title unless
+       what follows it is an address. */
+    CheckStr("the third field is the home page",
+             p.feeds[0].home, "https://a.example/");
+    CheckStr("a line with two fields has no home page", p.feeds[1].home, "");
+    CheckStr("a pipe in a title stays in the title",
+             p.feeds[3].title, "Odd | Title");
+    CheckStr("and is not taken for a home page", p.feeds[3].home, "");
 
     /* A file that lists feeds replaces the defaults outright — otherwise
        deleting Google News would not stick across a launch. */
@@ -513,6 +524,7 @@ static void TestPrefsRoundTrip(void)
     GazettePrefsAddFeed(&before, "https://a.example/rss", "Feed A", -1);
     GazettePrefsAddFeed(&before, "https://b.example/rss", "Feed B", -1);
     before.feeds[2].enabled = 0;
+    GazettePrefsSetFeedHome(&before, 1, "https://a.example/");
     GazettePrefsAddGroup(&before, "A Group");
     GazettePrefsAddFeed(&before, "https://c.example/rss", "Feed C", 0);
     GazettePrefsAddGroup(&before, "Closed Group");
@@ -557,6 +569,8 @@ static void TestPrefsRoundTrip(void)
        order, and parsing re-groups them the same way, so the two lists match
        entry for entry. */
     for (i = 0; i < after.feedCount; i++) {
+        CheckStr("round-trip keeps each home page",
+                 after.feeds[i].home, before.feeds[i].home);
         CheckStr("round-trip keeps each URL", after.feeds[i].url, before.feeds[i].url);
         CheckStr("round-trip keeps each title", after.feeds[i].title, before.feeds[i].title);
         CheckLong("round-trip keeps each enabled flag",
@@ -1306,6 +1320,9 @@ static void CheckRSSResult(const GazetteFeedParser *p, const char *how)
     snprintf(label, sizeof label, "RSS (%s): feed title", how);
     CheckStr(label, GazetteFeedParserTitle(p), "Example News");
 
+    snprintf(label, sizeof label, "RSS (%s): the channel's link is the site", how);
+    CheckStr(label, GazetteFeedParserLink(p), "https://example.com/");
+
     snprintf(label, sizeof label, "RSS (%s): entities decoded in a title", how);
     CheckStr(label, gCollected[0].title, "First & foremost");
 
@@ -1335,6 +1352,7 @@ static const char kAtom[] =
     "<feed xmlns=\"http://www.w3.org/2005/Atom\">\n"
     "  <title>Atom Example</title>\n"
     "  <link rel=\"self\" href=\"https://example.com/feed.atom\"/>\n"
+    "  <link rel=\"alternate\" href=\"https://example.com/\"/>\n"
     "  <entry>\n"
     "    <title>Caf&#233; opens</title>\n"
     "    <link rel=\"self\" href=\"https://example.com/wrong\"/>\n"
@@ -1361,6 +1379,11 @@ static void CheckAtomResult(const GazetteFeedParser *p, const char *how)
 
     snprintf(label, sizeof label, "Atom (%s): feed title", how);
     CheckStr(label, GazetteFeedParserTitle(p), "Atom Example");
+
+    /* rel="self" is the feed itself; the site is the alternate link, and
+       an entry's links are the entry's. */
+    snprintf(label, sizeof label, "Atom (%s): the alternate link is the site", how);
+    CheckStr(label, GazetteFeedParserLink(p), "https://example.com/");
 
     /* The accent is decoded to UTF-8 and then transliterated for Mac OS 9. */
     snprintf(label, sizeof label, "Atom (%s): title transliterated", how);

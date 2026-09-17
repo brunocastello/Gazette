@@ -124,6 +124,44 @@ Boolean GazetteCoreFeedEnabled(int index)
     return gPrefs.feeds[index].enabled ? true : false;
 }
 
+const char *GazetteCoreFeedHome(int index)
+{
+    if (!gInited || index < 0 || index >= gPrefs.feedCount) {
+        return "";
+    }
+    return gPrefs.feeds[index].home;
+}
+
+Boolean GazetteCoreGroupEnabled(int index)
+{
+    int i;
+
+    if (!gInited || index < 0 || index >= gPrefs.groupCount) {
+        return false;
+    }
+    for (i = 0; i < gPrefs.feedCount; i++) {
+        if (gPrefs.feeds[i].group == index && gPrefs.feeds[i].enabled) {
+            return true;
+        }
+    }
+    return (Boolean)(GazetteCoreGroupFeedCount(index) == 0);
+}
+
+void GazetteCoreSetGroupEnabled(int index, Boolean enabled)
+{
+    int i;
+
+    if (!gInited || index < 0 || index >= gPrefs.groupCount) {
+        return;
+    }
+    for (i = 0; i < gPrefs.feedCount; i++) {
+        if (gPrefs.feeds[i].group == index &&
+            GazettePrefsSetFeedEnabled(&gPrefs, i, enabled ? 1 : 0)) {
+            gPrefsDirty = true;
+        }
+    }
+}
+
 int GazetteCoreGroupCount(void)
 {
     return gInited ? gPrefs.groupCount : 0;
@@ -199,6 +237,15 @@ Boolean GazetteCoreSetFeedEnabled(int index, Boolean enabled)
 Boolean GazetteCoreSetFeedURL(int index, const char *url)
 {
     if (!gInited || !GazettePrefsSetFeedURL(&gPrefs, index, url)) {
+        return false;
+    }
+    gPrefsDirty = true;
+    return true;
+}
+
+Boolean GazetteCoreSetFeedHome(int index, const char *home)
+{
+    if (!gInited || !GazettePrefsSetFeedHome(&gPrefs, index, home)) {
         return false;
     }
     gPrefsDirty = true;

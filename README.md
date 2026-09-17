@@ -129,11 +129,15 @@ max-articles    = 100     # per feed
 full-text       = 0       # 1 = also fetch and strip the article page
 
 feed     = https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en | Google News - Top Stories
+feed     = https://www.macrumors.com/macrumors.xml | MacRumors | https://www.macrumors.com/
 feed-off = https://example.com/feed.xml | A feed that is switched off
 ```
 
 `#` or `;` starts a comment, the separator is `=` or `:`, keys are
-case-insensitive, and a feed line is `<url> | <title>` with the title optional.
+case-insensitive, and a feed line is `<url> | <title> | <home page>` with the
+title and the home page optional. The home page is the site the feed is for,
+learned from the feed itself on its first refresh and written back here; it is
+what the sidebar's Open Home Page and Copy Home Page URL use.
 Gazette writes CR line endings the way OS 9 text files do, but reads CR, LF and
 CRLF alike so an edit from another machine still loads.
 

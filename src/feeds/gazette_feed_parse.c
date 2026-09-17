@@ -30,6 +30,7 @@ enum {
 enum {
     kFieldNone = 0,
     kFieldFeedTitle,
+    kFieldFeedLink,     /* the channel's own link: the site */
     kFieldTitle,
     kFieldLink,
     kFieldDate,
@@ -975,6 +976,26 @@ static void StartElement(GazetteFeedParser *p, const char *tag, size_t len,
         if (strcmp(name, "title") == 0 && !p->sawFeedTitle && !p->inImage) {
             CaptureBegin(p, kFieldFeedTitle);
         }
+        /*
+         * The channel's own link is the site the feed is for. RSS puts it
+         * in the element's text; Atom in href, on the alternate link — the
+         * one with rel="self" is the feed itself, and not the site. Only
+         * the first counts, and <image><link> names the logo's target.
+         */
+        if (strcmp(name, "link") == 0 && !p->sawFeedLink && !p->inImage) {
+            if (TagAttr(tag, len, "href", attr, sizeof attr)) {
+                char rel[32];
+
+                if ((!TagAttr(tag, len, "rel", rel, sizeof rel) ||
+                     gz_stricmp(rel, "alternate") == 0) && attr[0] != '\0') {
+                    gz_copy_n(p->feedLink, sizeof p->feedLink,
+                              attr, strlen(attr));
+                    p->sawFeedLink = 1;
+                }
+            } else if (!selfClosing) {
+                CaptureBegin(p, kFieldFeedLink);
+            }
+        }
         return;
     }
 
@@ -1077,6 +1098,12 @@ static void EndElement(GazetteFeedParser *p, const char *name)
                 CaptureFinish(p, p->feedTitle, sizeof p->feedTitle, 0);
                 if (p->feedTitle[0] != '\0') {
                     p->sawFeedTitle = 1;
+                }
+                break;
+            case kFieldFeedLink:
+                CaptureFinish(p, p->feedLink, sizeof p->feedLink, 0);
+                if (p->feedLink[0] != '\0') {
+                    p->sawFeedLink = 1;
                 }
                 break;
             case kFieldTitle:
@@ -1316,6 +1343,11 @@ void GazetteFeedParserFinish(GazetteFeedParser *p)
 const char *GazetteFeedParserTitle(const GazetteFeedParser *p)
 {
     return (p == NULL) ? "" : p->feedTitle;
+}
+
+const char *GazetteFeedParserLink(const GazetteFeedParser *p)
+{
+    return (p == NULL) ? "" : p->feedLink;
 }
 
 long GazetteFeedParserArticleCount(const GazetteFeedParser *p)

@@ -192,6 +192,18 @@ void    GazetteUISelectGroup(int index);
    This is what the Article menu's Today, All Unread and Starred do. */
 void    GazetteUISelectSmart(int which);
 
+/*
+ * The sidebar row under a point in the window, for a contextual click: the
+ * row's kind (kGazetteRowSmart, kGazetteRowGroup or kGazetteRowFeed) and its
+ * index. False when the point is not on a row.
+ */
+Boolean GazetteUISidebarRowAt(Point where, int *kind, int *index);
+
+/* Choose a row exactly as a click on it would — the callback, the state
+   and the highlight all move together. A contextual click selects what it
+   is over before its menu appears, the way the Finder's does. */
+void    GazetteUIChooseRow(int kind, int index);
+
 #ifdef __cplusplus
 }
 #endif

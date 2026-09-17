@@ -35,8 +35,9 @@ enum {
  * would present months later as "my feeds keep disappearing".
  *
  * Worst case is every entry at full length: a feed line is "feed     = " (11)
- * + a 511-byte URL + " | " (3) + a 127-byte title + CR, and a group line is
- * "group-closed = " (15) + a 63-byte name + CR. Plus the settings block and
+ * + a 511-byte URL + " | " (3) + a 127-byte title + " | " (3) + a 255-byte
+ * home page + CR, and a group line is "group-closed = " (15) + a 63-byte name
+ * + CR. Plus the settings block and
  * comments, for which 768 is generous — the block is eight settings and
  * three comment lines, and comes to under four hundred bytes.
  *
@@ -45,7 +46,8 @@ enum {
  */
 typedef char gazette_prefs_text_buffer_is_large_enough[
     (kGazettePrefsTextMax >
-     kGazetteMaxFeeds * (11 + kGazetteURLLen + 3 + kGazetteTitleLen + 1) +
+     kGazetteMaxFeeds * (11 + kGazetteURLLen + 3 + kGazetteTitleLen +
+                         3 + kGazetteHomeLen + 1) +
      kGazetteMaxGroups * (15 + kGazetteGroupLen + 1) + 768)
     ? 1 : -1];
 
@@ -612,6 +614,22 @@ int GazettePrefsSetFeedURL(GazettePrefs *p, int index, const char *url)
     return 1;
 }
 
+int GazettePrefsSetFeedHome(GazettePrefs *p, int index, const char *home)
+{
+    if (p == NULL || index < 0 || index >= p->feedCount) {
+        return 0;
+    }
+    if (home == NULL) {
+        home = "";
+    }
+    if (strcmp(p->feeds[index].home, home) == 0) {
+        return 0;
+    }
+    gz_copy_n(p->feeds[index].home, sizeof p->feeds[index].home,
+              home, strlen(home));
+    return 1;
+}
+
 int GazettePrefsMoveFeed(GazettePrefs *p, int from, int to, int group)
 {
     GazetteFeedPref moved;
@@ -655,17 +673,28 @@ int GazettePrefsMoveFeed(GazettePrefs *p, int from, int to, int group)
 /* Parsing                                                             */
 /* ------------------------------------------------------------------ */
 
-/* Split "<url> | <title>" into its two trimmed halves. With no pipe the
-   whole value is the URL and the title comes out empty, which AddFeed then
-   fills in with the URL. */
+/*
+ * Split "<url> | <title> | <home>" into its trimmed parts. With no pipe the
+ * whole value is the URL and the title comes out empty, which AddFeed then
+ * fills in with the URL. The home page is the part after the *last* pipe,
+ * and only when it looks like an address: a title with a pipe in it is
+ * rarer than a feed with no home page, but it is not impossible, and a file
+ * written before there was a third field has none.
+ */
 static void SplitFeedValue(const char *value,
                            char *url, size_t urlCap,
-                           char *title, size_t titleCap)
+                           char *title, size_t titleCap,
+                           char *home, size_t homeCap)
 {
     const char *pipe = strchr(value, '|');
+    const char *last;
     const char *part;
     size_t      partLen;
+    size_t      restLen;
 
+    if (homeCap > 0) {
+        home[0] = '\0';
+    }
     if (pipe == NULL) {
         part = gz_trim(value, strlen(value), &partLen);
         gz_copy_n(url, urlCap, part, partLen);
@@ -678,16 +707,25 @@ static void SplitFeedValue(const char *value,
     part = gz_trim(value, (size_t)(pipe - value), &partLen);
     gz_copy_n(url, urlCap, part, partLen);
 
-    part = gz_trim(pipe + 1, strlen(pipe + 1), &partLen);
+    restLen = strlen(pipe + 1);
+    last    = strrchr(pipe + 1, '|');
+    if (last != NULL && strstr(last + 1, "://") != NULL) {
+        part = gz_trim(last + 1, strlen(last + 1), &partLen);
+        gz_copy_n(home, homeCap, part, partLen);
+        restLen = (size_t)(last - (pipe + 1));
+    }
+
+    part = gz_trim(pipe + 1, restLen, &partLen);
     gz_copy_n(title, titleCap, part, partLen);
 }
 
 int GazettePrefsParse(const char *text, size_t len, GazettePrefs *p)
 {
     char   key[64];
-    char   value[kGazetteURLLen + kGazetteTitleLen + 8];
+    char   value[kGazetteURLLen + kGazetteTitleLen + kGazetteHomeLen + 8];
     char   url[kGazetteURLLen];
     char   title[kGazetteTitleLen];
+    char   home[kGazetteHomeLen];
     size_t off        = 0;
     int    group      = -1;
     int    sawAnyFeed = 0;
@@ -768,12 +806,15 @@ int GazettePrefsParse(const char *text, size_t len, GazettePrefs *p)
             sawAnyFeed   = 1;
         }
 
-        SplitFeedValue(value, url, sizeof url, title, sizeof title);
+        SplitFeedValue(value, url, sizeof url, title, sizeof title,
+                       home, sizeof home);
         {
             int index = GazettePrefsAddFeed(p, url, title, group);
 
             if (index >= 0) {
                 p->feeds[index].enabled = enabled;
+                gz_copy_n(p->feeds[index].home, sizeof p->feeds[index].home,
+                          home, strlen(home));
             }
         }
     }
@@ -830,9 +871,13 @@ static void AppendFeed(char *out, size_t cap, size_t *len,
 {
     Append(out, cap, len, f->enabled ? "feed     = " : "feed-off = ");
     Append(out, cap, len, f->url);
-    if (f->title[0] != '\0') {
+    if (f->title[0] != '\0' || f->home[0] != '\0') {
         Append(out, cap, len, " | ");
         Append(out, cap, len, f->title);
+    }
+    if (f->home[0] != '\0') {
+        Append(out, cap, len, " | ");
+        Append(out, cap, len, f->home);
     }
     Append(out, cap, len, "\r");
 }
@@ -894,7 +939,8 @@ size_t GazettePrefsSerialize(const GazettePrefs *p, char *out, size_t cap)
     Append(out, cap, &len, "\r\r");
 
     Append(out, cap, &len,
-           "# feed = <url> | <title>   (feed-off = the same, disabled)\r");
+           "# feed = <url> | <title> | <home page>   "
+           "(feed-off = the same, disabled)\r");
     Append(out, cap, &len,
            "# Feeds after a group line belong to it; feeds before any belong "
            "to none.\r\r");

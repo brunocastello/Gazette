@@ -126,9 +126,11 @@ typedef struct {
     int  inAuthor;
     int  inImage;               /* <image><title> is not the feed title */
     int  sawFeedTitle;
+    int  sawFeedLink;
 
     GazetteArticle article;
     char feedTitle[kGazetteFeedTitleLen];
+    char feedLink[kGazetteArticleLinkLen];  /* the site the feed is for */
 
     char discovered[kGazetteArticleLinkLen];
     int  sawDiscovery;
@@ -162,6 +164,10 @@ int GazetteFeedParserFeed(GazetteFeedParser *p, const char *data, size_t len);
 void GazetteFeedParserFinish(GazetteFeedParser *p);
 
 const char *GazetteFeedParserTitle(const GazetteFeedParser *p);
+
+/* The feed's own site — RSS's <channel><link>, Atom's feed-level alternate
+   link — or "" when the feed did not say. */
+const char *GazetteFeedParserLink(const GazetteFeedParser *p);
 long        GazetteFeedParserArticleCount(const GazetteFeedParser *p);
 
 /* The feed URL found by discovery, or "" if none. Relative to the page it was

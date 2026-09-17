@@ -5669,6 +5669,56 @@ void GazetteUISelectGroup(int index)
     }
 }
 
+Boolean GazetteUISidebarRowAt(Point where, int *kind, int *index)
+{
+    GazetteSidebarRow row;
+    Rect              rows;
+    Cell              cell;
+
+    if (gWindow == NULL || gSidebarList == NULL || GazetteCoreHideSidebar()) {
+        return false;
+    }
+    ListView(gSidebarList, &rows);
+    if (!PtInRect(where, &rows) || !CellAtPoint(gSidebarList, where, &cell)) {
+        return false;
+    }
+    if (!GazetteCoreSidebarRowAt(cell.v, &row)) {
+        return false;
+    }
+    if (kind != NULL) {
+        *kind = row.kind;
+    }
+    if (index != NULL) {
+        *index = row.index;
+    }
+    return true;
+}
+
+void GazetteUIChooseRow(int kind, int index)
+{
+    GazetteSidebarRow row;
+    int               at;
+
+    if (gWindow == NULL) {
+        return;
+    }
+    row.kind  = kind;
+    row.index = index;
+
+    switch (kind) {
+        case kGazetteRowSmart: at = GazetteCoreSidebarRowForSmart(index); break;
+        case kGazetteRowGroup: at = GazetteCoreSidebarRowForGroup(index); break;
+        case kGazetteRowFeed:  at = GazetteCoreSidebarRowForFeed(index);  break;
+        default:               return;
+    }
+    if (at < 0) {
+        return;
+    }
+    ChooseRow(&row);
+    SelectRow(gSidebarList, at, true);
+    DrawSidebarPane();
+}
+
 void GazetteUISelectFeed(int index)
 {
     if (index < 0 || index >= GazetteCoreFeedCount()) {

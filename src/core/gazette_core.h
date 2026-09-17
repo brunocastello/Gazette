@@ -53,11 +53,18 @@ const char *GazetteCoreFeedTitle(int index);    /* "" when index is out of range
 const char *GazetteCoreFeedURL(int index);
 int         GazetteCoreFeedGroup(int index);    /* -1 for the top level */
 Boolean     GazetteCoreFeedEnabled(int index);
+const char *GazetteCoreFeedHome(int index);     /* the site; "" until a refresh has said */
 
 int         GazetteCoreGroupCount(void);
 const char *GazetteCoreGroupName(int index);
 Boolean     GazetteCoreGroupCollapsed(int index);
 int         GazetteCoreGroupFeedCount(int index);
+
+/* A group is on while any feed in it is: turning it off turns off every
+   feed in it, and turning it on turns them all on. A group with no feeds in
+   it is on, there being nothing to be off. */
+Boolean     GazetteCoreGroupEnabled(int index);
+void        GazetteCoreSetGroupEnabled(int index, Boolean enabled);
 
 /*
  * The tree flattened into the lines the sidebar draws — see
@@ -90,6 +97,10 @@ Boolean GazetteCoreSetFeedEnabled(int index, Boolean enabled);
 /* Change a feed's address, keeping its place, its name and its group. False
    when another feed already has that address. */
 Boolean GazetteCoreSetFeedURL(int index, const char *url);
+
+/* Record the site a feed is for, as its last refresh reported it. False
+   when it is what was already recorded. */
+Boolean GazetteCoreSetFeedHome(int index, const char *home);
 
 /* ------------------------------------------------------------------ */
 /* The View menu                                                       */

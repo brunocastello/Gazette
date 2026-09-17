@@ -39,6 +39,7 @@
 #include <MacMemory.h>
 #include <TextUtils.h>
 #include <InternetConfig.h>     /* ICLaunchURL, for Open in Browser */
+#include <Scrap.h>              /* the clipboard, for Copy Feed URL */
 
 #include <stdio.h>
 #include <string.h>
@@ -83,10 +84,20 @@ static void    AdjustMenus(void);
 static void    HandleNewFeed(void);
 static void    HandleNewGroup(void);
 static void    HandleEditFeed(void);
-static void    HandleRename(void);
+static void    HandleEditGroup(void);
+static void    HandleEdit(void);
 static void    HandleRemove(void);
 static void    HandleToggleEnabled(void);
 static void    HandleMoveToGroup(short item);
+static void    HandleMoveStep(int delta);
+static Boolean CanMoveStep(int kind, int index, int delta);
+static void    HandleMarkAllReadOnly(void);
+static void    HandleOpenHomePage(void);
+static void    HandleCopyFeedURL(void);
+static void    HandleCopyHomeURL(void);
+static Boolean OpenURL(const char *url);
+static void    RebuildGroupMenu(MenuRef menu, int feedIndex);
+static void    ShowSidebarContextMenu(int kind, int index, Point global);
 static void    ShowSmart(int which);
 static void    ResumeFullText(void);
 static void    HandleMarkRead(void);
@@ -153,10 +164,27 @@ enum {
     kMenuFeeds   = 132,
     kMenuArticle = 133,
 
-    /* The two hierarchical menus. Their IDs have to be unique among menus and
-       nothing more; neither sits in the bar. */
+    /* The hierarchical menus. Their IDs have to be unique among menus and
+       nothing more; none of them sits in the bar. 136 is the toolbar's New
+       menu, over in platinum_window.c. */
     kMenuSortBy  = 134,
-    kMenuMoveTo  = 135
+    kMenuMoveTo  = 135,         /* Feeds > Move > to Group */
+    kMenuMove    = 137,         /* Feeds > Move */
+
+    /*
+     * The sidebar's contextual menus — one per kind of row, built once and
+     * adjusted before each showing, the way the bar's are. A standing view
+     * gets the one command that means anything for it; a group and a feed
+     * get what the Feeds menu offers them, in the order the eye wants it,
+     * plus the two things only a feed has: a site to open and addresses to
+     * copy. Starred gets no menu at all.
+     */
+    kMenuCtxSmart     = 139,
+    kMenuCtxGroup     = 140,
+    kMenuCtxGroupMove = 141,
+    kMenuCtxFeed      = 142,
+    kMenuCtxFeedMove  = 143,
+    kMenuCtxToGroup   = 144
 };
 
 enum {
@@ -209,20 +237,59 @@ enum {
     kSortItemOldest = 2
 };
 
-/* Feeds menu items. */
+/* Feeds menu items. Edit is "Edit Feed…" or "Edit Group…", whichever the
+   sidebar has selected; there is no Rename, because editing is renaming. */
 enum {
     kFeedsItemEdit    = 1,
-    kFeedsItemRename  = 2,
-    kFeedsItemRemove  = 3,
-    /* 4 is a divider */
-    kFeedsItemEnabled = 5,
-    kFeedsItemMoveTo  = 6
+    kFeedsItemDelete  = 2,
+    /* 3 is a divider */
+    kFeedsItemEnabled = 4,
+    kFeedsItemMove    = 5
+};
+
+/* Move: into a group, or a step up or down among its neighbours. */
+enum {
+    kMoveItemToGroup = 1,
+    kMoveItemUp      = 2,
+    kMoveItemDown    = 3
 };
 
 /* Move to Group: the top level, a divider, then one item per group. */
 enum {
     kMoveToItemTop   = 1,
     kMoveToFirstGroup = 3
+};
+
+/* The contextual menus' items. */
+enum {
+    kCtxSmartMarkAll = 1
+};
+enum {
+    kCtxGroupMarkAll = 1,
+    /* 2 is a divider */
+    kCtxGroupEnabled = 3,
+    kCtxGroupMove    = 4,
+    /* 5 is a divider */
+    kCtxGroupEdit    = 6,
+    kCtxGroupDelete  = 7
+};
+enum {
+    kCtxGroupMoveUp   = 1,
+    kCtxGroupMoveDown = 2
+};
+enum {
+    kCtxFeedMarkAll  = 1,
+    /* 2 is a divider */
+    kCtxFeedHome     = 3,
+    /* 4 is a divider */
+    kCtxFeedCopyURL  = 5,
+    kCtxFeedCopyHome = 6,
+    /* 7 is a divider */
+    kCtxFeedEnabled  = 8,
+    kCtxFeedMove     = 9,
+    /* 10 is a divider */
+    kCtxFeedEdit     = 11,
+    kCtxFeedDelete   = 12
 };
 
 /*
@@ -302,6 +369,10 @@ static Boolean InitGazette(void)
      */
     (void)RegisterAppearanceClient();
 
+    /* And the Contextual Menu Manager's client too: without this, on Mac OS
+       8 and 9, IsShowContextualMenuClick never says yes. */
+    (void)InitContextualMenus();
+
     /* Preferences before anything is drawn: the window's first update event
        already wants the feed list. */
     (void)GazetteCoreInit();
@@ -378,7 +449,8 @@ static void SetOptionKey(MenuRef menu, short item)
 static Boolean BuildMenuBar(void)
 {
     MenuRef appleMenu, fileMenu, editMenu, viewMenu, sortMenu;
-    MenuRef feedsMenu, moveToMenu, articleMenu;
+    MenuRef feedsMenu, moveMenu, moveToMenu, articleMenu;
+    MenuRef ctx;
 
     /* "\024" is the Apple logo in MacRoman. */
     appleMenu = NewMenu(kMenuApple, "\p\024");
@@ -440,18 +512,76 @@ static Boolean BuildMenuBar(void)
     if (feedsMenu == nil) {
         return false;
     }
-    AppendMenu(feedsMenu,
-               "\pEdit Feed\311;Rename\311;Remove;(-;"
-               "Turn Off;Move to Group");
+    AppendMenu(feedsMenu, "\pEdit Feed\311;Delete;(-;Turn Off;Move");
     InsertMenu(feedsMenu, 0);
 
+    moveMenu = NewMenu(kMenuMove, "\pMove");
+    if (moveMenu == nil) {
+        return false;
+    }
+    AppendMenu(moveMenu, "\pto Group;Up;Down");
+    InsertMenu(moveMenu, hierMenu);
+    SetMenuItemHierarchicalID(feedsMenu, kFeedsItemMove, kMenuMove);
+
     /* Rebuilt in AdjustMenus, because the groups change. */
-    moveToMenu = NewMenu(kMenuMoveTo, "\pMove to Group");
+    moveToMenu = NewMenu(kMenuMoveTo, "\pto Group");
     if (moveToMenu == nil) {
         return false;
     }
     InsertMenu(moveToMenu, hierMenu);
-    SetMenuItemHierarchicalID(feedsMenu, kFeedsItemMoveTo, kMenuMoveTo);
+    SetMenuItemHierarchicalID(moveMenu, kMoveItemToGroup, kMenuMoveTo);
+
+    /*
+     * The sidebar's contextual menus. In the hierarchical list, which is
+     * where ContextualMenuSelect wants a menu it is handed, and where a
+     * submenu has to be for its parent to find it.
+     */
+    ctx = NewMenu(kMenuCtxSmart, "\p");
+    if (ctx == nil) {
+        return false;
+    }
+    AppendMenu(ctx, "\pMark All as Read");
+    InsertMenu(ctx, hierMenu);
+
+    ctx = NewMenu(kMenuCtxGroup, "\p");
+    if (ctx == nil) {
+        return false;
+    }
+    AppendMenu(ctx, "\pMark All as Read;(-;Turn Off;Move;(-;"
+                    "Edit Group\311;Delete");
+    InsertMenu(ctx, hierMenu);
+    SetMenuItemHierarchicalID(ctx, kCtxGroupMove, kMenuCtxGroupMove);
+
+    ctx = NewMenu(kMenuCtxGroupMove, "\pMove");
+    if (ctx == nil) {
+        return false;
+    }
+    AppendMenu(ctx, "\pUp;Down");
+    InsertMenu(ctx, hierMenu);
+
+    ctx = NewMenu(kMenuCtxFeed, "\p");
+    if (ctx == nil) {
+        return false;
+    }
+    AppendMenu(ctx, "\pMark All as Read;(-;Open Home Page;(-;"
+                    "Copy Feed URL;Copy Home Page URL;(-;Turn Off;Move;(-;"
+                    "Edit Feed\311;Delete");
+    InsertMenu(ctx, hierMenu);
+    SetMenuItemHierarchicalID(ctx, kCtxFeedMove, kMenuCtxFeedMove);
+
+    ctx = NewMenu(kMenuCtxFeedMove, "\pMove");
+    if (ctx == nil) {
+        return false;
+    }
+    AppendMenu(ctx, "\pto Group;Up;Down");
+    InsertMenu(ctx, hierMenu);
+    SetMenuItemHierarchicalID(ctx, kMoveItemToGroup, kMenuCtxToGroup);
+
+    ctx = NewMenu(kMenuCtxToGroup, "\pto Group");
+    if (ctx == nil) {
+        return false;
+    }
+    InsertMenu(ctx, hierMenu);
 
     articleMenu = NewMenu(kMenuArticle, "\pArticle");
     if (articleMenu == nil) {
@@ -679,9 +809,21 @@ static void HandleMouseDown(const EventRecord *event)
                 SelectWindow(window);
             } else if (window == GazetteUIWindow()) {
                 Point local = event->where;
+                int   kind  = 0;
+                int   index = 0;
 
                 SetPortWindowPort(window);
                 GlobalToLocal(&local);
+
+                /* Control-click, or a second mouse button that the mouse's
+                   driver reports as one: a menu for the sidebar row it is
+                   over, and nothing for anywhere else. */
+                if (IsShowContextualMenuClick(event)) {
+                    if (GazetteUISidebarRowAt(local, &kind, &index)) {
+                        ShowSidebarContextMenu(kind, index, event->where);
+                    }
+                    break;
+                }
                 GazetteUIClick(local, event->modifiers);
             }
             break;
@@ -787,16 +929,64 @@ static void HandleMenuChoice(long menuResult)
 
         case kMenuFeeds:
             switch (menuItem) {
-                case kFeedsItemEdit:     HandleEditFeed();      break;
-                case kFeedsItemRename:   HandleRename();        break;
-                case kFeedsItemRemove:   HandleRemove();        break;
+                case kFeedsItemEdit:     HandleEdit();          break;
+                case kFeedsItemDelete:   HandleRemove();        break;
                 case kFeedsItemEnabled:  HandleToggleEnabled(); break;
                 default: break;
             }
             break;
 
+        case kMenuMove:
+        case kMenuCtxFeedMove:
+            switch (menuItem) {
+                case kMoveItemUp:   HandleMoveStep(-1); break;
+                case kMoveItemDown: HandleMoveStep(1);  break;
+                default: break;     /* to Group is its own menu */
+            }
+            break;
+
         case kMenuMoveTo:
+        case kMenuCtxToGroup:
             HandleMoveToGroup(menuItem);
+            break;
+
+        /* The sidebar's contextual menus. Each item is a menu bar item's
+           handler and nothing else, for the reason the toolbar's are. */
+        case kMenuCtxSmart:
+            if (menuItem == kCtxSmartMarkAll) {
+                HandleMarkAllReadOnly();
+            }
+            break;
+
+        case kMenuCtxGroup:
+            switch (menuItem) {
+                case kCtxGroupMarkAll: HandleMarkAllReadOnly(); break;
+                case kCtxGroupEnabled: HandleToggleEnabled();   break;
+                case kCtxGroupEdit:    HandleEditGroup();       break;
+                case kCtxGroupDelete:  HandleRemove();          break;
+                default: break;
+            }
+            break;
+
+        case kMenuCtxGroupMove:
+            switch (menuItem) {
+                case kCtxGroupMoveUp:   HandleMoveStep(-1); break;
+                case kCtxGroupMoveDown: HandleMoveStep(1);  break;
+                default: break;
+            }
+            break;
+
+        case kMenuCtxFeed:
+            switch (menuItem) {
+                case kCtxFeedMarkAll:  HandleMarkAllReadOnly(); break;
+                case kCtxFeedHome:     HandleOpenHomePage();    break;
+                case kCtxFeedCopyURL:  HandleCopyFeedURL();     break;
+                case kCtxFeedCopyHome: HandleCopyHomeURL();     break;
+                case kCtxFeedEnabled:  HandleToggleEnabled();   break;
+                case kCtxFeedEdit:     HandleEditFeed();        break;
+                case kCtxFeedDelete:   HandleRemove();          break;
+                default: break;
+            }
             break;
 
         case kMenuArticle:
@@ -867,16 +1057,17 @@ static void AdjustMenus(void)
     MenuRef sort    = GetMenuHandle(kMenuSortBy);
     MenuRef feeds   = GetMenuHandle(kMenuFeeds);
     MenuRef article = GetMenuHandle(kMenuArticle);
+    MenuRef move    = GetMenuHandle(kMenuMove);
     MenuRef moveTo  = GetMenuHandle(kMenuMoveTo);
     int     kind    = 0;
     int     index   = 0;
     Boolean any;
     Boolean feedSelected;
-    Str255  itemText;
-    int     i;
+    Boolean groupSelected;
 
-    any          = GazetteUISelection(&kind, &index);
-    feedSelected = (any && kind == kGazetteRowFeed);
+    any           = GazetteUISelection(&kind, &index);
+    feedSelected  = (any && kind == kGazetteRowFeed);
+    groupSelected = (any && kind == kGazetteRowGroup);
 
     /* ---- View -------------------------------------------------- */
     if (view != nil) {
@@ -907,28 +1098,45 @@ static void AdjustMenus(void)
 
     /* ---- Feeds ------------------------------------------------- */
     if (feeds != nil) {
-        if (any) {
-            MacEnableMenuItem(feeds, kFeedsItemRename);
-            MacEnableMenuItem(feeds, kFeedsItemRemove);
-        } else {
-            DisableMenuItem(feeds, kFeedsItemRename);
-            DisableMenuItem(feeds, kFeedsItemRemove);
-        }
+        Boolean on = true;
 
-        /* The address, the on/off switch and the group are all a feed's: a
-           group has no address and does not nest inside another. */
-        if (feedSelected) {
+        /* Edit is named for what is selected: a feed's dialog and a group's
+           are different dialogs, and the item says which is coming. */
+        SetMenuItemText(feeds, kFeedsItemEdit,
+                        groupSelected ? "\pEdit Group\311" : "\pEdit Feed\311");
+        if (feedSelected || groupSelected) {
             MacEnableMenuItem(feeds, kFeedsItemEdit);
+            MacEnableMenuItem(feeds, kFeedsItemDelete);
             MacEnableMenuItem(feeds, kFeedsItemEnabled);
-            MacEnableMenuItem(feeds, kFeedsItemMoveTo);
-            SetMenuItemText(feeds, kFeedsItemEnabled,
-                            GazetteCoreFeedEnabled(index) ? "\pTurn Off"
-                                                          : "\pTurn On");
+            MacEnableMenuItem(feeds, kFeedsItemMove);
+            on = feedSelected ? GazetteCoreFeedEnabled(index)
+                              : GazetteCoreGroupEnabled(index);
         } else {
             DisableMenuItem(feeds, kFeedsItemEdit);
+            DisableMenuItem(feeds, kFeedsItemDelete);
             DisableMenuItem(feeds, kFeedsItemEnabled);
-            DisableMenuItem(feeds, kFeedsItemMoveTo);
-            SetMenuItemText(feeds, kFeedsItemEnabled, "\pTurn Off");
+            DisableMenuItem(feeds, kFeedsItemMove);
+        }
+        SetMenuItemText(feeds, kFeedsItemEnabled,
+                        on ? "\pTurn Off" : "\pTurn On");
+    }
+    if (move != nil) {
+        /* A group does not nest inside another, so only a feed moves into
+           one; either steps among its own neighbours, to the ends. */
+        if (feedSelected) {
+            MacEnableMenuItem(move, kMoveItemToGroup);
+        } else {
+            DisableMenuItem(move, kMoveItemToGroup);
+        }
+        if (any && CanMoveStep(kind, index, -1)) {
+            MacEnableMenuItem(move, kMoveItemUp);
+        } else {
+            DisableMenuItem(move, kMoveItemUp);
+        }
+        if (any && CanMoveStep(kind, index, 1)) {
+            MacEnableMenuItem(move, kMoveItemDown);
+        } else {
+            DisableMenuItem(move, kMoveItemDown);
         }
     }
 
@@ -1020,38 +1228,167 @@ static void AdjustMenus(void)
         }
     }
 
-    if (moveTo == nil) {
-        return;
+    if (moveTo != nil) {
+        RebuildGroupMenu(moveTo, feedSelected ? index : -1);
     }
+}
 
-    /* The groups change under this menu, so it is rebuilt rather than
-       patched; at most kGazetteMaxGroups items, once per menu click. */
-    while (CountMenuItems(moveTo) > 0) {
-        DeleteMenuItem(moveTo, 1);
+/*
+ * The "to Group" menu: the top level, a divider, then one item per group.
+ * The groups change under it, so it is rebuilt rather than patched — at most
+ * kGazetteMaxGroups items, once per menu click. feedIndex is the feed about
+ * to be moved, or -1: where it already is, is not somewhere to move it to.
+ */
+static void RebuildGroupMenu(MenuRef menu, int feedIndex)
+{
+    Str255 itemText;
+    int    i;
+
+    while (CountMenuItems(menu) > 0) {
+        DeleteMenuItem(menu, 1);
     }
-    AppendMenu(moveTo, "\pTop Level");
+    AppendMenu(menu, "\pTop Level");
     if (GazetteCoreGroupCount() > 0) {
-        AppendMenu(moveTo, "\p(-");
+        AppendMenu(menu, "\p(-");
     }
     for (i = 0; i < GazetteCoreGroupCount(); i++) {
         /* AppendMenu reads its own metacharacters, so a group called "-" or
            one starting with "(" would arrive as a divider or a disabled item.
            Appending a placeholder and setting the text after it is in is the
            way past that — SetMenuItemText interprets nothing. */
-        AppendMenu(moveTo, "\pGroup");
+        AppendMenu(menu, "\pGroup");
         CopyCStringToPascal(GazetteCoreGroupName(i), itemText);
-        SetMenuItemText(moveTo, (short)CountMenuItems(moveTo), itemText);
+        SetMenuItemText(menu, (short)CountMenuItems(menu), itemText);
     }
 
-    /* Where the feed already is, is not somewhere to move it to. */
-    if (feedSelected) {
-        int group = GazetteCoreFeedGroup(index);
+    if (feedIndex >= 0) {
+        int group = GazetteCoreFeedGroup(feedIndex);
 
         if (group < 0) {
-            DisableMenuItem(moveTo, kMoveToItemTop);
+            DisableMenuItem(menu, kMoveToItemTop);
         } else {
-            DisableMenuItem(moveTo, (MenuItemIndex)(kMoveToFirstGroup + group));
+            DisableMenuItem(menu, (MenuItemIndex)(kMoveToFirstGroup + group));
         }
+    }
+}
+
+/*
+ * A contextual click on a sidebar row: the row is chosen first, as the
+ * Finder chooses what is control-clicked, so that every command on the menu
+ * acts on what the menu was opened over — and so that the commands are the
+ * menu bar's own handlers, which act on the selection. Then the menu for
+ * that kind of row, adjusted the way the bar's is, and the choice through
+ * the same dispatcher.
+ */
+static void ShowSidebarContextMenu(int kind, int index, Point global)
+{
+    MenuRef       menu;
+    UInt32        chosen = kCMNothingSelected;
+    SInt16        menuID = 0;
+    MenuItemIndex item   = 0;
+
+    if (kind == kGazetteRowSmart && index == kGazetteSmartStarred) {
+        return;                     /* Starred has nothing to offer */
+    }
+    GazetteUIChooseRow(kind, index);
+
+    switch (kind) {
+        case kGazetteRowSmart:
+            menu = GetMenuHandle(kMenuCtxSmart);
+            if (menu != nil) {
+                if (GazetteFeedsUnreadCount() > 0) {
+                    MacEnableMenuItem(menu, kCtxSmartMarkAll);
+                } else {
+                    DisableMenuItem(menu, kCtxSmartMarkAll);
+                }
+            }
+            break;
+
+        case kGazetteRowGroup: {
+            MenuRef move = GetMenuHandle(kMenuCtxGroupMove);
+
+            menu = GetMenuHandle(kMenuCtxGroup);
+            if (menu == nil) {
+                return;
+            }
+            if (GazetteFeedsUnreadCount() > 0) {
+                MacEnableMenuItem(menu, kCtxGroupMarkAll);
+            } else {
+                DisableMenuItem(menu, kCtxGroupMarkAll);
+            }
+            SetMenuItemText(menu, kCtxGroupEnabled,
+                            GazetteCoreGroupEnabled(index) ? "\pTurn Off"
+                                                           : "\pTurn On");
+            if (move != nil) {
+                if (CanMoveStep(kind, index, -1)) {
+                    MacEnableMenuItem(move, kCtxGroupMoveUp);
+                } else {
+                    DisableMenuItem(move, kCtxGroupMoveUp);
+                }
+                if (CanMoveStep(kind, index, 1)) {
+                    MacEnableMenuItem(move, kCtxGroupMoveDown);
+                } else {
+                    DisableMenuItem(move, kCtxGroupMoveDown);
+                }
+            }
+            break;
+        }
+
+        case kGazetteRowFeed: {
+            MenuRef move    = GetMenuHandle(kMenuCtxFeedMove);
+            MenuRef toGroup = GetMenuHandle(kMenuCtxToGroup);
+            Boolean home    = (Boolean)(GazetteCoreFeedHome(index)[0] != '\0');
+
+            menu = GetMenuHandle(kMenuCtxFeed);
+            if (menu == nil) {
+                return;
+            }
+            if (GazetteFeedsUnreadCount() > 0) {
+                MacEnableMenuItem(menu, kCtxFeedMarkAll);
+            } else {
+                DisableMenuItem(menu, kCtxFeedMarkAll);
+            }
+            /* The site is learned from the feed on its first refresh; until
+               then there is nothing to open or to copy. */
+            if (home) {
+                MacEnableMenuItem(menu, kCtxFeedHome);
+                MacEnableMenuItem(menu, kCtxFeedCopyHome);
+            } else {
+                DisableMenuItem(menu, kCtxFeedHome);
+                DisableMenuItem(menu, kCtxFeedCopyHome);
+            }
+            SetMenuItemText(menu, kCtxFeedEnabled,
+                            GazetteCoreFeedEnabled(index) ? "\pTurn Off"
+                                                          : "\pTurn On");
+            if (move != nil) {
+                if (CanMoveStep(kind, index, -1)) {
+                    MacEnableMenuItem(move, kMoveItemUp);
+                } else {
+                    DisableMenuItem(move, kMoveItemUp);
+                }
+                if (CanMoveStep(kind, index, 1)) {
+                    MacEnableMenuItem(move, kMoveItemDown);
+                } else {
+                    DisableMenuItem(move, kMoveItemDown);
+                }
+            }
+            if (toGroup != nil) {
+                RebuildGroupMenu(toGroup, index);
+            }
+            break;
+        }
+
+        default:
+            return;
+    }
+    if (menu == nil) {
+        return;
+    }
+
+    if (ContextualMenuSelect(menu, global, false, kCMHelpItemNoHelp, "\p",
+                             NULL, &chosen, &menuID, &item) == noErr &&
+        chosen == kCMMenuItemSelected) {
+        HandleMenuChoice(((long)menuID << 16) | (long)item);
     }
 }
 
@@ -1160,7 +1497,29 @@ static void HandleEditFeed(void)
     ShowFeed(index);
 }
 
-static void HandleRename(void)
+/* A group has a name and nothing else to edit, so editing one is naming it. */
+static void HandleEditGroup(void)
+{
+    char name[kGazetteGroupLen];
+    int  kind  = 0;
+    int  index = 0;
+
+    if (!GazetteUISelection(&kind, &index) || kind != kGazetteRowGroup) {
+        return;
+    }
+
+    snprintf(name, sizeof name, "%s", GazetteCoreGroupName(index));
+    if (!GazetteAskName("Name for this group:", name, sizeof name)) {
+        return;
+    }
+    GazetteCoreRenameGroup(index, name);
+
+    GazetteCoreSavePrefs();
+    GazetteUIFeedsChanged();
+}
+
+/* Feeds > Edit Feed… / Edit Group…: whichever the sidebar has selected. */
+static void HandleEdit(void)
 {
     int kind  = 0;
     int index = 0;
@@ -1168,27 +1527,11 @@ static void HandleRename(void)
     if (!GazetteUISelection(&kind, &index)) {
         return;
     }
-
     if (kind == kGazetteRowGroup) {
-        char name[kGazetteGroupLen];
-
-        snprintf(name, sizeof name, "%s", GazetteCoreGroupName(index));
-        if (!GazetteAskName("Name for this group:", name, sizeof name)) {
-            return;
-        }
-        GazetteCoreRenameGroup(index, name);
-    } else {
-        char title[kGazetteTitleLen];
-
-        snprintf(title, sizeof title, "%s", GazetteCoreFeedTitle(index));
-        if (!GazetteAskName("Name for this feed:", title, sizeof title)) {
-            return;
-        }
-        GazetteCoreRenameFeed(index, title);
+        HandleEditGroup();
+    } else if (kind == kGazetteRowFeed) {
+        HandleEditFeed();
     }
-
-    GazetteCoreSavePrefs();
-    GazetteUIFeedsChanged();
 }
 
 static void HandleRemove(void)
@@ -1205,7 +1548,7 @@ static void HandleRemove(void)
        Platinum alert uses around a name. */
     if (kind == kGazetteRowGroup) {
         snprintf(message, sizeof message,
-                 "Remove the group \322%s\323? The feeds in it are kept - "
+                 "Delete the group \322%s\323? The feeds in it are kept - "
                  "they move to the top of the list.",
                  GazetteCoreGroupName(index));
         if (!GazetteConfirmRemove(message)) {
@@ -1216,7 +1559,7 @@ static void HandleRemove(void)
         char url[kGazetteURLLen];
 
         snprintf(message, sizeof message,
-                 "Remove the feed \322%s\323? You can subscribe to it again "
+                 "Delete the feed \322%s\323? You can subscribe to it again "
                  "at any time.", GazetteCoreFeedTitle(index));
         if (!GazetteConfirmRemove(message)) {
             return;
@@ -1254,13 +1597,145 @@ static void HandleToggleEnabled(void)
     int kind  = 0;
     int index = 0;
 
-    if (!GazetteUISelection(&kind, &index) || kind != kGazetteRowFeed) {
+    if (!GazetteUISelection(&kind, &index)) {
         return;
     }
 
-    GazetteCoreSetFeedEnabled(index, !GazetteCoreFeedEnabled(index));
+    if (kind == kGazetteRowFeed) {
+        GazetteCoreSetFeedEnabled(index, !GazetteCoreFeedEnabled(index));
+    } else if (kind == kGazetteRowGroup) {
+        GazetteCoreSetGroupEnabled(index, !GazetteCoreGroupEnabled(index));
+    } else {
+        return;
+    }
     GazetteCoreSavePrefs();
     GazetteUIFeedsChanged();
+}
+
+/*
+ * Whether a feed or a group can take a step up or down. A feed steps among
+ * the feeds of its own group — the feeds are held in sidebar order and a
+ * group's are contiguous, so its neighbour is the next index over, and the
+ * step stops where the group does. A group steps among the groups.
+ */
+static Boolean CanMoveStep(int kind, int index, int delta)
+{
+    int to = index + delta;
+
+    if (kind == kGazetteRowFeed) {
+        return (Boolean)(to >= 0 && to < GazetteCoreFeedCount() &&
+                         GazetteCoreFeedGroup(to) ==
+                             GazetteCoreFeedGroup(index));
+    }
+    if (kind == kGazetteRowGroup) {
+        return (Boolean)(to >= 0 && to < GazetteCoreGroupCount());
+    }
+    return false;
+}
+
+static void HandleMoveStep(int delta)
+{
+    int kind  = 0;
+    int index = 0;
+    int moved;
+
+    if (!GazetteUISelection(&kind, &index) ||
+        !CanMoveStep(kind, index, delta)) {
+        return;
+    }
+
+    if (kind == kGazetteRowFeed) {
+        moved = GazetteCoreMoveFeed(index, index + delta,
+                                    GazetteCoreFeedGroup(index));
+    } else {
+        moved = GazetteCoreMoveGroup(index, index + delta);
+    }
+    if (moved < 0) {
+        return;
+    }
+
+    GazetteCoreSavePrefs();
+    GazetteUIFeedsChanged();
+    if (kind == kGazetteRowFeed) {
+        GazetteUISelectFeed(moved);
+    } else {
+        GazetteUISelectGroup(moved);
+    }
+}
+
+/*
+ * Mark All as Read from a contextual menu: one direction only. The menu bar's
+ * item turns round and offers to mark everything unread once nothing is left
+ * to read, because it is the one item in the Article menu; a menu that was
+ * opened over a row to read it off is not that.
+ */
+static void HandleMarkAllReadOnly(void)
+{
+    if (GazetteFeedsUnreadCount() <= 0) {
+        return;
+    }
+    GazetteFeedsMarkAllRead();
+
+    if (GazetteCoreHideReadArticles()) {
+        GazetteUIViewChanged();
+    } else {
+        GazetteUIUpdate();
+    }
+}
+
+static void HandleOpenHomePage(void)
+{
+    int kind  = 0;
+    int index = 0;
+
+    if (!GazetteUISelection(&kind, &index) || kind != kGazetteRowFeed) {
+        return;
+    }
+    if (GazetteCoreFeedHome(index)[0] == '\0') {
+        GazetteUISetStatus("This feed has not said where its site is yet; "
+                           "refresh it first.");
+        return;
+    }
+    (void)OpenURL(GazetteCoreFeedHome(index));
+}
+
+/* Text onto the clipboard, as the one flavour every other application on
+   this machine reads. */
+static void CopyTextToClipboard(const char *text)
+{
+    ScrapRef scrap;
+
+    if (text == NULL || ClearCurrentScrap() != noErr ||
+        GetCurrentScrap(&scrap) != noErr) {
+        return;
+    }
+    (void)PutScrapFlavor(scrap, kScrapFlavorTypeText, kScrapFlavorMaskNone,
+                         (Size)strlen(text), text);
+}
+
+static void HandleCopyFeedURL(void)
+{
+    int kind  = 0;
+    int index = 0;
+
+    if (!GazetteUISelection(&kind, &index) || kind != kGazetteRowFeed) {
+        return;
+    }
+    CopyTextToClipboard(GazetteCoreFeedURL(index));
+    GazetteUISetStatus("The feed's address is on the clipboard.");
+}
+
+static void HandleCopyHomeURL(void)
+{
+    int kind  = 0;
+    int index = 0;
+
+    if (!GazetteUISelection(&kind, &index) || kind != kGazetteRowFeed ||
+        GazetteCoreFeedHome(index)[0] == '\0') {
+        return;
+    }
+    CopyTextToClipboard(GazetteCoreFeedHome(index));
+    GazetteUISetStatus("The site's address is on the clipboard.");
 }
 
 /*
@@ -1344,30 +1819,40 @@ static void HandleNextUnread(void)
  * chose in the Internet control panel, and it starts the browser if it is not
  * already running. The hint is empty because the URL carries its own scheme.
  */
-static void HandleOpenInBrowser(void)
+/* Hand an address to whatever Internet Config says opens it — the user's
+   browser, for anything either of the callers has. */
+static Boolean OpenURL(const char *url)
 {
-    const char *url = GazetteUISelectedArticleLink();
-    ICInstance  ic  = nil;
-    long        start;
-    long        end;
+    ICInstance ic = nil;
+    long       start;
+    long       end;
+    Boolean    opened;
 
-    if (url[0] == '\0') {
-        return;
+    if (url == NULL || url[0] == '\0') {
+        return false;
     }
     if (ICStart(&ic, 'Gzt9') != noErr || ic == nil) {
         GazetteUISetStatus("Internet Config is not available on this "
                            "Macintosh.");
-        return;
+        return false;
     }
 
-    start = 0;
-    end   = (long)strlen(url);
-    if (ICLaunchURL(ic, "\p", (Ptr)url, end, &start, &end) != noErr) {
-        GazetteUISetStatus("No application is set up to open that address.");
-    } else {
+    start  = 0;
+    end    = (long)strlen(url);
+    opened = (Boolean)(ICLaunchURL(ic, "\p", (Ptr)url, end, &start, &end)
+                       == noErr);
+    if (opened) {
         GazetteUISetStatus("Opened in your browser.");
+    } else {
+        GazetteUISetStatus("No application is set up to open that address.");
     }
     (void)ICStop(ic);
+    return opened;
+}
+
+static void HandleOpenInBrowser(void)
+{
+    (void)OpenURL(GazetteUISelectedArticleLink());
 }
 
 /* ------------------------------------------------------------------ */
@@ -2073,6 +2558,14 @@ static void PumpRefresh(void)
         case kGazetteRefreshDone:
             gLastRefreshTicks = TickCount();
             lastProgress      = -1;
+
+            /* The feed has said where its site is, or said it again; either
+               way the preferences carry it from here, for Open Home Page. */
+            if (GazetteFeedsRefreshHome()[0] != '\0' &&
+                GazetteCoreSetFeedHome(GazetteFeedsRefreshFeedIndex(),
+                                       GazetteFeedsRefreshHome())) {
+                GazetteCoreSavePrefs();
+            }
             if (queued) {
                 /*
                  * Either more of the queue to fetch, or it has just finished

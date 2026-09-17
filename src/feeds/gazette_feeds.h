@@ -181,6 +181,14 @@ void GazetteFeedsFlush(void);
  * a second scanner over the same bytes, so it is asked for only on the first
  * refresh after a feed is added and not on every refresh thereafter.
  */
+/*
+ * What the last refresh learned about the feed beyond its articles: which
+ * feed it was, and the site it is for. Valid once the refresh is done, and
+ * until the next one starts; "" when the feed did not say where it lives.
+ */
+int         GazetteFeedsRefreshFeedIndex(void);
+const char *GazetteFeedsRefreshHome(void);
+
 int GazetteFeedsRefreshStart(int feedIndex, const char *url, long maxArticles,
                              int allowDiscovery);
 

@@ -51,6 +51,7 @@ static int                gOldestFirst;   /* Sort Articles By: Oldest on Top */
 static char               gFeedTitle[kGazetteFeedTitleLen];
 static int                gCurrentFeed = -1;
 static int                gPendingFeed = -1;
+static char               gRefreshHome[kGazetteHomeLen];  /* the site, per the last refresh */
 static int                gCurrentGroup = -1;
 static int                gCurrentSmart = -1;
 
@@ -309,6 +310,16 @@ const char *GazetteFeedsTitle(void)
     return gFeedTitle;
 }
 
+int GazetteFeedsRefreshFeedIndex(void)
+{
+    return gPendingFeed;
+}
+
+const char *GazetteFeedsRefreshHome(void)
+{
+    return gRefreshHome;
+}
+
 int GazetteFeedsCurrentFeed(void)
 {
     return gCurrentFeed;
@@ -548,6 +559,7 @@ int GazetteFeedsRefreshStart(int feedIndex, const char *url, long maxArticles,
     gCleared  = 0;
     gMaxArticles = maxArticles;
     gPendingFeed = feedIndex;
+    gRefreshHome[0] = '\0';
     gz_copy_n(gCurrentURL, sizeof gCurrentURL, url ? url : "",
               url ? strlen(url) : 0);
 
@@ -620,6 +632,9 @@ GazetteRefreshState GazetteFeedsRefreshPump(void)
                   GazetteFeedParserTitle(gParser),
                   strlen(GazetteFeedParserTitle(gParser)));
     }
+    gz_copy_n(gRefreshHome, sizeof gRefreshHome,
+              GazetteFeedParserLink(gParser),
+              strlen(GazetteFeedParserLink(gParser)));
 
     if (gArticleCount == 0) {
         int status = GazetteFetchStatus(gFetch);

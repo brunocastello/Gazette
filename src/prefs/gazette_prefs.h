@@ -67,13 +67,14 @@ enum {
     kGazetteMaxGroups = 24,
     kGazetteURLLen    = 512,
     kGazetteTitleLen  = 128,
+    kGazetteHomeLen   = 256,    /* a site's front page; shorter than a feed's */
     kGazetteGroupLen  = 64,
     kGazetteCountryLen = 8,
 
     /* Enough for kGazetteMaxFeeds full-length feed lines, every group name,
        and the settings block, so serialising can never be the thing that
        fails. gazette_prefs.c has the arithmetic as a compile-time check. */
-    kGazettePrefsTextMax = 96 * 1024
+    kGazettePrefsTextMax = 128 * 1024
 };
 
 /*
@@ -92,6 +93,13 @@ typedef struct {
 typedef struct {
     char url[kGazetteURLLen];
     char title[kGazetteTitleLen];
+    /*
+     * The site the feed is for — RSS's <channel><link>, Atom's feed-level
+     * alternate link. Learned from the feed on a refresh, the way the title
+     * is, never typed; empty until the first refresh, and the two menu items
+     * that need it stay grey until then.
+     */
+    char home[kGazetteHomeLen];
     int  enabled;
     int  group;                 /* index into groups, or -1 for the top level */
     int  hidden;                /* runtime only; see above */
@@ -172,6 +180,9 @@ int GazettePrefsSetFeedEnabled(GazettePrefs *p, int index, int enabled);
    when the address is empty or already belongs to a different feed. Returns 1
    on success. */
 int GazettePrefsSetFeedURL(GazettePrefs *p, int index, const char *url);
+
+/* Record the site a feed is for. Returns 1 when it changed. */
+int GazettePrefsSetFeedHome(GazettePrefs *p, int index, const char *home);
 
 /* ------------------------------------------------------------------ */
 /* Groups                                                             */
