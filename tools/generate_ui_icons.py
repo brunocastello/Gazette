@@ -456,54 +456,72 @@ def draw_hide_read():
     return overlay(NEWSPAPER_READ, CROSS, 8, 8)
 
 
-def draw_mark_read():
+def draw_button(fill, light, dark, glyph, x0, y0):
     """
-    A round green button with a white check on it: a fourteen-pixel disc
-    from a true circle, a one-pixel bevel lit from the upper left, and the
-    check centred with clear green all round it.
+    A round button: a fourteen-pixel disc from a true circle, a one-pixel
+    bevel lit from the upper left, and a white glyph centred on it with
+    clear colour all round.
     """
     cx = cy = 7.5
     ss = 8
     g = [['.'] * 16 for _ in range(16)]
     for y in range(16):
         for x in range(16):
-            fill = edge = 0
+            inside = edge = 0
             for sy in range(ss):
                 for sx in range(ss):
                     d = math.hypot(x + (sx + 0.5) / ss - cx,
                                    y + (sy + 0.5) / ss - cy)
                     if d <= 6.6:
-                        fill += 1
+                        inside += 1
                     elif d <= 7.6:
                         edge += 1
-            if fill >= ss * ss // 2:
-                g[y][x] = 'G'
-            elif fill + edge >= ss * ss // 2:
+            if inside >= ss * ss // 2:
+                g[y][x] = fill
+            elif inside + edge >= ss * ss // 2:
                 g[y][x] = 'D'
 
     for y in range(16):
         for x in range(16):
-            if g[y][x] != 'G':
+            if g[y][x] != fill:
                 continue
             d = math.hypot(x + 0.5 - cx, y + 0.5 - cy)
             a = math.degrees(math.atan2(y + 0.5 - cy, x + 0.5 - cx))
             if d > 5.6:
                 if a < -55 or a > 145:
-                    g[y][x] = 'g'
+                    g[y][x] = light
                 elif -35 < a < 125:
-                    g[y][x] = 'H'
+                    g[y][x] = dark
     # Two pixels the rule leaves standing alone where light turns to dark.
     for x, y in ((10, 2), (4, 12)):
-        g[y][x] = 'G'
+        g[y][x] = fill
 
-    return overlay(g, badge("""
+    return overlay(g, badge(glyph), x0, y0)
+
+
+def draw_mark_read():
+    """Green, with a check: read."""
+    return draw_button('G', 'g', 'H', """
 .......BB
 ......BB.
 .....BB..
 BB..BB...
 .BBBB....
 ..BB.....
-"""), 3, 5)
+""", 3, 5)
+
+
+def draw_mark_unread():
+    """Red, with a one: unread, and one of them."""
+    return draw_button('R', 'r', 'S', """
+..BB..
+.BBB..
+..BB..
+..BB..
+..BB..
+..BB..
+BBBBBB
+""", 5, 4)
 
 
 def draw_next_unread():
@@ -650,18 +668,18 @@ def main():
         (130, "Starred", draw_star()),
         (131, "Starred Article", draw_star_small()),
 
-        # The toolbar. The three pairs are the buttons that toggle. Each pair
-        # wears the one picture for now — the second state's drawing has not
-        # been designed yet — so a button's caption, not its picture, is what
-        # says which way it will go next.
+        # The toolbar. The three pairs are the buttons that toggle: each
+        # wears the picture for what it would do next, the way its menu item
+        # wears the words for it. Mark All as Unread is the unread sheet,
+        # Show Read Articles the plain one, Mark as Unread a red button.
         (132, "Sidebar", draw_sidebar()),
         (133, "Refresh", draw_refresh()),
         (134, "Mark All as Read", draw_mark_all_read()),
-        (135, "Mark All as Unread", draw_mark_all_read()),
+        (135, "Mark All as Unread", draw_next_unread()),
         (136, "Hide Read Articles", draw_hide_read()),
-        (137, "Show Read Articles", draw_hide_read()),
+        (137, "Show Read Articles", NEWSPAPER),
         (138, "Mark as Read", draw_mark_read()),
-        (139, "Mark as Unread", draw_mark_read()),
+        (139, "Mark as Unread", draw_mark_unread()),
         (140, "Next Unread", draw_next_unread()),
         (141, "Open in Browser", draw_browser()),
         (142, "New", draw_new()),

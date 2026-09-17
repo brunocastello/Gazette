@@ -462,7 +462,7 @@ static Boolean BuildMenuBar(void)
                "Today/1;All Unread/2;Starred/3;(-;"
                "Mark as Unread/U;Mark All as Read/K;"
                "Mark Above as Read/K;Mark Below as Read/K;(-;"
-               "Mark as Starred/L;(-;"
+               "Star Article/L;(-;"
                "Open in Browser/B");
     SetShiftKey(articleMenu, kArticleItemMarkAbove);
     SetOptionKey(articleMenu, kArticleItemMarkBelow);
@@ -947,13 +947,13 @@ static void AdjustMenus(void)
                                        : "\pMark as Read");
             MacEnableMenuItem(article, kArticleItemStar);
             SetMenuItemText(article, kArticleItemStar,
-                            open->starred ? "\pRemove Star"
-                                          : "\pMark as Starred");
+                            open->starred ? "\pUnstar Article"
+                                          : "\pStar Article");
         } else {
             DisableMenuItem(article, kArticleItemMarkRead);
             SetMenuItemText(article, kArticleItemMarkRead, "\pMark as Unread");
             DisableMenuItem(article, kArticleItemStar);
-            SetMenuItemText(article, kArticleItemStar, "\pMark as Starred");
+            SetMenuItemText(article, kArticleItemStar, "\pStar Article");
         }
 
         /* Above and below are about where the article sits in the list, so

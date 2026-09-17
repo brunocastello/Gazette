@@ -3665,7 +3665,7 @@ static const ToolSpec kToolSpec[kToolbarButtons] = {
     { kIconMarkAllRead, kIconMarkAllUnread, "Mark All as Read",   "Mark All as Unread" },
     { kIconHideRead,    kIconShowRead,      "Hide Read Articles", "Show Read Articles" },
     { kIconMarkRead,    kIconMarkUnread,    "Mark as Read",       "Mark as Unread" },
-    { kIconStarred,     0,                  "Mark as Starred",    "Remove Star" },
+    { kIconStarred,     0,                  "Star Article",       "Unstar Article" },
     { kIconNextUnread,  0,                  "Next Unread",        NULL },
     { kIconBrowser,     0,                  "Open in Browser",    NULL }
 };
@@ -3969,6 +3969,36 @@ static void DrawToolbar(void)
             gToolbarRect.right, gToolbarRect.bottom);
     ForeColor(blackColor);
     PaintRect(&rule);
+
+    /*
+     * The grooves cut through the rule, as OE's do: on the rule's row a
+     * groove is its white column, four of grey and its black, and the rule
+     * stops either side of it. The grooves themselves are drawn before the
+     * bar — the headers that follow cover their inner columns — so the bar
+     * puts their first row back over the rule it has just painted.
+     */
+    {
+        const Rect *groove[2];
+        int         g;
+
+        groove[0] = &gVDivider;
+        groove[1] = &gVDivider2;
+        for (g = 0; g < 2; g++) {
+            const Rect *r = groove[g];
+            Rect        cap;
+
+            if (r->right <= r->left || r->top != rule.top) {
+                continue;
+            }
+            SetRect(&cap, (short)(r->left + 1), rule.top,
+                    (short)(r->left + 5), rule.bottom);
+            EraseWith(&cap, kThemeBrushDialogBackgroundActive);
+            ForeColor(whiteColor);
+            MoveTo(r->left, rule.top);
+            LineTo(r->left, rule.top);
+            ForeColor(blackColor);
+        }
+    }
 }
 
 /*
