@@ -34,27 +34,35 @@ enum {
 
 enum {
     kFeedItemTitle = 5,
-    kFeedItemURL   = 7
+    kFeedItemURL   = 7,
+    kFeedItemGroup = 9              /* a user item: see DrawPopupItem */
 };
 
 /*
- * The Group popup is a control of the dialog's window rather than an item
- * of its DITL: Retro68's Rez cannot compile a Control item, so the code
- * makes it, at the place the DITL leaves for it, and the filter hands it
- * its clicks — ModalDialog only tracks items. kControlPopupButtonProc plus
- * the fixed-width variant; -12345 for the menu ID says there is no menu
- * resource, the menu is handed in by handle.
+ * The Group popup is a control of the dialog's window, made by the code
+ * from the groups there are, standing on a user item of the DITL. The item
+ * is what gets it drawn: the Dialog Manager draws its items and nothing
+ * else, and the item's draw procedure draws the control. The filter hands
+ * it its clicks, since ModalDialog tracks only items. kControlPopupButtonProc
+ * plus the fixed-width variant; -12345 for the menu ID says there is no
+ * menu resource, the menu is handed in by handle.
  */
 enum {
     kFeedPopupProc   = 401,
-    kPopupNoMenuID   = -12345,
-    kFeedPopupTop    = 106,
-    kFeedPopupLeft   = 88,
-    kFeedPopupBottom = 126,
-    kFeedPopupRight  = 240
+    kPopupNoMenuID   = -12345
 };
 
 static ControlHandle gFeedPopup;    /* while the feed dialog is up */
+static UserItemUPP   gDrawPopup;    /* made once, kept */
+
+static pascal void DrawPopupItem(DialogRef dialog, DialogItemIndex item)
+{
+    (void)dialog;
+    (void)item;
+    if (gFeedPopup != NULL) {
+        Draw1Control(gFeedPopup);
+    }
+}
 
 /* The Group popup's menu, built here from the groups there are. An ID after
    every menu the shell and the window make. */
@@ -253,7 +261,9 @@ Boolean GazetteAskFeed(GazetteFeedDialog *d)
     DialogRef     dialog;
     ControlHandle popup = NULL;
     MenuRef       menu  = NULL;
+    Handle        handle = NULL;
     Rect          box;
+    short         type;
     Str255        title;
     Boolean       ok;
 
@@ -273,9 +283,10 @@ Boolean GazetteAskFeed(GazetteFeedDialog *d)
     SetItemText(dialog, kFeedItemTitle, d->title);
     SetItemText(dialog, kFeedItemURL, d->url);
 
-    /* The popup, made here at the place the DITL leaves for it. */
-    SetRect(&box, kFeedPopupLeft, kFeedPopupTop, kFeedPopupRight,
-            kFeedPopupBottom);
+    /* The popup, made where the user item is, and drawn by it. With no
+       groups there is nowhere but the top level, and the one choice is
+       shown grey: a menu of one is not a choice. */
+    GetDialogItem(dialog, kFeedItemGroup, &type, &handle, &box);
     menu = GroupMenu(d->groups, d->groupCount);
     if (menu != NULL) {
         popup = NewControl(GetDialogWindow(dialog), &box, "\p", true,
@@ -291,8 +302,15 @@ Boolean GazetteAskFeed(GazetteFeedDialog *d)
                         (d->group >= 0 && d->group < d->groupCount)
                             ? (short)(kGroupFirstItem + d->group)
                             : kGroupItemTop);
+        if (d->groupCount == 0) {
+            DisableMenuItem(menu, kGroupItemTop);
+        }
     }
     gFeedPopup = popup;
+    if (gDrawPopup == NULL) {
+        gDrawPopup = NewUserItemUPP(DrawPopupItem);
+    }
+    SetDialogItem(dialog, kFeedItemGroup, userItem, (Handle)gDrawPopup, &box);
 
     /* The name first: it is what the user has in their head, and the one a
        new feed most often leaves empty, so the cursor starts in the field

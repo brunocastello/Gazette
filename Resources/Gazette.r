@@ -84,9 +84,10 @@ resource 'dlgx' (kFeedDialogID) {
  * What the dialog says, at the top and at the window's own margin rather
  * than the fields'; then the name, the address and the group. Item 1 is the
  * default button and item 2 the cancel one; the code tells the Dialog
- * Manager so, and nothing else depends on it. The Group popup is not an
- * item: Retro68's Rez cannot compile a Control item, so the dialog code
- * makes it, at { 106, 88, 126, 240 }, from the groups there are.
+ * Manager so, and nothing else depends on it. The Group popup is a user
+ * item: the dialog code makes the control, from the groups there are, and
+ * the item's draw procedure draws it whenever the dialog is drawn — the
+ * Dialog Manager draws its items and nothing else.
  */
 resource 'DITL' (kFeedDialogID, "Feed") {
     {
@@ -115,6 +116,9 @@ resource 'DITL' (kFeedDialogID, "Feed") {
 
         { 108, 16, 124, 84 },
         StaticText { disabled, "Group:" };
+
+        { 106, 88, 126, 240 },
+        UserItem { disabled };
     }
 };
 
@@ -123,7 +127,7 @@ resource 'DITL' (kFeedDialogID, "Feed") {
  * font: it is a note, not a label. A 'dftb' names a font per item, and
  * only the third says anything: flags $0005 (font and size), font 3
  * (Geneva), size 10, then style, mode, justification, two colours and an
- * empty font name; the other seven are skipped.
+ * empty font name; the other eight are skipped.
  *
  * Raw bytes rather than the Dialogs.r template, for the reason the icons
  * are: Retro68's Rez falls over on the template, and a data block does not
@@ -131,8 +135,8 @@ resource 'DITL' (kFeedDialogID, "Feed") {
  * by item, nothing aligned.
  */
 data 'dftb' (kFeedDialogID, "Feed") {
-    $"0000 0008 0000 0000 0001 0005 0003 000A 0000 0000 0000 0000 0000 0000"
-    $"0000 0000 0000 0000 0000 0000 0000 0000 00"
+    $"0000 0009 0000 0000 0001 0005 0003 000A 0000 0000 0000 0000 0000 0000"
+    $"0000 0000 0000 0000 0000 0000 0000 0000 0000 00"
 };
 
 resource 'DLOG' (kNameDialogID, "Name") {
