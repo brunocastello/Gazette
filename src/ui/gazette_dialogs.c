@@ -9,9 +9,12 @@
 
 #include "ui/gazette_dialogs.h"
 
+#include <Controls.h>
+#include <ControlDefinitions.h>
 #include <Dialogs.h>
 #include <Events.h>
 #include <MacWindows.h>
+#include <Menus.h>
 #include <TextUtils.h>
 
 #include <string.h>
@@ -30,8 +33,21 @@ enum {
 };
 
 enum {
-    kFeedItemURL   = 4,
-    kFeedItemTitle = 6
+    kFeedItemTitle = 5,
+    kFeedItemURL   = 7,
+    kFeedItemGroup = 9
+};
+
+/* The Group popup's menu, built here from the groups there are. An ID after
+   every menu the shell and the window make. */
+enum {
+    kGroupPopupMenuID = 150
+};
+
+/* Its items: the top level, a divider, then one per group. */
+enum {
+    kGroupItemTop   = 1,
+    kGroupFirstItem = 3
 };
 
 enum {
@@ -166,12 +182,48 @@ static Boolean RunDialog(DialogRef dialog)
 /* The dialogs                                                         */
 /* ------------------------------------------------------------------ */
 
-Boolean GazetteAskFeed(char *url, size_t urlCap, char *title, size_t titleCap)
+/*
+ * The Group popup's menu: the top level, a divider, and the groups. Built
+ * for each showing, because the groups change; handed to the popup by
+ * handle, which is why its CNTL names no menu resource. AppendMenu reads its
+ * own metacharacters, so each group goes in as a placeholder and is named
+ * afterwards with SetMenuItemText, which interprets nothing.
+ */
+static MenuRef GroupMenu(const char *const *groups, int count)
 {
-    DialogRef dialog;
-    Boolean   ok;
+    MenuRef menu = NewMenu(kGroupPopupMenuID, "\p");
+    Str255  name;
+    int     i;
 
-    if (url == NULL || urlCap == 0 || title == NULL || titleCap == 0) {
+    if (menu == NULL) {
+        return NULL;
+    }
+    AppendMenu(menu, "\pTop Level");
+    if (count > 0) {
+        AppendMenu(menu, "\p(-");
+    }
+    for (i = 0; i < count; i++) {
+        AppendMenu(menu, "\pGroup");
+        CopyCStringToPascal(groups[i] != NULL ? groups[i] : "", name);
+        SetMenuItemText(menu, (short)CountMenuItems(menu), name);
+    }
+    InsertMenu(menu, hierMenu);
+    return menu;
+}
+
+Boolean GazetteAskFeed(GazetteFeedDialog *d)
+{
+    DialogRef     dialog;
+    ControlHandle popup = NULL;
+    MenuRef       menu  = NULL;
+    Handle        handle;
+    Rect          box;
+    short         type;
+    Str255        title;
+    Boolean       ok;
+
+    if (d == NULL || d->url == NULL || d->urlCap == 0 || d->title == NULL ||
+        d->titleCap == 0) {
         return false;
     }
 
@@ -179,21 +231,59 @@ Boolean GazetteAskFeed(char *url, size_t urlCap, char *title, size_t titleCap)
     if (dialog == NULL) {
         return false;
     }
+    CopyCStringToPascal(d->windowTitle != NULL ? d->windowTitle : "Feed",
+                        title);
+    SetWTitle(GetDialogWindow(dialog), title);
 
-    SetItemText(dialog, kFeedItemURL, url);
-    SetItemText(dialog, kFeedItemTitle, title);
-    SelectDialogItemText(dialog, kFeedItemURL, 0, 32767);
+    SetItemText(dialog, kFeedItemTitle, d->title);
+    SetItemText(dialog, kFeedItemURL, d->url);
+
+    /* The popup is a control item, so its item handle is the control. */
+    GetDialogItem(dialog, kFeedItemGroup, &type, &handle, &box);
+    if (handle != NULL) {
+        popup = (ControlHandle)handle;
+        menu  = GroupMenu(d->groups, d->groupCount);
+        if (menu != NULL) {
+            (void)SetControlData(popup, kControlEntireControl,
+                                 kControlPopupButtonMenuHandleTag,
+                                 sizeof menu, (Ptr)&menu);
+            SetControlMinimum(popup, 1);
+            SetControlMaximum(popup, CountMenuItems(menu));
+            SetControlValue(popup,
+                            (d->group >= 0 && d->group < d->groupCount)
+                                ? (short)(kGroupFirstItem + d->group)
+                                : kGroupItemTop);
+        }
+    }
+
+    /* The name first: it is what the user has in their head, and the one a
+       new feed most often leaves empty, so the cursor starts in the field
+       they are likeliest to skip past. */
+    SelectDialogItemText(dialog,
+                         d->url[0] == '\0' ? kFeedItemURL : kFeedItemTitle,
+                         0, 32767);
 
     ok = RunDialog(dialog);
     if (ok) {
-        GetItemText(dialog, kFeedItemURL, url, urlCap);
-        GetItemText(dialog, kFeedItemTitle, title, titleCap);
-        Trim(url);
-        Trim(title);
-        ok = (url[0] != '\0');
+        GetItemText(dialog, kFeedItemURL, d->url, d->urlCap);
+        GetItemText(dialog, kFeedItemTitle, d->title, d->titleCap);
+        Trim(d->url);
+        Trim(d->title);
+        ok = (d->url[0] != '\0');
+
+        if (popup != NULL && menu != NULL) {
+            short chosen = GetControlValue(popup);
+
+            d->group = (chosen >= kGroupFirstItem)
+                           ? chosen - kGroupFirstItem : -1;
+        }
     }
 
     DisposeDialog(dialog);
+    if (menu != NULL) {
+        DeleteMenu(kGroupPopupMenuID);
+        DisposeMenu(menu);
+    }
     return ok;
 }
 

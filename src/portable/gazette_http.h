@@ -24,7 +24,7 @@ extern "C" {
  * names itself honestly is easier for an operator to interpret in a log than
  * one pretending to be Netscape.
  */
-#define kGazetteUserAgent "Gazette/0.1 (Macintosh; Mac OS 9; PowerPC)"
+#define kGazetteUserAgent "Gazette/0.1.0 (Macintosh; Mac OS 9; PowerPC)"
 
 /* ------------------------------------------------------------------ */
 /* Requests                                                            */

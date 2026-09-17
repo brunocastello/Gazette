@@ -79,7 +79,30 @@ static const char *const kUnwantedMarkers[] = {
     "advert", "recirc", "morestories", "more-stories", "readmore",
     "read-more", "breadcrumb", "pagination", "menu", "navbar", "navigation",
     "masthead", "toolbar", "cookie", "consent", "modal", "popup", "overlay",
-    "footer", "widget"
+    "footer", "widget",
+    /* A page's furniture named by id rather than by element — <div
+       id="header">, <div id="nav"> — is furniture just the same; the login
+       box, the rating stars and the download list are a site's, not the
+       article's; and "skip to main content" is a link for a screen reader
+       and text for nobody, as is anything the page hides from sight. */
+    "header", "login", "nav", "rating", "fivestar", "download",
+    "skip", "sr-only", "screen-reader", "visually-hidden", "visuallyhidden"
+};
+
+/*
+ * The blocks a page puts its article *in*, when it says. <article> and
+ * <main> say it in HTML; role="main" and itemprop="articleBody" say it for
+ * a reader that cannot see; and a class or an id from this list says it the
+ * way the CMSes say it. Once one opens, everything scraped before it was
+ * the page and not the article, and is dropped; when it closes, so does
+ * the text. A page that names no such block is read as before, furniture
+ * skipped by name.
+ */
+static const char *const kContentMarkers[] = {
+    "article-body", "articlebody", "article__body", "article-content",
+    "articlecontent", "entry-content", "entrycontent", "post-content",
+    "postcontent", "post-body", "postbody", "story-body", "storybody",
+    "content-body", "node-content", "game-preview"
 };
 
 /* The ARIA landmarks that say, in the page's own words, that a region is not
@@ -99,7 +122,7 @@ static const char *const kUnwantedRoles[] = {
 static const char *const kContainerTags[] = {
     "div", "section", "aside", "nav", "footer", "header", "form", "main",
     "article", "ul", "ol", "li", "dl", "table", "figure", "figcaption",
-    "blockquote", "p", "span", "h1", "h2", "h3", "h4", "h5", "h6"
+    "blockquote", "p", "span", "h1", "h2", "h3", "h4", "h5", "h6", "a"
 };
 
 void GazetteHtmlTagName(const char *tag, size_t len, char *out, size_t cap)
@@ -287,6 +310,41 @@ static int IsRawTextTag(const char *name)
                   sizeof kRawTextTags / sizeof kRawTextTags[0]);
 }
 
+/* Whether this tag opens the block the page says its article is in. */
+static int TagIsContent(const char *tag, size_t len, const char *name)
+{
+    static const char *const kNamed[] = { "class", "id" };
+    static const char *const kMain[]  = { "main" };
+    static const char *const kBody[]  = { "articlebody" };
+    const char *value;
+    size_t      valueLen;
+    size_t      i;
+
+    if (strcmp(name, "article") == 0 || strcmp(name, "main") == 0) {
+        return 1;
+    }
+    if (!IsContainerTag(name)) {
+        return 0;
+    }
+    if (GazetteHtmlAttr(tag, len, "role", &value, &valueLen) &&
+        ValueHasAny(value, valueLen, kMain, 1)) {
+        return 1;
+    }
+    if (GazetteHtmlAttr(tag, len, "itemprop", &value, &valueLen) &&
+        ValueHasAny(value, valueLen, kBody, 1)) {
+        return 1;
+    }
+    for (i = 0; i < sizeof kNamed / sizeof kNamed[0]; i++) {
+        if (GazetteHtmlAttr(tag, len, kNamed[i], &value, &valueLen) &&
+            ValueHasAny(value, valueLen, kContentMarkers,
+                        sizeof kContentMarkers /
+                        sizeof kContentMarkers[0])) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* The extractor                                                       */
 /* ------------------------------------------------------------------ */
@@ -421,6 +479,31 @@ static void FinishTag(GazetteExtract *e)
                 e->skipDepth++;
             }
         }
+        return;
+    }
+
+    /*
+     * The article's own block, opening or closing. Opening, once: the page
+     * so far was the page, so it goes, and the text starts here. Closing,
+     * when the block that opened it does: the rest of the page is the rest
+     * of the page, and the text is done.
+     */
+    if (e->focus[0] != '\0' && strcmp(name, e->focus) == 0) {
+        if (e->closing) {
+            e->focusDepth--;
+            if (e->focusDepth <= 0) {
+                e->full = 1;
+                return;
+            }
+        } else if (e->tagLen == 0 || e->tag[e->tagLen - 1] != '/') {
+            e->focusDepth++;
+        }
+    } else if (!e->closing && e->focus[0] == '\0' &&
+               TagIsContent(e->tag, e->tagLen, name) &&
+               !(e->tagLen > 0 && e->tag[e->tagLen - 1] == '/')) {
+        gz_copy_n(e->focus, sizeof e->focus, name, strlen(name));
+        e->focusDepth = 1;
+        e->outLen     = 0;
         return;
     }
 

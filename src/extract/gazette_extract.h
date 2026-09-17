@@ -100,6 +100,11 @@ typedef struct {
     char   skip[24];                /* element being skipped, "" when none */
     int    skipDepth;
 
+    /* The element the page says its article is in, once one has opened:
+       what came before it is thrown away, and its close ends the text. */
+    char   focus[24];
+    int    focusDepth;
+
     int    dashes;                  /* '-' run seen while inside a comment */
 
     /* "</script" and how much of it has matched, while inside an element

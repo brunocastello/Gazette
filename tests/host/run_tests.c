@@ -2461,6 +2461,55 @@ static void TestExtract(void)
              Extract(&e, "<body><div class><p>The story.</p></div></body>", 0),
              "The story.");
 
+    /* Furniture named by id rather than by element, a link for a screen
+       reader, and text the page hides from sight. */
+    CheckStr("a div called header is furniture too",
+             Extract(&e, "<body><div id=\"header\"><p>Site</p></div>"
+                         "<div id=\"nav\"><a href=\"/\">Home</a></div>"
+                         "<p>The story.</p></body>", 0),
+             "The story.");
+    CheckStr("skip to main content is for nobody",
+             Extract(&e, "<body><a class=\"skip-link\" href=\"#main\">"
+                         "Skip to main content</a><p>The story.</p></body>", 0),
+             "The story.");
+    CheckStr("nor is what the page hides",
+             Extract(&e, "<body><span class=\"sr-only\">Menu</span>"
+                         "<p>The story.</p></body>", 0),
+             "The story.");
+
+    /*
+     * A page that says where its article is: what came before the block
+     * goes, and what comes after its close is never read. Said by element,
+     * by ARIA role, by microdata, and by the class a CMS uses.
+     */
+    CheckStr("an article element is the article",
+             Extract(&e, "<body><div>Menu bits</div><p>Teaser</p>"
+                         "<article><p>The story.</p><p>More.</p></article>"
+                         "<p>Trailing junk</p></body>", 0),
+             "The story.\nMore.");
+    CheckStr("so is role=main",
+             Extract(&e, "<body><p>Junk</p><div role=\"main\"><p>The story.</p>"
+                         "</div><p>Junk</p></body>", 0),
+             "The story.");
+    CheckStr("and itemprop=articleBody",
+             Extract(&e, "<body><p>Junk</p><div itemprop=\"articleBody\">"
+                         "<p>The story.</p></div><p>Junk</p></body>", 0),
+             "The story.");
+    CheckStr("and a CMS's class for it",
+             Extract(&e, "<body><p>Junk</p><div class=\"entry-content\">"
+                         "<p>The story.</p></div><p>Junk</p></body>", 0),
+             "The story.");
+    CheckStr("a nested block of the same name does not end it early",
+             Extract(&e, "<body><article><p>One.</p><article><p>Two.</p>"
+                         "</article><p>Three.</p></article><p>Junk</p></body>",
+                     0),
+             "One.\nTwo.\nThree.");
+    CheckStr("furniture inside the article still goes",
+             Extract(&e, "<body><article><p>The story.</p>"
+                         "<div class=\"share-tools\">Share</div></article>"
+                         "</body>", 0),
+             "The story.");
+
     {
         /* Chunked the same page every way it can be split. */
         static const char page[] =

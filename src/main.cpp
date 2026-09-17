@@ -28,6 +28,7 @@
 #include <MacTypes.h>
 #include <Quickdraw.h>
 #include <Fonts.h>
+#include <Icons.h>              /* PlotIconID, for the About window */
 #include <MacWindows.h>
 #include <Menus.h>
 #include <Dialogs.h>
@@ -44,6 +45,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "gazette_version.h"
 #include "core/gazette_core.h"
 #include "feeds/gazette_feeds.h"
 #include "feeds/gazette_index.h"
@@ -234,13 +236,25 @@ enum {
     kSortItemOldest = 2
 };
 
-/* Feeds menu items. Edit is "Edit Feed…" or "Edit Group…", whichever the
-   sidebar has selected; there is no Rename, because editing is renaming. */
+/*
+ * Feeds menu items. The three standing views lead it — choosing one here
+ * selects its row, so the two ways of reaching them cannot disagree — then
+ * Mark All as Read for whatever is showing, then what is done to the
+ * selected feed or group. Edit and Delete are named for what is selected:
+ * "Edit Feed…" or "Edit Group…", "Delete Feed" or "Delete Group". There is
+ * no Rename, because editing is renaming.
+ */
 enum {
-    kFeedsItemEdit    = 1,
-    kFeedsItemDelete  = 2,
-    /* 3 is a divider */
-    kFeedsItemEnabled = 4
+    kFeedsItemToday     = 1,
+    kFeedsItemAllUnread = 2,
+    kFeedsItemStarred   = 3,
+    /* 4 is a divider */
+    kFeedsItemMarkAll   = 5,
+    /* 6 is a divider */
+    kFeedsItemEdit      = 7,
+    kFeedsItemEnabled   = 8,
+    /* 9 is a divider */
+    kFeedsItemDelete    = 10
 };
 
 /* The contextual menus' items. Each begins with Refresh, then Mark All as
@@ -253,9 +267,9 @@ enum {
     kCtxGroupRefresh = 1,
     kCtxGroupMarkAll = 2,
     /* 3 is a divider */
-    kCtxGroupEnabled = 4,
-    /* 5 is a divider */
-    kCtxGroupEdit    = 6,
+    kCtxGroupEdit    = 4,
+    kCtxGroupEnabled = 5,
+    /* 6 is a divider */
     kCtxGroupDelete  = 7
 };
 enum {
@@ -267,9 +281,9 @@ enum {
     kCtxFeedCopyURL  = 6,
     kCtxFeedCopyHome = 7,
     /* 8 is a divider */
-    kCtxFeedEnabled  = 9,
-    /* 10 is a divider */
-    kCtxFeedEdit     = 11,
+    kCtxFeedEdit     = 9,
+    kCtxFeedEnabled  = 10,
+    /* 11 is a divider */
     kCtxFeedDelete   = 12
 };
 enum {
@@ -283,31 +297,31 @@ enum {
     kCtxArticleBrowser   = 8
 };
 
-/*
- * Article menu items. The three in the middle are the same three standing
- * views the sidebar carries at the top; choosing one here selects its row,
- * so the two ways of reaching them cannot disagree.
- */
+/* Article menu items: what is done to the article that is open, and the
+   step to the next one that is not read. */
 enum {
     kArticleItemNextUnread = 1,
     /* 2 is a divider */
-    kArticleItemToday      = 3,
-    kArticleItemAllUnread  = 4,
-    kArticleItemStarred    = 5,
+    kArticleItemMarkRead   = 3,
+    kArticleItemMarkAbove  = 4,
+    kArticleItemMarkBelow  = 5,
     /* 6 is a divider */
-    kArticleItemMarkRead   = 7,
-    kArticleItemMarkAll    = 8,
-    kArticleItemMarkAbove  = 9,
-    kArticleItemMarkBelow  = 10,
-    /* 11 is a divider */
-    kArticleItemStar       = 12,
-    /* 13 is a divider */
-    kArticleItemBrowser    = 14
+    kArticleItemStar       = 7,
+    /* 8 is a divider */
+    kArticleItemBrowser    = 9
 };
 
-/* Must match kAboutAlertID in Resources/Gazette.r. */
+/*
+ * The About window: the application icon, then alternating Charcoal and
+ * Geneva lines for the name, the author and the credits, in a document
+ * window with a close box and no OK button — the Mac OS 9 convention, and
+ * SimpleText's — laid out the way Gateway's is.
+ */
 enum {
-    kAboutAlertID = 128
+    kAboutWidth  = 280,
+    kAboutHeight = 230,
+    kAboutIconID = 128,             /* the Finder icon's family */
+    kFontGeneva  = 3
 };
 
 /* WaitNextEvent sleep, in ticks. Short enough that the network poll stays
@@ -505,7 +519,11 @@ static Boolean BuildMenuBar(void)
     }
     /* No Move: a feed or a group is moved by dragging it, which is the
        one gesture that can say where. */
-    AppendMenu(feedsMenu, "\pEdit Feed\311;Delete;(-;Turn Off");
+    AppendMenu(feedsMenu,
+               "\pToday/1;All Unread/2;Starred/3;(-;"
+               "Mark All as Read/K;(-;"
+               "Edit Feed\311;Turn Off;(-;"
+               "Delete Feed");
     InsertMenu(feedsMenu, 0);
 
     /* The contextual menus. In the hierarchical list, which is where
@@ -521,8 +539,8 @@ static Boolean BuildMenuBar(void)
     if (ctx == nil) {
         return false;
     }
-    AppendMenu(ctx, "\pRefresh;Mark All as Read;(-;Turn Off;(-;"
-                    "Edit Group\311;Delete");
+    AppendMenu(ctx, "\pRefresh;Mark All as Read;(-;"
+                    "Edit Group\311;Turn Off;(-;Delete Group");
     InsertMenu(ctx, hierMenu);
 
     ctx = NewMenu(kMenuCtxFeed, "\p");
@@ -530,8 +548,8 @@ static Boolean BuildMenuBar(void)
         return false;
     }
     AppendMenu(ctx, "\pRefresh;Mark All as Read;(-;Open Home Page;(-;"
-                    "Copy Feed URL;Copy Home Page URL;(-;Turn Off;(-;"
-                    "Edit Feed\311;Delete");
+                    "Copy Feed URL;Copy Home Page URL;(-;"
+                    "Edit Feed\311;Turn Off;(-;Delete Feed");
     InsertMenu(ctx, hierMenu);
 
     ctx = NewMenu(kMenuCtxArticle, "\p");
@@ -549,9 +567,7 @@ static Boolean BuildMenuBar(void)
     }
     AppendMenu(articleMenu,
                "\pNext Unread//;(-;"
-               "Today/1;All Unread/2;Starred/3;(-;"
-               "Mark as Unread/U;Mark All as Read/K;"
-               "Mark Above as Read/K;Mark Below as Read/K;(-;"
+               "Mark as Unread/U;Mark Above as Read/K;Mark Below as Read/K;(-;"
                "Star Article/L;(-;"
                "Open in Browser/B");
     SetShiftKey(articleMenu, kArticleItemMarkAbove);
@@ -891,9 +907,19 @@ static void HandleMenuChoice(long menuResult)
 
         case kMenuFeeds:
             switch (menuItem) {
+                case kFeedsItemToday:
+                    GazetteUISelectSmart(kGazetteSmartToday);
+                    break;
+                case kFeedsItemAllUnread:
+                    GazetteUISelectSmart(kGazetteSmartUnread);
+                    break;
+                case kFeedsItemStarred:
+                    GazetteUISelectSmart(kGazetteSmartStarred);
+                    break;
+                case kFeedsItemMarkAll:  HandleMarkAllRead();   break;
                 case kFeedsItemEdit:     HandleEdit();          break;
-                case kFeedsItemDelete:   HandleRemove();        break;
                 case kFeedsItemEnabled:  HandleToggleEnabled(); break;
+                case kFeedsItemDelete:   HandleRemove();        break;
                 default: break;
             }
             break;
@@ -948,17 +974,7 @@ static void HandleMenuChoice(long menuResult)
         case kMenuArticle:
             switch (menuItem) {
                 case kArticleItemNextUnread: HandleNextUnread();       break;
-                case kArticleItemToday:
-                    GazetteUISelectSmart(kGazetteSmartToday);
-                    break;
-                case kArticleItemAllUnread:
-                    GazetteUISelectSmart(kGazetteSmartUnread);
-                    break;
-                case kArticleItemStarred:
-                    GazetteUISelectSmart(kGazetteSmartStarred);
-                    break;
                 case kArticleItemMarkRead:   HandleMarkRead();         break;
-                case kArticleItemMarkAll:    HandleMarkAllRead();      break;
                 case kArticleItemMarkAbove:  HandleMarkRange(false);   break;
                 case kArticleItemMarkBelow:  HandleMarkRange(true);    break;
                 case kArticleItemStar:       HandleToggleStar();       break;
@@ -978,9 +994,161 @@ static void HandleMenuChoice(long menuResult)
 /* Menu actions                                                        */
 /* ------------------------------------------------------------------ */
 
+static void DrawCentredCString(short centreX, short baseline, const char *text)
+{
+    short len   = (short)strlen(text);
+    short width = TextWidth(text, 0, len);
+
+    MoveTo((short)(centreX - width / 2), baseline);
+    DrawText(text, 0, len);
+}
+
+static void DrawAboutContent(WindowRef w)
+{
+    Rect     box;
+    Rect     iconRect;
+    RGBColor platinum;
+    Str255   fontName;
+    short    charcoal;
+    short    midX;
+
+    SetPortWindowPort(w);
+    GetWindowPortBounds(w, &box);
+
+    /* Platinum. The window's own grey rather than white: an About box
+       painted white reads as a document rather than as part of the system. */
+    platinum.red = platinum.green = platinum.blue = 0xDDDD;
+    RGBBackColor(&platinum);
+    EraseRect(&box);
+    ForeColor(blackColor);
+
+    midX = (short)(box.left + (box.right - box.left) / 2);
+
+    SetRect(&iconRect, (short)(midX - 16), (short)(box.top + 14),
+            (short)(midX + 16), (short)(box.top + 46));
+    (void)PlotIconID(&iconRect, kAlignNone, kTransformNone, kAboutIconID);
+
+    /* Charcoal is a TrueType face rather than a fixed classic font ID, so it
+       is looked up by name; GetFNum answers 0 — the system font — when it is
+       not installed, which lands on the right answer. */
+    CopyCStringToPascal("Charcoal", fontName);
+    GetFNum(fontName, &charcoal);
+    TextFace(normal);
+
+    TextFont(charcoal);
+    TextSize(12);
+    DrawCentredCString(midX, (short)(box.top + 64),
+                       "Gazette " GAZETTE_VERSION_STRING);
+
+    TextFont(kFontGeneva);
+    TextSize(10);
+    DrawCentredCString(midX, (short)(box.top + 84),
+                       "An RSS and Atom reader for Mac OS 9");
+
+    TextFont(charcoal);
+    TextSize(12);
+    DrawCentredCString(midX, (short)(box.top + 112), "Bruno Castello");
+
+    TextFont(kFontGeneva);
+    TextSize(10);
+    DrawCentredCString(midX, (short)(box.top + 132), "bfcastello@hotmail.com");
+
+    TextFont(charcoal);
+    TextSize(12);
+    DrawCentredCString(midX, (short)(box.top + 160), "Engineer: Claude Opus 5");
+
+    TextFont(kFontGeneva);
+    TextSize(10);
+    DrawCentredCString(midX, (short)(box.top + 188),
+                       "\251 Castello Designs, 2026");
+    DrawCentredCString(midX, (short)(box.top + 208), "Built with Retro68");
+}
+
+/*
+ * The box runs its own loop, the way Gateway's does: it stays in front,
+ * closes on its close box, Return, Enter or Escape, and lets the main
+ * window repaint under it. The network keeps moving while it is up, so a
+ * refresh in flight does not notice.
+ */
 static void HandleAbout(void)
 {
-    (void)Alert(kAboutAlertID, nil);
+    BitMap      screen;
+    Rect        bounds;
+    Rect        limit;
+    Str255      title;
+    WindowRef   about;
+    EventRecord event;
+    Boolean     done = false;
+    short       left;
+    short       top;
+
+    GetQDGlobalsScreenBits(&screen);
+    left = (short)((screen.bounds.right - screen.bounds.left - kAboutWidth) / 2);
+    top  = (short)((screen.bounds.bottom - screen.bounds.top - kAboutHeight) / 3);
+    SetRect(&bounds, left, top, (short)(left + kAboutWidth),
+            (short)(top + kAboutHeight));
+
+    CopyCStringToPascal("About Gazette", title);
+    about = NewCWindow(nil, &bounds, title, true, noGrowDocProc,
+                       (WindowRef)-1L, true, 0);
+    if (about == nil) {
+        return;
+    }
+    SelectWindow(about);
+
+    while (!done && !gDone) {
+        (void)WaitNextEvent(everyEvent, &event, kSleepTicks, nil);
+
+        switch (event.what) {
+            case updateEvt:
+                if ((WindowRef)event.message == about) {
+                    BeginUpdate(about);
+                    DrawAboutContent(about);
+                    EndUpdate(about);
+                } else {
+                    HandleEvent(&event);
+                }
+                break;
+
+            case keyDown:
+            case autoKey: {
+                char c = (char)(event.message & charCodeMask);
+
+                if (c == '\r' || c == 3 || c == 27) {
+                    done = true;
+                }
+                break;
+            }
+
+            case mouseDown: {
+                WindowRef win = nil;
+                short     part = FindWindow(event.where, &win);
+
+                if (win != about) {
+                    break;                  /* About stays in front */
+                }
+                if (part == inGoAway) {
+                    if (TrackGoAway(about, event.where)) {
+                        done = true;
+                    }
+                } else if (part == inDrag) {
+                    limit = screen.bounds;
+                    InsetRect(&limit, 4, 4);
+                    DragWindow(about, event.where, &limit);
+                }
+                break;
+            }
+
+            default:
+                break;
+        }
+
+        PumpRefresh();
+        PumpFullText();
+        ResumeFullText();
+    }
+
+    DisposeWindow(about);
 }
 
 static void HandleQuit(void)
@@ -1054,10 +1222,14 @@ static void AdjustMenus(void)
     if (feeds != nil) {
         Boolean on = true;
 
-        /* Edit is named for what is selected: a feed's dialog and a group's
-           are different dialogs, and the item says which is coming. */
+        /* Edit and Delete are named for what is selected: a feed's dialog
+           and a group's are different dialogs, and the item says which is
+           coming; and "Delete Group" is the one that keeps its feeds. */
         SetMenuItemText(feeds, kFeedsItemEdit,
                         groupSelected ? "\pEdit Group\311" : "\pEdit Feed\311");
+        SetMenuItemText(feeds, kFeedsItemDelete,
+                        groupSelected ? "\pDelete Group" : "\pDelete Feed");
+        AdjustMarkAllItem(feeds, kFeedsItemMarkAll);
         if (feedSelected || groupSelected) {
             MacEnableMenuItem(feeds, kFeedsItemEdit);
             MacEnableMenuItem(feeds, kFeedsItemDelete);
@@ -1108,26 +1280,6 @@ static void AdjustMenus(void)
             MacEnableMenuItem(article, kArticleItemMarkBelow);
         } else {
             DisableMenuItem(article, kArticleItemMarkBelow);
-        }
-
-        /*
-         * One item, both directions. With something left unread it offers to
-         * read the rest; with nothing left it offers to put it all back,
-         * which is the only thing left for it to mean and is more use than a
-         * grey line saying the list is finished.
-         */
-        if (count == 0) {
-            DisableMenuItem(article, kArticleItemMarkAll);
-            SetMenuItemText(article, kArticleItemMarkAll,
-                            "\pMark All as Read");
-        } else if (GazetteFeedsUnreadCount() > 0) {
-            MacEnableMenuItem(article, kArticleItemMarkAll);
-            SetMenuItemText(article, kArticleItemMarkAll,
-                            "\pMark All as Read");
-        } else {
-            MacEnableMenuItem(article, kArticleItemMarkAll);
-            SetMenuItemText(article, kArticleItemMarkAll,
-                            "\pMark All as Unread");
         }
 
         if (GazetteFeedsUnreadCount() > 0) {
@@ -1311,9 +1463,11 @@ static void ShowArticleContextMenu(int index, Point global)
 }
 
 /*
- * The contextual menus' Mark All item, which turns round the way the
- * Article menu's does: with something left unread it reads the rest, and
- * with nothing left it puts it all back.
+ * A Mark All as Read item, which turns round: with something left unread it
+ * offers to read the rest, and with nothing left it offers to put it all
+ * back, which is the only thing left for it to mean and is more use than a
+ * grey line saying the list is finished. The Feeds menu's and the
+ * contextual menus' are all this one.
  */
 static void AdjustMarkAllItem(MenuRef menu, MenuItemIndex item)
 {
@@ -1331,30 +1485,55 @@ static void AdjustMarkAllItem(MenuRef menu, MenuItemIndex item)
     }
 }
 
+/* The group names, for the feed dialog's popup. */
+static int GroupNames(const char **names, int cap)
+{
+    int n = GazetteCoreGroupCount();
+    int i;
+
+    if (n > cap) {
+        n = cap;
+    }
+    for (i = 0; i < n; i++) {
+        names[i] = GazetteCoreGroupName(i);
+    }
+    return n;
+}
+
 static void HandleNewFeed(void)
 {
-    char url[kGazetteURLLen];
-    char title[kGazetteTitleLen];
-    int  kind  = 0;
-    int  index = 0;
-    int  group = -1;
-    int  added;
+    char              url[kGazetteURLLen];
+    char              title[kGazetteTitleLen];
+    const char       *names[kGazetteMaxGroups];
+    GazetteFeedDialog d;
+    int               kind  = 0;
+    int               index = 0;
+    int               group = -1;
+    int               added;
 
     url[0]   = '\0';
     title[0] = '\0';
 
-    /* A new feed lands where the user is looking: in the selected group, or
-       beside the selected feed in whatever group that is in. */
+    /* The dialog opens on the group the user is looking at — the selected
+       one, or the selected feed's — and they choose from there. */
     if (GazetteUISelection(&kind, &index)) {
         group = (kind == kGazetteRowGroup) ? index
                                            : GazetteCoreFeedGroup(index);
     }
 
-    if (!GazetteAskFeed(url, sizeof url, title, sizeof title)) {
+    d.windowTitle = "New Feed";
+    d.url         = url;
+    d.urlCap      = sizeof url;
+    d.title       = title;
+    d.titleCap    = sizeof title;
+    d.groups      = names;
+    d.groupCount  = GroupNames(names, kGazetteMaxGroups);
+    d.group       = group;
+    if (!GazetteAskFeed(&d)) {
         return;
     }
 
-    added = GazetteCoreAddFeed(url, title, group);
+    added = GazetteCoreAddFeed(url, title, d.group);
     if (added < 0) {
         GazetteUISetStatus("That feed is already in the list, or the list "
                            "is full.");
@@ -1395,11 +1574,14 @@ static void HandleNewGroup(void)
    started with what the feed already has. */
 static void HandleEditFeed(void)
 {
-    char url[kGazetteURLLen];
-    char title[kGazetteTitleLen];
-    char wasURL[kGazetteURLLen];
-    int  kind  = 0;
-    int  index = 0;
+    char              url[kGazetteURLLen];
+    char              title[kGazetteTitleLen];
+    char              wasURL[kGazetteURLLen];
+    const char       *names[kGazetteMaxGroups];
+    GazetteFeedDialog d;
+    int               kind  = 0;
+    int               index = 0;
+    int               wasGroup;
 
     if (!GazetteUISelection(&kind, &index) || kind != kGazetteRowFeed) {
         return;
@@ -1408,9 +1590,33 @@ static void HandleEditFeed(void)
     snprintf(url, sizeof url, "%s", GazetteCoreFeedURL(index));
     snprintf(title, sizeof title, "%s", GazetteCoreFeedTitle(index));
     snprintf(wasURL, sizeof wasURL, "%s", url);
+    wasGroup = GazetteCoreFeedGroup(index);
 
-    if (!GazetteAskFeed(url, sizeof url, title, sizeof title)) {
+    d.windowTitle = "Edit Feed";
+    d.url         = url;
+    d.urlCap      = sizeof url;
+    d.title       = title;
+    d.titleCap    = sizeof title;
+    d.groups      = names;
+    d.groupCount  = GroupNames(names, kGazetteMaxGroups);
+    d.group       = wasGroup;
+    if (!GazetteAskFeed(&d)) {
         return;
+    }
+
+    /* A different group: to the end of it, or of the list, where a feed
+       put somewhere by a dialog rather than a drag goes. */
+    if (d.group != wasGroup) {
+        GazettePlace place;
+        int          moved;
+
+        place.where = (d.group < 0) ? kGazettePlaceListEnd
+                                    : kGazettePlaceGroupEnd;
+        place.ref   = (d.group < 0) ? 0 : d.group;
+        moved = GazetteCoreMoveFeed(index, place);
+        if (moved >= 0) {
+            index = moved;
+        }
     }
 
     if (strcmp(url, wasURL) != 0) {

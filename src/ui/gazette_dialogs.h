@@ -29,16 +29,30 @@ typedef void (*GazetteDialogIdle)(void);
 void GazetteDialogsSetIdle(GazetteDialogIdle idle);
 
 /*
- * Ask for a feed's address and name. Both buffers are used as the starting
- * contents, so this serves editing as well as adding. Returns false when the
- * user cancels or leaves the address empty.
+ * Ask for a feed's name, address and group. The buffers are used as the
+ * starting contents, so this serves editing as well as adding, and the
+ * window's title says which it is doing. `groups` names the groups there
+ * are, for the popup; `group` is the one to show on the way in and the one
+ * chosen on the way out, -1 for the top level. Returns false when the user
+ * cancels or leaves the address empty.
  *
  * The Dialog Manager hands text back as a Str255, so 255 characters is the
  * most either field can carry. A URL longer than that has to be pasted into
  * the preferences file by hand -- and one that long is a rarity worth the
  * simplicity here.
  */
-Boolean GazetteAskFeed(char *url, size_t urlCap, char *title, size_t titleCap);
+typedef struct {
+    const char        *windowTitle;     /* "New Feed", "Edit Feed" */
+    char              *url;
+    size_t             urlCap;
+    char              *title;
+    size_t             titleCap;
+    const char *const *groups;
+    int                groupCount;
+    int                group;
+} GazetteFeedDialog;
+
+Boolean GazetteAskFeed(GazetteFeedDialog *d);
 
 /* Ask for one line of text under a prompt -- a new group, or a new name for
    a feed or a group. name carries the starting contents. */

@@ -10,16 +10,20 @@
  */
 
 #include "Processes.r"      /* 'SIZE'          */
-#include "Dialogs.r"        /* 'ALRT', 'DITL'  */
+#include "Dialogs.r"        /* 'ALRT', 'DITL', 'dftb' */
+#include "Controls.r"       /* 'CNTL'          */
 #include "MacTypes.r"       /* 'vers'          */
-
-/* Must match kAboutAlertID in src/main.cpp. */
-#define kAboutAlertID 128
 
 /* Must match the enum in src/ui/gazette_dialogs.c. */
 #define kFeedDialogID    129
 #define kNameDialogID    130
 #define kConfirmAlertID  131
+#define kFeedGroupCNTL   129    /* the feed dialog's Group popup */
+
+/* The popup takes no menu resource: -12345 tells the CDEF so, and the
+   dialog code builds the menu from the groups there are and hands it in. */
+#define kPopupNoMenu     -12345
+#define kPopupFixedWidth 401    /* kControlPopupButtonProc + fixed width */
 
 /* ------------------------------------------------------------------ */
 /* SIZE — memory partition                                             */
@@ -51,8 +55,6 @@ resource 'SIZE' (-1) {
     4 * 1024 * 1024                 /* minimum size   */
 };
 
-/* ------------------------------------------------------------------ */
-/* About box — plain Platinum alert (Phase 0)                          */
 /* ------------------------------------------------------------------ */
 
 resource 'ALRT' (kAboutAlertID, "About Gazette") {
@@ -110,13 +112,13 @@ resource 'DITL' (kAboutAlertID, "About Gazette") {
 /* ------------------------------------------------------------------ */
 
 resource 'DLOG' (kFeedDialogID, "Feed") {
-    { 0, 0, 152, 340 },
-    dBoxProc,
+    { 0, 0, 174, 340 },
+    movableDBoxProc,            /* a title bar, to say New from Edit */
     invisible,
     noGoAway,
     0x0,
     kFeedDialogID,
-    "",
+    "",                         /* set when the dialog is opened */
     centerMainScreen
 };
 
@@ -126,33 +128,77 @@ resource 'dlgx' (kFeedDialogID) {
     }
 };
 
+/*
+ * What the dialog says, at the top and at the window's own margin rather
+ * than the fields'; then the name, the address and the group. Item 1 is the
+ * default button and item 2 the cancel one; the code tells the Dialog
+ * Manager so, and nothing else depends on it.
+ */
 resource 'DITL' (kFeedDialogID, "Feed") {
     {
-        /* Item 1 is the default button and item 2 the cancel one; the code
-           tells the Dialog Manager so, and nothing else depends on it. */
-        { 118, 264, 138, 324 },
+        { 140, 264, 160, 324 },
         Button { enabled, "OK" };
 
-        { 118, 192, 138, 252 },
+        { 140, 192, 160, 252 },
         Button { enabled, "Cancel" };
 
-        { 15, 16, 31, 84 },
-        StaticText { disabled, "Address:" };
-
-        { 13, 88, 29, 324 },
-        EditText { enabled, "" };
-
-        { 43, 16, 59, 84 },
-        StaticText { disabled, "Name:" };
-
-        { 41, 88, 57, 324 },
-        EditText { enabled, "" };
-
-        { 68, 88, 110, 324 },
+        { 12, 16, 40, 324 },
         StaticText { disabled,
                      "The address of an RSS or Atom feed. Leave the name "
                      "empty to use the feed's own." };
+
+        { 52, 16, 68, 84 },
+        StaticText { disabled, "Name:" };
+
+        { 50, 88, 66, 324 },
+        EditText { enabled, "" };
+
+        { 80, 16, 96, 84 },
+        StaticText { disabled, "Address:" };
+
+        { 78, 88, 94, 324 },
+        EditText { enabled, "" };
+
+        { 108, 16, 124, 84 },
+        StaticText { disabled, "Group:" };
+
+        { 106, 88, 126, 240 },
+        Control { enabled, kFeedGroupCNTL };
     }
+};
+
+/* The description is set a size down from the fields, in the application
+   font: it is a note, not a label. One entry per item, and only the
+   third says anything. */
+resource 'dftb' (kFeedDialogID) {
+    versionZero {
+        {
+            skipItem {},
+            skipItem {},
+            dataItem { kDialogFontUseFontMask | kDialogFontUseSizeMask,
+                       3 /* Geneva */, 10, 0, 0, 0,
+                       0, 0, 0, 0, 0, 0, "" },
+            skipItem {},
+            skipItem {},
+            skipItem {},
+            skipItem {},
+            skipItem {},
+            skipItem {}
+        }
+    }
+};
+
+/* The Group popup: the width of its rectangle, and no title of its own —
+   the label beside it is a static text item, aligned with the others. */
+resource 'CNTL' (kFeedGroupCNTL, "Group") {
+    { 106, 88, 126, 240 },
+    kPopupNoMenu,               /* value: the menu ID, and there is none */
+    visible,
+    -1,                         /* max: work the title's width out; it is empty */
+    0,                          /* min */
+    kPopupFixedWidth,
+    0,
+    ""
 };
 
 resource 'DLOG' (kNameDialogID, "Name") {
@@ -230,12 +276,14 @@ resource 'DITL' (kConfirmAlertID, "Confirm") {
 /* vers — shown by the Finder's Get Info window                        */
 /* ------------------------------------------------------------------ */
 
+/* The number is src/gazette_version.h's, written out because Rez cannot
+   read that header. */
 resource 'vers' (1) {
     0x00,                           /* major revision, BCD    */
     0x10,                           /* minor revision, BCD    */
-    development,                    /* release stage          */
+    final,                          /* release stage          */
     0x00,                           /* non-final release #    */
     0,                              /* region code: verUS     */
-    "0.1",
-    "0.1, Copyright 2026 brunocastello"
+    "0.1.0",
+    "0.1.0, Copyright 2026 brunocastello"
 };
