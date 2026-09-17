@@ -153,10 +153,12 @@ enum {
     kToolGlyph     = 7,         /* the menu triangle after New, and */
     kToolGlyphGap  = 4,         /* the room between the caption and it */
     kToolbarCaptionSize = 9,    /* the application font at 9, as OE's is */
-    kSearchWidth   = 100,
-    kSearchHeight  = 16,        /* a Geneva 10 field, frame included */
+    kSearchWidth   = 100,       /* the text area; the frame is outside it */
     kSearchFontSize = 10,
-    kSearchIconGap = 3,         /* the glass to the field */
+    kSearchFrame   = 3,         /* how far outside its bounds an Edit Text
+                                   draws its frame, and what has to be kept
+                                   clear of it on every side */
+    kSearchIconGap = 4,         /* the glass to the frame */
     kToolbarNewMenuID = 136,    /* after main.cpp's 128..135 */
 
     /* The focus border's thickness, and therefore how far a row has to keep
@@ -297,7 +299,9 @@ typedef struct {
 
 typedef struct {
     Rect        bounds;
-    short       width;      /* settled once, for the wider of its two captions */
+    short       wide;       /* with its caption, the wider of the two it can wear */
+    short       narrow;     /* icon only */
+    Boolean     captioned;  /* which of those it is showing just now */
     const char *caption;    /* what it says just now */
     short       iconID;     /* and what it wears */
     RowIcon     icon;
@@ -314,6 +318,7 @@ static Rect       gToolbarRect;     /* the grey, and the rule along its foot */
 static Rect       gToolbarSep[3];   /* between one group and the next */
 static short      gToolbarSepCount;
 static Rect       gFindIconRect;    /* the glass beside the search field */
+static short      gSearchHeight;    /* the field's text area: the font's own height */
 
 static Rect gSidebarPane;
 static Rect gSidebarHeader;
@@ -1421,6 +1426,14 @@ static void SizeListPane(ControlRef control, ListHandle list,
  * Each button is as wide as its caption needs, settled once in MakeToolbar
  * for the wider of the two captions a toggling button can wear, so that a
  * button changing its words does not move the ones beside it.
+ *
+ * When the window is too narrow for the whole row, the captions come off —
+ * as OE's do — from the right hand end, one button at a time, until it
+ * fits: the buttons nearest the left keep their words longest, and a button
+ * without its caption is still its icon, which is still a button. Only when
+ * every caption is gone and the row still does not fit does the field give
+ * way, since a field a few pixels narrow is still a field and a button
+ * pushed off the edge is gone.
  */
 static void LayoutToolbar(const Rect *bounds)
 {
@@ -1428,13 +1441,48 @@ static void LayoutToolbar(const Rect *bounds)
     static const short kGroupStart[3] = { kTBSidebar, kTBMarkAll, kTBMarkRead };
     short top = (short)(gToolbarRect.top +
                         ((kToolbarHeight - 1 - kToolbarButton) / 2));
-    short at  = (short)(bounds->left + kToolbarPad);
-    short g   = 0;
+    short at;
+    short limit;
+    short g;
     short i;
 
-    gToolbarSepCount = 0;
+    /* The glass, its gap, the field and its frame, and a group's worth of
+       air before them: everything left of that is the buttons'. */
+    limit = (short)(bounds->right - kToolbarPad - kSearchFrame -
+                    kSearchWidth - kSearchFrame - kSearchIconGap -
+                    kIconSize - kToolbarGroup);
 
     for (i = 0; i < kToolbarButtons; i++) {
+        gToolBtn[i].captioned = true;
+    }
+    for (;;) {
+        /* Each separator stands where a gap would have: its two columns
+           and the air either side, less the gap it replaces. */
+        short need = (short)(bounds->left + kToolbarPad +
+                             3 * (2 * kToolbarGroup + 2 - kToolbarGap));
+        short last = -1;
+
+        for (i = 0; i < kToolbarButtons; i++) {
+            need = (short)(need + (gToolBtn[i].captioned ? gToolBtn[i].wide
+                                                         : gToolBtn[i].narrow) +
+                           kToolbarGap);
+            if (gToolBtn[i].captioned) {
+                last = i;
+            }
+        }
+        if (need <= limit || last < 0) {
+            break;
+        }
+        gToolBtn[last].captioned = false;
+    }
+
+    gToolbarSepCount = 0;
+    at = (short)(bounds->left + kToolbarPad);
+    g  = 0;
+    for (i = 0; i < kToolbarButtons; i++) {
+        short width = gToolBtn[i].captioned ? gToolBtn[i].wide
+                                            : gToolBtn[i].narrow;
+
         if (g < 3 && i == kGroupStart[g]) {
             /*
              * The line itself is Platinum's etched separator — a dark column
@@ -1450,23 +1498,29 @@ static void LayoutToolbar(const Rect *bounds)
             at = (short)(left + 2 + kToolbarGroup);
             g++;
         }
-        SetRect(&gToolBtn[i].bounds, at, top,
-                (short)(at + gToolBtn[i].width), (short)(top + kToolbarButton));
-        at = (short)(at + gToolBtn[i].width + kToolbarGap);
+        SetRect(&gToolBtn[i].bounds, at, top, (short)(at + width),
+                (short)(top + kToolbarButton));
+        at = (short)(at + width + kToolbarGap);
     }
 
-    /* The glass and the field are pinned to the right hand end, and give way
-       to the buttons rather than the other way round: a field a few pixels
-       narrow is still a field, and a button pushed off the edge is gone. */
+    /*
+     * The glass and the field, from the right hand end. The field's bounds
+     * are its text area — the Edit Text CDEF draws its frame three pixels
+     * outside them, and its focus ring outside that — so the frame is what
+     * is kept clear of the window's edge and of the glass, and the bounds
+     * are the font's own height, centred on the buttons.
+     */
     {
-        short right    = (short)(bounds->right - kToolbarPad);
+        short right    = (short)(bounds->right - kToolbarPad - kSearchFrame);
         short left     = (short)(right - kSearchWidth);
-        short iconLeft = (short)(left - kSearchIconGap - kIconSize);
-        short fieldTop = (short)(top + (kToolbarButton - kSearchHeight) / 2);
+        short iconLeft = (short)(left - kSearchFrame - kSearchIconGap -
+                                 kIconSize);
+        short fieldTop = (short)(top + (kToolbarButton - gSearchHeight) / 2);
 
         if (iconLeft < at) {
             iconLeft = at;
-            left     = (short)(iconLeft + kIconSize + kSearchIconGap);
+            left     = (short)(iconLeft + kIconSize + kSearchIconGap +
+                               kSearchFrame);
         }
         SetRect(&gFindIconRect, iconLeft,
                 (short)(top + (kToolbarButton - kIconSize) / 2),
@@ -1477,7 +1531,7 @@ static void LayoutToolbar(const Rect *bounds)
             Rect r;
 
             SetRect(&r, left, fieldTop, right,
-                    (short)(fieldTop + kSearchHeight));
+                    (short)(fieldTop + gSearchHeight));
             if (r.right <= r.left) {
                 r.right = r.left;       /* nothing left to draw in */
             }
@@ -3674,13 +3728,17 @@ static void MakeToolbar(void)
         if (other > text) {
             text = other;
         }
-        gToolBtn[i].width = (short)(kToolInset + kIconSize + kToolIconText +
-                                    text + kToolPadRight);
+        gToolBtn[i].wide   = (short)(kToolInset + kIconSize + kToolIconText +
+                                     text + kToolPadRight);
+        gToolBtn[i].narrow = (short)(kToolInset + kIconSize + kToolInset);
         if (i == kTBNew) {
-            gToolBtn[i].width = (short)(gToolBtn[i].width + kToolGlyphGap +
-                                        kToolGlyph);
+            gToolBtn[i].wide   = (short)(gToolBtn[i].wide + kToolGlyphGap +
+                                         kToolGlyph);
+            gToolBtn[i].narrow = (short)(gToolBtn[i].narrow + kToolGlyphGap +
+                                         kToolGlyph);
         }
-        gToolBtn[i].caption = spec->caption;
+        gToolBtn[i].captioned = true;
+        gToolBtn[i].caption   = spec->caption;
         gToolBtn[i].enabled = true;
         gToolBtn[i].dirty   = true;
         SetToolIcon(&gToolBtn[i], spec->icon);
@@ -3700,16 +3758,26 @@ static void MakeToolbar(void)
         InsertMenu(gNewMenu, hierMenu);
     }
 
-    SetRect(&r, 0, 0, kSearchWidth, kSearchHeight);
-    gSearchCtl = MakeControl(&r, kControlEditTextProc, 0);
-
     /*
-     * The field is set a size smaller than the lists, at 10: it is a box
-     * sixteen pixels tall on a bar whose buttons are twenty-two, the way
-     * OE's Find is a small thing at the end of the row rather than another
+     * The field is set a size smaller than the lists, at 10, the way OE's
+     * Find is a small thing at the end of the row rather than another
      * button's worth of it. The application font, as everywhere else —
-     * Geneva on a stock system.
+     * Geneva on a stock system. Its bounds are exactly as tall as that font
+     * is: an Edit Text's bounds are its text area, and the frame it draws
+     * around them is its own business.
      */
+    {
+        FontInfo info;
+
+        TextFont(gViewFont);
+        TextSize(kSearchFontSize);
+        TextFace(normal);
+        GetFontInfo(&info);
+        gSearchHeight = (short)(info.ascent + info.descent);
+    }
+
+    SetRect(&r, 0, 0, kSearchWidth, gSearchHeight);
+    gSearchCtl = MakeControl(&r, kControlEditTextProc, 0);
     if (gSearchCtl != NULL) {
         ControlFontStyleRec style;
 
@@ -3798,7 +3866,7 @@ static void DrawToolButton(int i)
     ForeColor(blackColor);
     TextMode(b->enabled ? srcOr : grayishTextOr);
     MoveTo(x, baseline);
-    if (b->caption != NULL) {
+    if (b->captioned && b->caption != NULL) {
         DrawText(b->caption, 0, (short)strlen(b->caption));
     }
 
