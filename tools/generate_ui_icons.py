@@ -4,396 +4,564 @@ Draw Gazette's own small icons — the sidebar's and the toolbar's — and emit
 them as Rez source.
 
 The sidebar's three are for the standing folders above the feed list: a sun
-for Today, a blue ring for All Unread, and a gold star for Starred, plus the
-star again at the size a starred headline is marked with.
+for Today, a newspaper with an unread dot for All Unread, and a gold star for
+Starred, plus the star again at the size a starred headline is marked with.
 
-The toolbar's are one per button. Every one of them is a verb rather than a
-thing, which is the hard part of drawing them: "mark all as read" has no
-object in the world to picture, so the set leans on one small vocabulary
-instead — a stack of bars is the list, a blue dot is unread, an open ring is
-read, and a check is "all of them".
+The toolbar's are one per button, and a New and a Find that the toolbar will
+grow into. They are drawn in the idiom of Outlook Express 5's toolbar, pixel
+for pixel the way that art is built: a one-pixel black outline on the bottom
+and right of everything, a grey one on the top and left of anything white,
+flat fills from the system palette with a single paler tone for a highlight,
+and a badge — a plus, a check, a cross, a dot — overlapping the corner of the
+object it qualifies rather than sitting inside it. The newspaper is the
+object most of them qualify, the way OE's is the envelope.
 
 Everything else in the window is a *system* icon, taken from Icon Services by
 constant — the generic folder, the open folder, the news location, the generic
 document — because a reader already knows what those mean and drawing our own
 would only make them look foreign. These have no system equivalent, so they
-are ours, and they are drawn here in code for the same reason the Finder icon
-is: at sixteen pixels square every pixel carries weight and nothing survives
-being resampled from larger art.
+are ours, and they are drawn here as sixteen-by-sixteen grids of letters for
+the same reason the Finder icon is drawn in code: at this size every pixel
+carries weight and nothing survives being resampled from larger art. The two
+that are round — the refresh ring and the green button — are rasterised from
+a radius and then outlined, because a hand-drawn circle at this size is a
+lumpy one.
 
     python3 tools/generate_ui_icons.py --out Resources/Gazette_ui_icons.r
                                        [--ascii]
 
-The palette rule is the Finder icon's: components on the 51-step cube of the
-Macintosh 256-colour system palette, where the index is r*36 + g*6 + b on the
-descending 0..5 scale, with black the one exception at 255. See
-tools/generate_icon.py, which this file deliberately mirrors.
-
-Each shape is one flat colour, with no rim and no shading: that is what the
-reference art is, and it is what sixteen pixels square can actually hold. The
-1-bit members are therefore the silhouette rather than the dark parts of the
-drawing — see family() — so a black and white screen gets three solid shapes
-that still tell each other apart by outline alone.
+The palette rule is the Finder icon's: colours on the Macintosh 256-colour
+system palette, which is the 51-step cube (index r*36 + g*6 + b on the
+descending 0..5 scale) plus the red, green, blue and grey ramps in the last
+forty entries, with black at 255. See tools/generate_icon.py, which this file
+deliberately mirrors.
 """
 
 import argparse
 import math
 
-# --- Macintosh 8-bit system palette, cube subset -----------------------------
+# --- Macintosh 8-bit system palette --------------------------------------
 
 LEVELS = [255, 204, 153, 102, 51, 0]
 
+# The forty-one entries after the cube: four ramps of the values the cube
+# skips, then black. The cube's own black slot (215) is not black at all,
+# which is why black is looked up last and lands at 255.
+RAMP = [0xEE, 0xDD, 0xBB, 0xAA, 0x88, 0x77, 0x55, 0x44, 0x22, 0x11]
+
 
 def mac8(rgb):
-    """Palette index for a colour drawn from the cube."""
+    """Palette index for a colour on the system palette."""
     if rgb == (0, 0, 0):
-        return 255                      # black is not at cube index 215
-    try:
-        r, g, b = (LEVELS.index(c) for c in rgb)
-    except ValueError:
-        raise SystemExit("colour %r is not on the 51-step cube" % (rgb,))
-    return r * 36 + g * 6 + b
+        return 255
+    r, g, b = rgb
+    if r in LEVELS and g in LEVELS and b in LEVELS:
+        return LEVELS.index(r) * 36 + LEVELS.index(g) * 6 + LEVELS.index(b)
+    if g == b == 0 and r in RAMP:
+        return 215 + RAMP.index(r)
+    if r == b == 0 and g in RAMP:
+        return 225 + RAMP.index(g)
+    if r == g == 0 and b in RAMP:
+        return 235 + RAMP.index(b)
+    if r == g == b and r in RAMP:
+        return 245 + RAMP.index(r)
+    raise SystemExit("colour %r is not on the system palette" % (rgb,))
 
 
 # --- Palette ----------------------------------------------------------------
+#
+# One letter per colour, and the letters are what the drawings below are
+# written in. Sampled off OE's toolbar and named for the job each does there:
+# the paper is white shaded with 'C' inside its dark edges and outlined in 'A'
+# on the light side; the four blues are OE's lavender ramp; the rest is spent
+# only where it means something — green for read, red for unread and for
+# hiding, gold for starred.
 
 CLEAR = None
 
-# Sampled off the reference art and moved to the nearest colour on the cube:
-# (255,118,0) -> (255,102,0), (84,148,243) -> (51,153,255) and
-# (248,191,46) -> (255,204,51). Each shape is one flat colour with no rim and
-# no shading, which is what the reference is and what sixteen pixels square
-# can actually hold.
-ORANGE = (255, 102, 0)              # the sun
-BLUE = (51, 153, 255)               # unread: the sidebar's ring, and the dot
-GOLD = (255, 204, 51)               # the star
-
-# The toolbar's structural ink. Dark enough to read on Platinum's grey and on
-# a pressed button's darker grey, and the one colour most of these glyphs are
-# in: a toolbar of eight differently coloured shapes is a circus, so colour is
-# spent only where it carries meaning — blue for unread, gold for starred.
-INK = (51, 51, 51)
+PAL = {
+    '.': CLEAR,
+    'D': (0, 0, 0),             # black: the outline on the dark side
+    'B': (255, 255, 255),       # white
+    'C': (0xEE, 0xEE, 0xEE),    # paper, shaded inside its dark edges
+    'F': (204, 204, 204),       # light grey: the shade column, the title bar
+    'A': (0x77, 0x77, 0x77),    # the outline on the light side of white things
+    'I': (153, 153, 153),       # text lines
+    'J': (102, 102, 102),       # the headline
+    'L': (204, 204, 255),       # blue, pale: a read newspaper's picture
+    'M': (153, 153, 255),       # blue, light: highlights on the blues below
+    'N': (102, 102, 204),       # blue, mid: the refresh ring, the picture
+    'P': (51, 102, 255),        # blue, bright: the plus on New
+    'G': (0, 204, 0),           # green
+    'H': (0, 153, 0),           # green, dark: the shadow side of green
+    'g': (102, 255, 102),       # green, light: the lit side, and the earth's land
+    'R': (255, 0, 0),           # red
+    'S': (153, 0, 0),           # red, dark
+    'r': (255, 153, 153),       # red, light: the dot's highlight
+    'Y': (255, 204, 0),         # gold
+    'y': (255, 255, 153),       # gold, light: the star's and the sun's lit side
+    'o': (255, 153, 0),         # orange: their shadow side, and the sun's rays
+    'X': (204, 51, 0),          # red-orange: the shadow down the glass's handle
+    'T': (204, 255, 255),       # the glass
+    't': (153, 204, 204),       # the glass, where the light is not
+    'U': (51, 153, 255),        # ocean
+    'u': (153, 204, 255),       # ocean, where the light is
+    'V': (0, 102, 204),         # ocean, deep
+}
 
 
 def luminance(c):
     return 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
 
 
-# --- Rasterising ------------------------------------------------------------
+# --- Grids ------------------------------------------------------------------
 
-def blank(size):
-    return [[CLEAR] * size for _ in range(size)]
-
-
-def put(px, x, y, colour):
-    size = len(px)
-    if 0 <= x < size and 0 <= y < size:
-        px[y][x] = colour
-
-
-def fill(px, x0, y0, x1, y1, colour):
-    """Inclusive rectangle fill, clipped to the canvas."""
-    size = len(px)
-    for y in range(max(0, y0), min(size - 1, y1) + 1):
-        for x in range(max(0, x0), min(size - 1, x1) + 1):
-            px[y][x] = colour
+def grid(text):
+    """Sixteen rows of sixteen letters, each a key of PAL."""
+    rows = text.strip("\n").split("\n")
+    if len(rows) != 16 or any(len(r) != 16 for r in rows):
+        raise SystemExit("a grid is sixteen rows of sixteen")
+    for r in rows:
+        for ch in r:
+            if ch not in PAL:
+                raise SystemExit("no colour is called %r" % ch)
+    return [list(r) for r in rows]
 
 
-def disc(px, cx, cy, r, colour):
-    """A filled circle, by distance from the centre of each pixel."""
-    size = len(px)
-    for y in range(size):
-        for x in range(size):
-            dx = x + 0.5 - cx
-            dy = y + 0.5 - cy
-            if dx * dx + dy * dy <= r * r:
-                px[y][x] = colour
+def badge(text):
+    """A smaller grid, laid over a larger one by overlay()."""
+    return [list(r) for r in text.strip("\n").split("\n")]
 
 
-def frame(px, x0, y0, x1, y1, colour):
-    """Inclusive one-pixel border."""
-    for x in range(x0, x1 + 1):
-        put(px, x, y0, colour)
-        put(px, x, y1, colour)
-    for y in range(y0, y1 + 1):
-        put(px, x0, y, colour)
-        put(px, x1, y, colour)
-
-
-def hollow(px, cx, cy, r):
-    """Clear a circle back out again — the inside of a ring."""
-    size = len(px)
-    for y in range(size):
-        for x in range(size):
-            dx = x + 0.5 - cx
-            dy = y + 0.5 - cy
-            if dx * dx + dy * dy <= r * r:
-                px[y][x] = CLEAR
-
-
-def polygon(px, points, colour):
-    """
-    A filled polygon, by even-odd scanline crossing at each pixel's centre.
-
-    Written out rather than reached for in a library because the whole point
-    of this file is that the pixels are ours: a star drawn by anything that
-    antialiases would arrive with colours that are not on the cube.
-    """
-    size = len(px)
-    n = len(points)
-    for y in range(size):
-        yc = y + 0.5
-        xs = []
-        for i in range(n):
-            x0, y0 = points[i]
-            x1, y1 = points[(i + 1) % n]
-            if (y0 <= yc < y1) or (y1 <= yc < y0):
-                xs.append(x0 + (yc - y0) * (x1 - x0) / (y1 - y0))
-        xs.sort()
-        for i in range(0, len(xs) - 1, 2):
-            for x in range(size):
-                if xs[i] <= x + 0.5 <= xs[i + 1]:
-                    px[y][x] = colour
-
-
-def star_points(cx, cy, outer, inner):
-    """Five-pointed, first point straight up."""
-    out = []
-    for i in range(5):
-        a = math.radians(-90 + i * 72)
-        out.append((cx + outer * math.cos(a), cy + outer * math.sin(a)))
-        a = math.radians(-90 + 36 + i * 72)
-        out.append((cx + inner * math.cos(a), cy + inner * math.sin(a)))
+def overlay(base, top, x0, y0):
+    """The badge's drawn pixels over the base's, at an offset."""
+    out = [row[:] for row in base]
+    for y, row in enumerate(top):
+        for x, ch in enumerate(row):
+            if ch != '.':
+                out[y0 + y][x0 + x] = ch
     return out
 
 
-# --- The four icons ---------------------------------------------------------
+def outline(g):
+    """A black pixel on every empty one that touches the drawing."""
+    out = [row[:] for row in g]
+    for y in range(16):
+        for x in range(16):
+            if g[y][x] != '.':
+                continue
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < 16 and 0 <= ny < 16 and g[ny][nx] != '.':
+                    out[y][x] = 'D'
+                    break
+    return out
+
+
+def shade_gold(g):
+    """
+    The light on a gold shape: pale where an edge faces up or left, orange
+    where one faces down or right, and the fill's own colour between.
+    Written as a rule over the outline rather than by hand so that the star
+    and the sun catch the light from the same side.
+    """
+    out = [row[:] for row in g]
+    for y in range(16):
+        for x in range(16):
+            if g[y][x] != 'Y':
+                continue
+            up = g[y - 1][x] if y else 'D'
+            left = g[y][x - 1] if x else 'D'
+            down = g[y + 1][x] if y < 15 else 'D'
+            right = g[y][x + 1] if x < 15 else 'D'
+            if left == 'D' and x <= 7:
+                out[y][x] = 'y'
+            elif up == 'D' and x <= 6:
+                out[y][x] = 'y'
+            elif down == 'D' and (x >= 7 or y >= 12):
+                out[y][x] = 'o'
+            elif right == 'D' and y >= 9:
+                out[y][x] = 'o'
+    return out
+
+
+# --- The newspaper and its badges ---------------------------------------------
+#
+# The one object most of the toolbar qualifies. A white sheet outlined the OE
+# way, a shaded fold down its left edge, a two-line headline, three lines of
+# text beside a picture, and two more lines under them.
+
+NEWSPAPER = grid("""
+................
+.AAAAAAAAAAAAA..
+.ACIBBBBBBBBBFD.
+.ACIBJJJJJJJBFD.
+.ACIBJJJJJJJBFD.
+.ACIBBBBBBBBBFD.
+.ACIBIIIBNNNBFD.
+.ACIBBBBBNNNBFD.
+.ACIBIIIBNNNBFD.
+.ACIBBBBBBBBBFD.
+.ACIBIIIIIIIBFD.
+.ACIBBBBBBBBBFD.
+.ACIBIIIIIIIBFD.
+.AFFFFFFFFFFFFD.
+.DDDDDDDDDDDDDD.
+................
+""")
+
+# The same sheet once it has been read: everything on it faded to the paper's
+# own greys, the picture to pale lavender.
+NEWSPAPER_READ = grid("""
+................
+.AAAAAAAAAAAAA..
+.ACFBBBBBBBBBFD.
+.ACFBFFFFFFFBFD.
+.ACFBFFFFFFFBFD.
+.ACFBBBBBBBBBFD.
+.ACFBFFFBLLLBFD.
+.ACFBBBBBLLLBFD.
+.ACFBFFFBLLLBFD.
+.ACFBBBBBBBBBFD.
+.ACFBFFFFFFFBFD.
+.ACFBBBBBBBBBFD.
+.ACFBFFFFFFFBFD.
+.AFFFFFFFFFFFFD.
+.DDDDDDDDDDDDDD.
+................
+""")
+
+# The badges, each with its own black outline, laid over a corner of the
+# sheet the way OE's pencil lies over the corner of its New sheet.
+PLUS = badge("""
+..DDDD..
+..DMPD..
+DDDMPDDD
+DMMMPPPD
+DPPPPPPD
+DDDPPDDD
+..DPPD..
+..DDDD..
+""")
+
+CHECK = badge("""
+......DD
+.....DGD
+DD..DGGD
+DGD.DGD.
+DGGDGHD.
+.DGGHD..
+..DHD...
+...D....
+""")
+
+CROSS = badge("""
+DD....DD
+DRD..DRD
+.DRDDRD.
+..DRRD..
+..DRSD..
+.DRDDSD.
+DRD..DSD
+DD....DD
+""")
+
+DOT = badge("""
+.DDD.
+DrRRD
+DRRRD
+DRSSD
+.DDD.
+""")
+
+
+# --- The sidebar's --------------------------------------------------------------
 
 def draw_today():
-    """A sun: a face with eight rays around it, clear of it on every side."""
-    px = blank(16)
-
-    # The face: rows and columns 4 through 11, symmetrical about the seam
-    # between pixels 7 and 8, which is where a sixteen-wide canvas has its
-    # middle. There is no centre pixel, so nothing here may be one pixel wide.
-    disc(px, 8.0, 8.0, 4.0, ORANGE)
-
-    # The rays, placed by hand rather than by trigonometry. Two problems with
-    # working them out from an angle at this size: a cosine that ought to be
-    # zero comes back as 1e-16 and the rounding sends the ray a pixel to one
-    # side, and a ray of a given length comes out visibly longer on a diagonal,
-    # where a pixel covers half as much again of the ground.
-    #
-    # So the four on the axes are two pixels long and two wide, straddling the
-    # seam, and the four on the corners are a two-pixel staircase reaching the
-    # same distance. Each is clear of the face by a pixel, which is what makes
-    # the sun read as shining rather than as a cogwheel.
-    fill(px, 7, 0, 8, 1, ORANGE)            # up
-    fill(px, 7, 14, 8, 15, ORANGE)          # down
-    fill(px, 0, 7, 1, 8, ORANGE)            # left
-    fill(px, 14, 7, 15, 8, ORANGE)          # right
-    for x, y in ((2, 2), (3, 3), (13, 2), (12, 3),
-                 (2, 13), (3, 12), (13, 13), (12, 12)):
-        put(px, x, y, ORANGE)
-    return px
-
-
-def draw_unread():
     """
-    A ring with a disc inside it, the way the reference draws "unread": the
-    gap between the two is what keeps it from reading as a plain bullet, and
-    it is the one shape here that needs three radii rather than one.
+    A sun: a face with eight rays, drawn as one silhouette and outlined as
+    one, which is what keeps it in the family with the star beside it. The
+    rays touch the face rather than standing clear of it, because with an
+    outline round everything a gap of a pixel is a gap of black.
     """
-    px = blank(16)
-    disc(px, 8.0, 8.0, 7.2, BLUE)
-    hollow(px, 8.0, 8.0, 6.1)
-    disc(px, 8.0, 8.0, 4.0, BLUE)
-    return px
+    g = [['.'] * 16 for _ in range(16)]
+    cx = cy = 8.0
+    for y in range(16):
+        for x in range(16):
+            if math.hypot(x + 0.5 - cx, y + 0.5 - cy) <= 3.6:
+                g[y][x] = 'Y'
+
+    # The four on the axes, two wide and three long, and the four on the
+    # corners, a two-wide staircase reaching about as far.
+    for x, y in ((7, 1), (8, 1), (7, 2), (8, 2), (7, 3), (8, 3),
+                 (7, 12), (8, 12), (7, 13), (8, 13), (7, 14), (8, 14),
+                 (1, 7), (1, 8), (2, 7), (2, 8), (3, 7), (3, 8),
+                 (12, 7), (12, 8), (13, 7), (13, 8), (14, 7), (14, 8),
+                 (3, 3), (4, 4), (3, 4), (4, 3),
+                 (12, 3), (11, 4), (12, 4), (11, 3),
+                 (3, 12), (4, 11), (3, 11), (4, 12),
+                 (12, 12), (11, 11), (11, 12), (12, 11)):
+        g[y][x] = 'o'
+
+    # The face lit from the upper left, like the star.
+    for y in range(16):
+        for x in range(16):
+            if g[y][x] != 'Y':
+                continue
+            d = math.hypot(x + 0.5 - cx, y + 0.5 - cy)
+            a = math.degrees(math.atan2(y + 0.5 - cy, x + 0.5 - cx))
+            if d > 2.4 and (a < -60 or a > 150):
+                g[y][x] = 'y'
+            elif d > 2.4 and -30 < a < 120:
+                g[y][x] = 'o'
+    return outline(g)
 
 
-def draw_star(cy, outer, inner):
+def draw_star():
     """
-    Centred horizontally on 8.0 and vertically on a point of its own: a star
-    is wider below its middle than above it, so hanging it on the canvas
-    centre leaves it looking as though it has slipped upwards.
+    The star, cut from the reference sprite: fifteen wide, its top point on
+    the canvas's middle column, wider below its waist than above it.
     """
-    px = blank(16)
-    polygon(px, star_points(8.0, cy, outer, inner), GOLD)
-    return px
+    return shade_gold(grid("""
+.......D........
+......DYD.......
+......DYD.......
+.....DYYYD......
+.....DYYYD......
+DDDDDDYYYDDDDDD.
+.DYYYYYYYYYYYD..
+..DYYYYYYYYYD...
+...DYYYYYYYD....
+...DYYYYYYYD....
+..DYYYYDYYYYD...
+..DYYYDDDYYYD...
+.DYYYD...DYYYD..
+.DYDD.....DDYD..
+.DD.........DD..
+................
+"""))
 
 
-# --- The toolbar's icons ----------------------------------------------------
-#
-# One per button, and each one drawn to say what the button *does* rather than
-# what it acts on. The three that toggle have two drawings apiece, because a
-# button whose label changes and whose picture does not is a button that lies
-# half the time.
+def draw_star_small():
+    """
+    The same star at the size a headline is marked with: eleven wide, so that
+    it sits in a text line without out-shouting the headline beside it.
+    """
+    return shade_gold(grid("""
+................
+................
+.......D........
+......DYD.......
+......DYD.......
+..DDDDDYDDDDD...
+...DYYYYYYYD....
+....DYYYYYD.....
+....DYYYYYD.....
+...DYYDDDYYD....
+...DYDD.DDYD....
+...DD.....DD....
+................
+................
+................
+................
+"""))
+
+
+# --- The toolbar's --------------------------------------------------------------
+
+def draw_new():
+    """The newspaper with a plus over its lower right corner."""
+    return overlay(NEWSPAPER, PLUS, 8, 8)
+
 
 def draw_sidebar():
-    """A pane with a band down its left edge: the sidebar, in a window."""
-    px = blank(16)
-    frame(px, 1, 2, 14, 13, INK)
-    fill(px, 2, 3, 5, 12, INK)
-    return px
+    """
+    A Platinum window with its sidebar showing: built the way the newspaper
+    is, grey outline on the light side and black on the dark, a shade column
+    and row inside the dark edges. A two-row title bar with a rule under it,
+    a shaded pane with three feed lines, and a white pane beside it.
+    """
+    return grid("""
+................
+.AAAAAAAAAAAAA..
+.AFFFFFFFFFFFFD.
+.AFFFFFFFFFFFFD.
+.ADDDDDDDDDDDDD.
+.ACCCCCDBBBBBFD.
+.ACIIICDBBBBBFD.
+.ACCCCCDBBBBBFD.
+.ACCCCCDBBBBBFD.
+.ACIIICDBBBBBFD.
+.ACCCCCDBBBBBFD.
+.ACCCCCDBBBBBFD.
+.ACIIICDBBBBBFD.
+.AFFFFFFFFFFFFD.
+.DDDDDDDDDDDDDD.
+................
+""")
 
 
 def draw_refresh():
     """
-    A circular arrow: a ring with a gap cut out of its top right, and a head
-    on the near side of the gap pointing the way it was going. The gap is what
-    makes it an arrow rather than a doughnut, and which side the head is on is
-    what makes it turn clockwise.
+    A circular arrow: a ring rasterised from a true circle, opened between
+    about one and four o'clock, with a right-pointing triangle on its upper
+    end. The ring sits a pixel and a half low so that the triangle's tip has
+    its outline inside the frame. Paler along the top left, the way the rest
+    of the blues are lit.
     """
-    px = blank(16)
-    disc(px, 8.0, 8.0, 6.8, INK)
-    hollow(px, 8.0, 8.0, 4.4)
+    cx, cy = 7.5, 9.0
+    ss = 8
+    r_in, r_out = 3.9, 5.9
+    gap0, gap1 = -75, 20                 # degrees; 0 is east, -90 north
 
-    # Clear the arc from a little east of north round to due east.
+    g = [['.'] * 16 for _ in range(16)]
     for y in range(16):
         for x in range(16):
-            if px[y][x] is CLEAR:
-                continue
-            a = math.degrees(math.atan2(y + 0.5 - 8.0, x + 0.5 - 8.0))
-            if -95.0 <= a <= 0.0:
-                px[y][x] = CLEAR
+            cover = 0
+            for sy in range(ss):
+                for sx in range(ss):
+                    px = x + (sx + 0.5) / ss
+                    py = y + (sy + 0.5) / ss
+                    d = math.hypot(px - cx, py - cy)
+                    a = math.degrees(math.atan2(py - cy, px - cx))
+                    if r_in <= d <= r_out and not (gap0 <= a <= gap1):
+                        cover += 1
+            if cover >= ss * ss // 2:
+                g[y][x] = 'N'
 
-    # The head, on the northern end of what is left, pointing the way the arc
-    # was going. A triangle with its base against the arc and its apex east of
-    # it: three pixels of run is all there is room for and all it needs.
-    for i in range(4):
-        fill(px, 8 + i, 2 - (3 - i), 8 + i, 2 + (3 - i), INK)
-    return px
+    # The head: a triangle with its base down column 9, rows 1 to 7, and its
+    # apex three columns east, sitting on the ring's northern end.
+    bx, y0, y1 = 9, 1, 7
+    for k in range((y1 - y0) // 2 + 1):
+        for y in range(y0 + k, y1 - k + 1):
+            g[y][bx + k] = 'N'
 
-
-def draw_bars(px, colour):
-    """The stack of lines that means "the list" in three of these."""
-    fill(px, 1, 3, 8, 4, colour)
-    fill(px, 1, 7, 8, 8, colour)
-    fill(px, 1, 11, 8, 12, colour)
-
-
-def draw_check(px, colour):
-    """A tick, two pixels thick, in the right hand third."""
-    for i in range(3):
-        fill(px, 9 + i, 8 + i, 9 + i, 9 + i, colour)
-    for i in range(5):
-        fill(px, 11 + i, 10 - i, 11 + i, 11 - i, colour)
+    for y in range(16):
+        for x in range(16):
+            if g[y][x] == 'N' and x < 9:
+                d = math.hypot(x + 0.5 - cx, y + 0.5 - cy)
+                a = math.degrees(math.atan2(y + 0.5 - cy, x + 0.5 - cx))
+                if d < 4.9 and -200 < a < -70:
+                    g[y][x] = 'M'
+    return outline(g)
 
 
 def draw_mark_all_read():
-    px = blank(16)
-    draw_bars(px, INK)
-    draw_check(px, INK)
-    return px
-
-
-def draw_mark_all_unread():
-    px = blank(16)
-    draw_bars(px, INK)
-    disc(px, 12.5, 8.0, 3.0, BLUE)
-    return px
-
-
-def draw_eye(px, colour):
-    """
-    An almond with a pupil in it.
-
-    Drawn column by column from a half-height that follows a parabola, and
-    each column joined to the one before it.
-
-    A parabola rather than the ellipse this started as: an ellipse is flat
-    across the middle and blunt at the ends, which at sixteen pixels comes out
-    as a rounded rectangle with a blob in it — a camera, not an eye. The
-    parabola tapers all the way to its ends, which is what gives the almond
-    its corners. Joining each column to the one before matters for the same
-    reason either way: taking the two edge pixels on their own leaves the
-    outline dotted wherever the curve climbs faster than a pixel a column.
-    """
-    prev = None
-    for x in range(1, 15):
-        t = (x + 0.5 - 8.0) / 7.0
-        h = 4.2 * (1.0 - t * t)
-        top = int(8.0 - h)
-        bot = int(8.0 + h) - 1
-        if prev is not None:
-            fill(px, x, min(top, prev[0]), x, max(top, prev[0]), colour)
-            fill(px, x, min(bot, prev[1]), x, max(bot, prev[1]), colour)
-        else:
-            put(px, x, top, colour)
-            put(px, x, bot, colour)
-        prev = (top, bot)
-    disc(px, 8.0, 8.0, 1.8, colour)
+    """The newspaper with a check over its lower right corner."""
+    return overlay(NEWSPAPER, CHECK, 8, 8)
 
 
 def draw_hide_read():
+    """A read newspaper with a cross in the corner the check goes in."""
+    return overlay(NEWSPAPER_READ, CROSS, 8, 8)
+
+
+def draw_mark_read():
     """
-    Hiding the ones that have been read: an eye struck through. The slash
-    carries a pixel of clearance either side of it, so that it reads as
-    crossing the eye rather than as part of it — cleared first and drawn
-    second, which is the only order that leaves the clearance under the line.
+    A round green button with a white check on it: a fourteen-pixel disc
+    from a true circle, a one-pixel bevel lit from the upper left, and the
+    check centred with clear green all round it.
     """
-    px = blank(16)
-    draw_eye(px, INK)
+    cx = cy = 7.5
+    ss = 8
+    g = [['.'] * 16 for _ in range(16)]
+    for y in range(16):
+        for x in range(16):
+            fill = edge = 0
+            for sy in range(ss):
+                for sx in range(ss):
+                    d = math.hypot(x + (sx + 0.5) / ss - cx,
+                                   y + (sy + 0.5) / ss - cy)
+                    if d <= 6.6:
+                        fill += 1
+                    elif d <= 7.6:
+                        edge += 1
+            if fill >= ss * ss // 2:
+                g[y][x] = 'G'
+            elif fill + edge >= ss * ss // 2:
+                g[y][x] = 'D'
 
-    for i in range(1, 15):
-        put(px, i, i, CLEAR)
-        put(px, i, i + 1, CLEAR)
-        put(px, i + 1, i, CLEAR)
-    for i in range(1, 15):
-        put(px, i, i, INK)
-    return px
+    for y in range(16):
+        for x in range(16):
+            if g[y][x] != 'G':
+                continue
+            d = math.hypot(x + 0.5 - cx, y + 0.5 - cy)
+            a = math.degrees(math.atan2(y + 0.5 - cy, x + 0.5 - cx))
+            if d > 5.6:
+                if a < -55 or a > 145:
+                    g[y][x] = 'g'
+                elif -35 < a < 125:
+                    g[y][x] = 'H'
+    # Two pixels the rule leaves standing alone where light turns to dark.
+    for x, y in ((10, 2), (4, 12)):
+        g[y][x] = 'G'
 
-
-def draw_show_read():
-    """And showing them again: the same eye, open."""
-    px = blank(16)
-    draw_eye(px, INK)
-    return px
-
-
-def draw_unread_dot():
-    """Mark as Unread: a filled dot, which is what unread looks like."""
-    px = blank(16)
-    disc(px, 8.0, 8.0, 5.2, BLUE)
-    return px
-
-
-def draw_read_ring():
-    """Mark as Read: the same dot emptied out."""
-    px = blank(16)
-    disc(px, 8.0, 8.0, 5.2, BLUE)
-    hollow(px, 8.0, 8.0, 3.4)
-    return px
+    return overlay(g, badge("""
+.......BB
+......BB.
+.....BB..
+BB..BB...
+.BBBB....
+..BB.....
+"""), 3, 5)
 
 
 def draw_next_unread():
-    """A dot with an arrow under it: on to the next one not yet read."""
-    px = blank(16)
-    disc(px, 8.0, 3.5, 3.0, BLUE)
-    fill(px, 7, 7, 8, 10, INK)
-    for i in range(4):
-        fill(px, 4 + i, 10 + i, 11 - i, 10 + i, INK)
-    return px
+    """The newspaper with an unread dot over its top right corner."""
+    return overlay(NEWSPAPER, DOT, 10, 0)
 
 
 def draw_browser():
     """
-    A window with an arrow leaving it through the top right — which is what
-    every "open this somewhere else" has looked like since before this machine
-    was built. The window is small and low so the arrow has room to be an
-    arrow; at this size the two cannot both be full height.
+    The earth, with an arrow rising from under it into its middle: ocean
+    lit from the upper left and deep down the right, land in the bright
+    green, the arrow in gold.
     """
-    px = blank(16)
-    frame(px, 0, 6, 9, 15, INK)
-    fill(px, 1, 7, 8, 8, INK)           # its title bar
+    return grid("""
+.....DDDDD......
+...DDuuuUUDD....
+..DuuuUggUUUD...
+.DuuUgggggUUUD..
+.DuUgggUggUUVD..
+DuUUggUUUUgUUVD.
+DuUUUgUDDUUUUVD.
+DUUUUUDYYDUUUVD.
+DUUggDYYYYDUUVD.
+.DUgDYYYYYYDVD..
+.DUUDDDYYDDDUD..
+..DUUUDYYDUUD...
+...DDDDYYDDD....
+......DYYD......
+......DYYD......
+......DDDD......
+""")
 
-    # The shaft, out through the corner, and the head at the end of it.
-    for i in range(6):
-        put(px, 8 + i, 7 - i, INK)
-        put(px, 9 + i, 7 - i, INK)
-    fill(px, 10, 0, 15, 1, INK)         # the head's top edge
-    fill(px, 14, 0, 15, 5, INK)         # and its right edge
-    return px
+
+def draw_find():
+    """
+    A magnifying glass the way Sherlock draws its own: the lens up and to
+    the right, round, its rim grey on the near side and dark on the far, the
+    glass pale with a highlight and deeper toward the lower right; a gold
+    ferrule, and a handle down to the lower left with its shadow along it.
+    """
+    return grid("""
+.......DDDDD....
+.....DDIIIIIDD..
+....DIITTTTTIJD.
+....DITBBTTTTJD.
+...DITBTTTTTTtJD
+...DITTTTTTTttJD
+...DITTTTTTtttJD
+....DITTTttttJD.
+....DIJtttttJJD.
+.....DDJJJJJDD..
+...DYYDDDDDDD...
+..DooXD.........
+.DooXD..........
+DooXD...........
+DoXD............
+DDD.............
+""")
 
 
 # --- Rez emission -----------------------------------------------------------
@@ -422,17 +590,17 @@ def bitmap(px, predicate):
 
 def family(px, res_id, name):
     """
-    The 1-bit member is the shape's silhouette rather than its dark parts.
-    Each icon here is one flat colour, and two of the three are light enough
-    that a luminance threshold would ink nothing at all and leave a blank
-    square on a black and white screen. A solid silhouette is also what the
-    system's own small icons did before colour, and the gaps — the sun's rays,
-    the ring round the unread disc — survive it, which is what keeps the three
-    telling each other apart.
+    The 1-bit member is the drawing's dark half — the outline and whatever is
+    darker than mid-grey — over a mask that is the whole silhouette. Every
+    one of these is an outlined shape now, so on a black and white screen the
+    outline alone is the picture, which is what the system's own small icons
+    did before colour and what a solid silhouette would throw away.
     """
-    ink = bitmap(px, lambda c: c is not CLEAR)
-    mask = ink
-    ics8 = bytes(mac8(c) if c is not CLEAR else 0 for row in px for c in row)
+    colours = [[PAL[ch] for ch in row] for row in px]
+    ink = bitmap(colours, lambda c: c is not CLEAR and luminance(c) < 128)
+    mask = bitmap(colours, lambda c: c is not CLEAR)
+    ics8 = bytes(mac8(c) if c is not CLEAR else 0
+                 for row in colours for c in row)
 
     return ("data 'ics#' (%d, \"%s\", purgeable) {\n%s\n};\n\n"
             "data 'ics8' (%d, \"%s\", purgeable) {\n%s\n};\n"
@@ -463,13 +631,8 @@ HEADER = """/*
 
 
 def ascii_art(px):
-    ramp = " .:-=+*#%@"
     for row in px:
-        line = ""
-        for c in row:
-            line += (" " if c is CLEAR
-                     else ramp[min(9, int((255 - luminance(c)) / 26))])
-        print(line)
+        print("".join(row))
 
 
 def main():
@@ -480,26 +643,29 @@ def main():
 
     icons = [
         (128, "Today", draw_today()),
-        (129, "All Unread", draw_unread()),
-        # The sidebar's star fills its row's icon column; the one the headline
-        # list marks an article with sits in a text line and is drawn smaller
-        # so that it does not out-shout the headline beside it.
-        (130, "Starred", draw_star(8.4, 7.4, 3.8)),
-        (131, "Starred Article", draw_star(8.6, 6.0, 3.1)),
+        # All Unread wears the same picture as Next Unread: they are the same
+        # idea, the not-yet-read, and one is the view of it and the other the
+        # step to it.
+        (129, "All Unread", draw_next_unread()),
+        (130, "Starred", draw_star()),
+        (131, "Starred Article", draw_star_small()),
 
-        # The toolbar. The three pairs are the toggles: each button shows the
-        # drawing for what it would do next, the way its menu item shows the
-        # words for it.
+        # The toolbar. The three pairs are the buttons that toggle. Each pair
+        # wears the one picture for now — the second state's drawing has not
+        # been designed yet — so a button's caption, not its picture, is what
+        # says which way it will go next.
         (132, "Sidebar", draw_sidebar()),
         (133, "Refresh", draw_refresh()),
         (134, "Mark All as Read", draw_mark_all_read()),
-        (135, "Mark All as Unread", draw_mark_all_unread()),
+        (135, "Mark All as Unread", draw_mark_all_read()),
         (136, "Hide Read Articles", draw_hide_read()),
-        (137, "Show Read Articles", draw_show_read()),
-        (138, "Mark as Read", draw_read_ring()),
-        (139, "Mark as Unread", draw_unread_dot()),
+        (137, "Show Read Articles", draw_hide_read()),
+        (138, "Mark as Read", draw_mark_read()),
+        (139, "Mark as Unread", draw_mark_read()),
         (140, "Next Unread", draw_next_unread()),
         (141, "Open in Browser", draw_browser()),
+        (142, "New", draw_new()),
+        (143, "Find", draw_find()),
     ]
 
     if args.ascii:

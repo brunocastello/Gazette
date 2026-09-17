@@ -146,6 +146,8 @@ enum {
     kToolbarGap    = 1,         /* between buttons of one group */
     kToolbarGroup  = 12,        /* the least space between two groups */
     kSearchWidth   = 150,
+    kSearchHeight  = 16,        /* a Geneva 10 field, frame included */
+    kSearchFontSize = 10,
 
     /* The focus border's thickness, and therefore how far a row has to keep
        clear of the edge of the view it is in. */
@@ -1454,8 +1456,13 @@ static void LayoutToolbar(const Rect *bounds, short listLeft, short readerLeft)
         if (left < at) {
             left = at;
         }
-        SetRect(&r, left, (short)(top + 2), right,
-                (short)(top + kToolbarButton - 2));
+        /* Centred on the buttons' own middle rather than hung from their
+           top: sixteen in a square of twenty-two leaves three above and
+           three below. */
+        SetRect(&r, left, (short)(top + (kToolbarButton - kSearchHeight) / 2),
+                right,
+                (short)(top + (kToolbarButton - kSearchHeight) / 2 +
+                        kSearchHeight));
         if (r.right <= r.left) {
             r.right = r.left;       /* nothing left to draw in */
         }
@@ -2309,9 +2316,10 @@ enum {
     kIconStarred      = 130,
     kIconStarredSmall = 131,
 
-    /* The toolbar's. The three pairs are the buttons that toggle: each wears
-       the picture for what it would do next, the way its menu item wears the
-       words for it. */
+    /* The toolbar's. The three pairs are the buttons that toggle. For now
+       both halves of a pair carry the same picture — the second state's has
+       not been drawn — and the generator emits it twice so that the two IDs
+       stay distinct for the day it is. */
     kIconSidebar       = 132,
     kIconRefresh       = 133,
     kIconMarkAllRead   = 134,
@@ -2321,7 +2329,13 @@ enum {
     kIconMarkRead      = 138,
     kIconMarkUnread    = 139,
     kIconNextUnread    = 140,
-    kIconBrowser       = 141
+    kIconBrowser       = 141,
+
+    /* Drawn and approved, and waiting on the toolbar that will wear them:
+       a New button at the head of the row, and a Find beside the search
+       field. */
+    kIconNew           = 142,
+    kIconFind          = 143
 };
 
 static void SystemIcon(RowIcon *out, OSType which)
@@ -3612,8 +3626,24 @@ static void MakeToolbar(void)
         gToolbarBtn[i] = MakeToolbarButton(kIcons[i]);
     }
 
-    SetRect(&r, 0, 0, kSearchWidth, kToolbarButton);
+    SetRect(&r, 0, 0, kSearchWidth, kSearchHeight);
     gSearchCtl = MakeControl(&r, kControlEditTextProc, 0);
+
+    /*
+     * The field is set a size smaller than the lists, at 10: it is a box
+     * sixteen pixels tall on a bar whose buttons are twenty-two, the way
+     * OE's Find is a small thing at the end of the row rather than another
+     * button's worth of it. The application font, as everywhere else —
+     * Geneva on a stock system.
+     */
+    if (gSearchCtl != NULL) {
+        ControlFontStyleRec style;
+
+        style.flags = kControlUseFontMask | kControlUseSizeMask;
+        style.font  = gViewFont;
+        style.size  = kSearchFontSize;
+        (void)SetControlFontStyle(gSearchCtl, &style);
+    }
 }
 
 /*
