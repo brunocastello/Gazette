@@ -172,12 +172,11 @@ resource 'DITL' (kFeedDialogID, "Feed") {
  * and a data block does not care which Rez reads it. The layout is the
  * template's, version 0, item by item, nothing aligned.
  */
+/* version 0, eight items; 1 and 2 as they are; 3 Geneva 10 (flags $0005,
+   font 3, size 10, the rest zero, an empty name); 4 to 8 as they are. */
 data 'dftb' (kFeedDialogID, "Feed") {
-    $"0000 0008"                    /* version 0, eight items */
-    $"0000 0000"                    /* 1, 2: as they are */
-    $"0001 0005 0003 000A 0000 0000 0000"
-    $"0000 0000 0000 0000 0000 0000 00"   /* 3: Geneva 10 */
-    $"0000 0000 0000 0000 0000"           /* 4 to 8: as they are */
+    $"0000 0008 0000 0000 0001 0005 0003 000A 0000 0000 0000 0000 0000 0000"
+    $"0000 0000 0000 0000 0000 0000 0000 0000 00"
 };
 
 /* The number is src/gazette_version.h's, written out because Rez cannot
