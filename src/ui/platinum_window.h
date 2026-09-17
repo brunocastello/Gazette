@@ -204,6 +204,11 @@ Boolean GazetteUISidebarRowAt(Point where, int *kind, int *index);
    is over before its menu appears, the way the Finder's does. */
 void    GazetteUIChooseRow(int kind, int index);
 
+/* The same two for the headline list: the article under a point, and
+   choosing one as a click does — which opens it, and so reads it. */
+Boolean GazetteUIArticleRowAt(Point where, int *index);
+void    GazetteUIChooseArticle(int index);
+
 #ifdef __cplusplus
 }
 #endif

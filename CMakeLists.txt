@@ -163,6 +163,16 @@ target_include_directories(Gazette PRIVATE
     ${CMAKE_SOURCE_DIR}/src
 )
 
+# A failed fetch's status line names what failed; with this on it also
+# carries the transport's account of itself — the TLS phase, the Open
+# Transport error, the alert — which is for debugging the transport, not for
+# reading the news. Off in what is shipped:
+#   cmake -DGAZETTE_NET_DEBUG=ON ...
+option(GAZETTE_NET_DEBUG "Append transport detail to fetch failures" OFF)
+if(GAZETTE_NET_DEBUG)
+    target_compile_definitions(Gazette PRIVATE GAZETTE_NET_DEBUG)
+endif()
+
 # src/net/ drives Open Transport directly for plaintext HTTP, so it needs the
 # same Carbon redirection Certainly does. PUBLIC on the certainly target
 # already carries both definitions here; naming them again would be a second

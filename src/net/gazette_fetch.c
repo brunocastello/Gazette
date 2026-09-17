@@ -104,9 +104,14 @@ static void Fail(GazetteFetch *f, const char *what)
        URL rejected before any of this would otherwise be reported as
        "... (not connected)", which reads like a second, unrelated fault. */
     detail[0] = '\0';
+#ifdef GAZETTE_NET_DEBUG
+    /* The transport's own account of itself — "TLS closed, OT -3155, alert
+       0" — is for whoever is debugging the transport, and reads as noise to
+       whoever is reading the news. It is compiled in only when asked for. */
     if (f->stream.plain != NULL || f->stream.sec != NULL) {
         GazetteStreamDescribe(&f->stream, detail, sizeof detail);
     }
+#endif
     if (detail[0] != '\0') {
         snprintf(f->errorText, sizeof f->errorText, "%s (%s)", what, detail);
     } else {

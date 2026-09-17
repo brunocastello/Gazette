@@ -493,6 +493,18 @@ static int ArticleSink(const GazetteArticle *article, void *context)
         return 0;
     }
 
+    /* A feed that carries the same item twice — an update re-listed, a
+       template's slip — is one article, not two. */
+    if (article->link[0] != '\0') {
+        int i;
+
+        for (i = 0; i < gArticleCount; i++) {
+            if (strcmp(gArticles[i].link, article->link) == 0) {
+                return 1;
+            }
+        }
+    }
+
     gArticles[gArticleCount] = *article;
     gArticles[gArticleCount].feed = gPendingFeed;
     /* The index knows, and knows across a refresh: an article that was read
@@ -1165,6 +1177,21 @@ static void EmitMerge(const GazetteArticle *a, void *ctx)
     int at;
 
     (void)ctx;
+
+    /*
+     * One article once. Two feeds can carry the same story — two Google
+     * News topics that overlap, a site's main feed and a section's — and a
+     * merged view read them both, so Starred showed a starred article
+     * twice. The link is what the index knows an article by, so it is what
+     * "the same" means here; the first one in stays.
+     */
+    if (a->link[0] != '\0') {
+        for (at = 0; at < gArticleCount; at++) {
+            if (strcmp(gArticles[at].link, a->link) == 0) {
+                return;
+            }
+        }
+    }
 
     for (at = 0; at < gArticleCount; at++) {
         if (gArticles[at].date < a->date) {

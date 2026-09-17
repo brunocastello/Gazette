@@ -496,7 +496,8 @@ static void DrawArticlePane(void);
 static void DrawReader(void);
 static void DrawStatus(void);
 static void DrawStatusText(void);
-static void DrawHeaderTitle(const Rect *r, const char *text);
+static void DrawHeaderTitle(const Rect *r, const char *text,
+                            const char *count);
 static void DrawReaderRule(void);
 static void ReaderHiliteColours(void);
 static void GreyPen(short grey);
@@ -2265,21 +2266,51 @@ static pascal void ScrollAction(ControlRef control, ControlPartCode part)
  * and not the placard this used to draw. The control has no title of its
  * own, so the text goes on top of it in the theme's small system font.
  */
-static void DrawHeaderTitle(const Rect *r, const char *text)
+/*
+ * A header's title, and after it — in the grey the sidebar's unread counts
+ * are set in, so the two read as the same kind of number — its count, when
+ * it has one. The count is drawn whole and the title gives way to it: a
+ * long feed name is truncated before the number is.
+ */
+static void DrawHeaderTitle(const Rect *r, const char *text,
+                            const char *count)
 {
+    Rect  inner = *r;
+    short room;
+    short countWidth = 0;
+
     if (r->right <= r->left) {
         return;                 /* a column that is not being drawn */
     }
-    Rect inner = *r;
 
     UseSysFont();
     SetThemeTextColor(kThemeTextColorWindowHeaderActive, 8, true);
 
     inner.left  = (short)(inner.left + kTextInset + 2);
     inner.right = (short)(inner.right - kTextInset);
+    room        = (short)(inner.right - inner.left);
+
+    if (count != NULL && count[0] != '\0') {
+        countWidth = (short)(TextWidth(count, 0, (short)strlen(count)) +
+                             kCountGap / 2);
+        if (countWidth > room) {
+            countWidth = 0;         /* no room for the number at all */
+        }
+    }
 
     MoveTo(inner.left, (short)(r->top + gHeaderBase));
-    DrawTruncated(text, (short)(inner.right - inner.left));
+    DrawTruncated(text, (short)(room - countWidth));
+
+    if (countWidth > 0) {
+        RGBColor grey;
+        Point    pen;
+
+        GetPen(&pen);
+        grey.red = grey.green = grey.blue = 90 * 257;
+        RGBForeColor(&grey);
+        MoveTo((short)(pen.h + kCountGap / 2), pen.v);
+        DrawText(count, 0, (short)strlen(count));
+    }
 
     ForeColor(blackColor);
 }
@@ -4322,6 +4353,7 @@ void GazetteUIUpdate(void)
 {
     Rect  bounds;
     char  header[kGazetteFeedTitleLen + 32];
+    char  count[32];
 
     if (gWindow == NULL) {
         return;
@@ -4346,21 +4378,23 @@ void GazetteUIUpdate(void)
         if (GazetteFeedsFilter()[0] != '\0') {
             /* While a search is on, what is on screen is the matches, and
                saying so is more use than an unread count of the whole. */
-            snprintf(header, sizeof header, "%s - \322%s\323 (%d of %d)",
-                     title, GazetteFeedsFilter(),
-                     GazetteFeedsArticleCount(), GazetteFeedsTotalCount());
+            snprintf(header, sizeof header, "%s - \322%s\323",
+                     title, GazetteFeedsFilter());
+            snprintf(count, sizeof count, "(%d)",
+                     GazetteFeedsArticleCount());
         } else if (unread > 0) {
             /* How many are left to read is the number worth reading; the
                total is only interesting when there is nothing left. */
-            snprintf(header, sizeof header, "%s (%d unread of %d)", title,
-                     unread, GazetteFeedsTotalCount());
+            snprintf(header, sizeof header, "%s", title);
+            snprintf(count, sizeof count, "(%d unread)", unread);
         } else {
-            snprintf(header, sizeof header, "%s (%d)", title,
-                     GazetteFeedsTotalCount());
+            snprintf(header, sizeof header, "%s", title);
+            snprintf(count, sizeof count, "(%d)", GazetteFeedsTotalCount());
         }
     } else {
         snprintf(header, sizeof header, "%s",
                  GazetteCoreFeedTitle(gSelectedFeed));
+        count[0] = '\0';
     }
 
     /* The dividers, drawn as the Appearance Manager's own separators so they
@@ -4390,8 +4424,8 @@ void GazetteUIUpdate(void)
 
     /* Their titles go on top of them: a window header control and a placard
        have no text of their own. */
-    DrawHeaderTitle(&gSidebarHeader, "Feeds");
-    DrawHeaderTitle(&gListHeader, header);
+    DrawHeaderTitle(&gSidebarHeader, "Feeds", NULL);
+    DrawHeaderTitle(&gListHeader, header, count);
     DrawStatusText();
 
     /*
@@ -6182,6 +6216,39 @@ Boolean GazetteUISidebarRowAt(Point where, int *kind, int *index)
         *index = row.index;
     }
     return true;
+}
+
+Boolean GazetteUIArticleRowAt(Point where, int *index)
+{
+    Rect rows;
+    Cell cell;
+    int  article;
+
+    if (gWindow == NULL || gArticleList == NULL ||
+        !PtInRect(where, &gListPane)) {
+        return false;
+    }
+    ListView(gArticleList, &rows);
+    if (!PtInRect(where, &rows) || !CellAtPoint(gArticleList, where, &cell)) {
+        return false;
+    }
+    article = ArticleAtRow(cell.v);
+    if (article < 0) {
+        return false;               /* a date heading, or empty space */
+    }
+    if (index != NULL) {
+        *index = article;
+    }
+    return true;
+}
+
+void GazetteUIChooseArticle(int index)
+{
+    if (gWindow == NULL || GazetteFeedsArticleAt(index) == NULL) {
+        return;
+    }
+    SetFocus(kRefList);
+    SelectArticle(index);
 }
 
 void GazetteUIChooseRow(int kind, int index)
