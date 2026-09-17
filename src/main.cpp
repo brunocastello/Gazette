@@ -1555,7 +1555,8 @@ static void HandleNewGroup(void)
     int  group;
 
     name[0] = '\0';
-    if (!GazetteAskName("Name for the new group:", name, sizeof name)) {
+    if (!GazetteAskName("New Group", "Name for the new group:", name,
+                        sizeof name)) {
         return;
     }
 
@@ -1654,7 +1655,8 @@ static void HandleEditGroup(void)
     }
 
     snprintf(name, sizeof name, "%s", GazetteCoreGroupName(index));
-    if (!GazetteAskName("Name for this group:", name, sizeof name)) {
+    if (!GazetteAskName("Edit Group", "Name for this group:", name,
+                        sizeof name)) {
         return;
     }
     GazetteCoreRenameGroup(index, name);
@@ -2072,7 +2074,8 @@ static void HandleFind(void)
     char message[224];
 
     snprintf(text, sizeof text, "%s", GazetteFeedsFilter());
-    if (!GazetteAskName("Find articles containing:", text, sizeof text)) {
+    if (!GazetteAskName("Find", "Find articles containing:", text,
+                        sizeof text)) {
         return;
     }
 

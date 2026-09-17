@@ -33,19 +33,32 @@ enum {
 };
 
 enum {
+    kFeedItemNote  = 3,             /* a user item: see DrawItemControl */
     kFeedItemTitle = 5,
     kFeedItemURL   = 7,
-    kFeedItemGroup = 9              /* a user item: see DrawPopupItem */
+    kFeedItemGroup = 9              /* likewise */
+};
+
+/* A static text control, for the notes: 288 is kControlStaticTextProc. */
+enum {
+    kNoteProc = 288
 };
 
 /*
- * The Group popup is a control of the dialog's window, made by the code
- * from the groups there are, standing on a user item of the DITL. The item
- * is what gets it drawn: the Dialog Manager draws its items and nothing
- * else, and the item's draw procedure draws the control. The filter hands
- * it its clicks, since ModalDialog tracks only items. kControlPopupButtonProc
- * plus the fixed-width variant; -12345 for the menu ID says there is no
- * menu resource, the menu is handed in by handle.
+ * Two kinds of item are controls the code makes rather than items the DITL
+ * describes, standing on user items: the Group popup, and the notes. The
+ * item is what gets each drawn — the Dialog Manager draws its items and
+ * nothing else, and the item's draw procedure draws the control — and the
+ * filter hands the popup its clicks, since ModalDialog tracks only items.
+ *
+ * The notes are controls for their font: a DITL's own static text is set
+ * in the dialog font, and a control can be told to use the Appearance
+ * Manager's small system font by its meta-number, so it is Geneva 10 on a
+ * stock system and whatever the Appearance control panel says otherwise.
+ *
+ * The popup: kControlPopupButtonProc plus the fixed-width variant; -12345
+ * for the menu ID says there is no menu resource, the menu is handed in by
+ * handle.
  */
 enum {
     kFeedPopupProc   = 401,
@@ -53,15 +66,65 @@ enum {
 };
 
 static ControlHandle gFeedPopup;    /* while the feed dialog is up */
-static UserItemUPP   gDrawPopup;    /* made once, kept */
+static ControlHandle gNote;         /* the note, while either dialog is up */
+static UserItemUPP   gDrawItem;     /* made once, kept */
 
-static pascal void DrawPopupItem(DialogRef dialog, DialogItemIndex item)
+/* The user items' draw procedure: whichever control stands on the item. */
+static pascal void DrawItemControl(DialogRef dialog, DialogItemIndex item)
 {
-    (void)dialog;
-    (void)item;
+    Handle handle = NULL;
+    Rect   box;
+    short  type;
+
+    GetDialogItem(dialog, item, &type, &handle, &box);
+    if (gNote != NULL) {
+        Rect noteBox;
+
+        GetControlBounds(gNote, &noteBox);
+        if (EqualRect(&noteBox, &box)) {
+            Draw1Control(gNote);
+            return;
+        }
+    }
     if (gFeedPopup != NULL) {
         Draw1Control(gFeedPopup);
     }
+}
+
+/* Stand a control on a user item: the item's rectangle is the control's,
+   and the item's draw procedure draws it. */
+static void StandOnItem(DialogRef dialog, short item, Rect *box)
+{
+    Handle handle = NULL;
+    short  type;
+
+    GetDialogItem(dialog, item, &type, &handle, box);
+    if (gDrawItem == NULL) {
+        gDrawItem = NewUserItemUPP(DrawItemControl);
+    }
+    SetDialogItem(dialog, item, userItem, (Handle)gDrawItem, box);
+}
+
+/* A note: static text in the small system font, on a user item. */
+static ControlHandle MakeNote(DialogRef dialog, short item, const char *text)
+{
+    ControlHandle       note;
+    ControlFontStyleRec style;
+    Rect                box;
+
+    StandOnItem(dialog, item, &box);
+    note = NewControl(GetDialogWindow(dialog), &box, "\p", true, 0, 0, 0,
+                      kNoteProc, 0);
+    if (note == NULL) {
+        return NULL;
+    }
+    style.flags = kControlUseFontMask;
+    style.font  = kControlFontSmallSystemFont;
+    (void)SetControlFontStyle(note, &style);
+    (void)SetControlData(note, kControlEntireControl, kControlStaticTextTextTag,
+                         (Size)strlen(text != NULL ? text : ""),
+                         (Ptr)(text != NULL ? text : ""));
+    return note;
 }
 
 /* The Group popup's menu, built here from the groups there are. An ID after
@@ -261,9 +324,7 @@ Boolean GazetteAskFeed(GazetteFeedDialog *d)
     DialogRef     dialog;
     ControlHandle popup = NULL;
     MenuRef       menu  = NULL;
-    Handle        handle = NULL;
     Rect          box;
-    short         type;
     Str255        title;
     Boolean       ok;
 
@@ -283,10 +344,14 @@ Boolean GazetteAskFeed(GazetteFeedDialog *d)
     SetItemText(dialog, kFeedItemTitle, d->title);
     SetItemText(dialog, kFeedItemURL, d->url);
 
+    gNote = MakeNote(dialog, kFeedItemNote,
+                     "The address of an RSS or Atom feed. Leave the name "
+                     "empty to use the feed's own.");
+
     /* The popup, made where the user item is, and drawn by it. With no
        groups there is nowhere but the top level, and the one choice is
        shown grey: a menu of one is not a choice. */
-    GetDialogItem(dialog, kFeedItemGroup, &type, &handle, &box);
+    StandOnItem(dialog, kFeedItemGroup, &box);
     menu = GroupMenu(d->groups, d->groupCount);
     /* The popup CDEF reads its menu ID from `min` and its title's width
        from `max` — -1 to work it out, and the title is empty — with
@@ -311,10 +376,6 @@ Boolean GazetteAskFeed(GazetteFeedDialog *d)
         }
     }
     gFeedPopup = popup;
-    if (gDrawPopup == NULL) {
-        gDrawPopup = NewUserItemUPP(DrawPopupItem);
-    }
-    SetDialogItem(dialog, kFeedItemGroup, userItem, (Handle)gDrawPopup, &box);
 
     /* The name first: it is what the user has in their head, and the one a
        new feed most often leaves empty, so the cursor starts in the field
@@ -340,7 +401,8 @@ Boolean GazetteAskFeed(GazetteFeedDialog *d)
     }
 
     gFeedPopup = NULL;
-    DisposeDialog(dialog);              /* takes the popup with the window */
+    gNote      = NULL;
+    DisposeDialog(dialog);              /* takes its controls with the window */
     if (menu != NULL) {
         DeleteMenu(kGroupPopupMenuID);
         DisposeMenu(menu);
@@ -348,9 +410,11 @@ Boolean GazetteAskFeed(GazetteFeedDialog *d)
     return ok;
 }
 
-Boolean GazetteAskName(const char *prompt, char *name, size_t cap)
+Boolean GazetteAskName(const char *windowTitle, const char *prompt,
+                       char *name, size_t cap)
 {
     DialogRef dialog;
+    Str255    title;
     Boolean   ok;
 
     if (name == NULL || cap == 0) {
@@ -361,8 +425,10 @@ Boolean GazetteAskName(const char *prompt, char *name, size_t cap)
     if (dialog == NULL) {
         return false;
     }
+    CopyCStringToPascal(windowTitle != NULL ? windowTitle : "", title);
+    SetWTitle(GetDialogWindow(dialog), title);
 
-    SetItemText(dialog, kNameItemPrompt, prompt);
+    gNote = MakeNote(dialog, kNameItemPrompt, prompt);
     SetItemText(dialog, kNameItemText, name);
     SelectDialogItemText(dialog, kNameItemText, 0, 32767);
 
@@ -373,6 +439,7 @@ Boolean GazetteAskName(const char *prompt, char *name, size_t cap)
         ok = (name[0] != '\0');
     }
 
+    gNote = NULL;
     DisposeDialog(dialog);
     return ok;
 }

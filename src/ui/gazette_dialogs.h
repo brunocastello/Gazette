@@ -54,9 +54,11 @@ typedef struct {
 
 Boolean GazetteAskFeed(GazetteFeedDialog *d);
 
-/* Ask for one line of text under a prompt -- a new group, or a new name for
-   a feed or a group. name carries the starting contents. */
-Boolean GazetteAskName(const char *prompt, char *name, size_t cap);
+/* Ask for one line of text under a prompt -- a new group, a group's new
+   name, a search. The window's title says which; name carries the starting
+   contents. */
+Boolean GazetteAskName(const char *windowTitle, const char *prompt,
+                       char *name, size_t cap);
 
 /* A caution alert with Remove and Cancel. Returns true for Remove. */
 Boolean GazetteConfirmRemove(const char *message);

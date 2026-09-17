@@ -97,10 +97,12 @@ resource 'DITL' (kFeedDialogID, "Feed") {
         { 140, 192, 160, 252 },
         Button { enabled, "Cancel" };
 
+        /* The note: a user item, on which the dialog code stands a static
+           text control set in the Appearance Manager's small system font —
+           a DITL's own text is set in the dialog font, and a 'dftb' did
+           not move it. */
         { 12, 16, 40, 324 },
-        StaticText { disabled,
-                     "The address of an RSS or Atom feed. Leave the name "
-                     "empty to use the feed's own." };
+        UserItem { disabled };
 
         { 52, 16, 68, 84 },
         StaticText { disabled, "Name:" };
@@ -122,26 +124,9 @@ resource 'DITL' (kFeedDialogID, "Feed") {
     }
 };
 
-/*
- * The description is set a size down from the fields, in the application
- * font: it is a note, not a label. A 'dftb' names a font per item, and
- * only the third says anything: flags $0005 (font and size), font 3
- * (Geneva), size 10, then style, mode, justification, two colours and an
- * empty font name; the other eight are skipped.
- *
- * Raw bytes rather than the Dialogs.r template, for the reason the icons
- * are: Retro68's Rez falls over on the template, and a data block does not
- * care which Rez reads it. The layout is the template's, version 0, item
- * by item, nothing aligned.
- */
-data 'dftb' (kFeedDialogID, "Feed") {
-    $"0000 0009 0000 0000 0001 0005 0003 000A 0000 0000 0000 0000 0000 0000"
-    $"0000 0000 0000 0000 0000 0000 0000 0000 0000 00"
-};
-
 resource 'DLOG' (kNameDialogID, "Name") {
     { 0, 0, 116, 320 },
-    dBoxProc,
+    movableDBoxProc,            /* a title bar: New Group, Edit Group, Find */
     invisible,
     noGoAway,
     0x0,
@@ -164,10 +149,10 @@ resource 'DITL' (kNameDialogID, "Name") {
         { 82, 172, 102, 232 },
         Button { enabled, "Cancel" };
 
-        /* The prompt is set at runtime — one dialog serves "New Group",
-           "Rename Group" and "Rename Feed". */
+        /* The prompt is set at runtime — one dialog serves New Group, Edit
+           Group and Find — on a user item, as the feed dialog's note is. */
         { 14, 16, 46, 304 },
-        StaticText { disabled, "" };
+        UserItem { disabled };
 
         { 52, 16, 68, 304 },
         EditText { enabled, "" };
