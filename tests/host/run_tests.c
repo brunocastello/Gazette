@@ -2571,8 +2571,8 @@ static void TestOPML(void)
     size_t       n;
 
     memset(&p, 0, sizeof p);
-    GazettePrefsAddGroup(&p, "News & Views");
     GazettePrefsAddFeed(&p, "https://e/loose", "Loose", -1);
+    GazettePrefsAddGroup(&p, "News & Views");
     GazettePrefsAddFeed(&p, "https://e/a?x=1&y=2", "A <b>", 0);
 
     n = GazetteOPMLWrite(&p, text, sizeof text);
