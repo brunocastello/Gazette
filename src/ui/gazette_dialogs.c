@@ -288,9 +288,13 @@ Boolean GazetteAskFeed(GazetteFeedDialog *d)
        shown grey: a menu of one is not a choice. */
     GetDialogItem(dialog, kFeedItemGroup, &type, &handle, &box);
     menu = GroupMenu(d->groups, d->groupCount);
+    /* The popup CDEF reads its menu ID from `min` and its title's width
+       from `max` — -1 to work it out, and the title is empty — with
+       `value` the item it starts on; Gateway's settings window makes its
+       popups the same way. */
     if (menu != NULL) {
         popup = NewControl(GetDialogWindow(dialog), &box, "\p", true,
-                           kPopupNoMenuID, 0, -1, kFeedPopupProc, 0);
+                           0, kPopupNoMenuID, -1, kFeedPopupProc, 0);
     }
     if (popup != NULL) {
         (void)SetControlData(popup, kControlEntireControl,
