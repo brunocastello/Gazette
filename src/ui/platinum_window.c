@@ -145,8 +145,8 @@ enum {
     kToolbarHeight = 27,        /* 26 of grey, and the rule under it */
     kToolbarButton = 22,        /* a button's height; its width is its caption's */
     kToolbarPad    = 6,         /* window edge to the first button */
-    kToolbarGap    = 3,         /* between buttons of one group */
-    kToolbarGroup  = 6,         /* either side of the separator between two */
+    kToolbarGap    = 0,         /* between buttons of one group: OE has none */
+    kToolbarGroup  = 2,         /* either side of the separator between two */
     kToolInset     = 4,         /* a button's edge to its icon */
     kToolIconText  = 3,         /* its icon to its caption */
     kToolPadRight  = 5,         /* its caption to its edge */
@@ -1621,15 +1621,26 @@ static void Layout(void)
         short split   = (short)(bounds.left + width);
         short split2  = (short)(split + gListWidth);
         /*
-         * A pixel above where the panes begin, which is the row the black
-         * rule is on: the window frame's when there is no toolbar, and the
-         * toolbar's own when there is. Either way the headers' top edges and
-         * the article's land on a line that is already drawn, which is why
-         * nothing below here has to know which of the two it was.
+         * The row the black rule is on — the window frame's when there is
+         * no toolbar, the toolbar's own when there is — and the row after
+         * it, where the headers begin.
+         *
+         * The headers begin *under* the rule, not on it. A Window Header is
+         * drawn to sit beneath a title bar's black edge: its own first row
+         * is its white highlight, and it rules no black of its own along
+         * the top. Started on the rule's row it painted that highlight over
+         * the rule, and the bar above stood on nothing while each header
+         * floated a white line below it. Started one row down, the rule is
+         * the toolbar's, the highlight is the header's, and the two meet the
+         * way Outlook Express's do: black, then white, then the grey.
+         *
+         * The article's column still reaches up to the rule's row, for the
+         * reason its comment gives.
          */
         short top     = (short)(bounds.top + toolbar);
-        short headTop = (short)(top - 1);
-        short headBot = (short)(top + gHeaderHeight);
+        short rule    = (short)(top - 1);
+        short headTop = top;
+        short headBot = (short)(top + gHeaderHeight + 1);
 
         /*
          * The border runs the whole height of the window, top to bottom,
@@ -1651,13 +1662,15 @@ static void Layout(void)
         /* An empty rectangle is a divider that cannot be drawn on and cannot
            be grabbed — PtInRect answers false for every point in one — which
            is what the hidden sidebar's groove has to be. */
+        /* From the rule's row, so the groove cuts through the rule the way
+           OE's does rather than starting beneath it. */
         if (noSidebar) {
             SetRect(&gVDivider, 0, 0, 0, 0);
         } else {
-            SetRect(&gVDivider, split, top,
+            SetRect(&gVDivider, split, rule,
                     (short)(split + kVDividerWidth), contentBottom);
         }
-        SetRect(&gVDivider2, split2, top,
+        SetRect(&gVDivider2, split2, rule,
                 (short)(split2 + kVDividerWidth), contentBottom);
 
         /*
@@ -1705,14 +1718,14 @@ static void Layout(void)
          * two columns' headers begin — down to the status strip, with
          * nothing ruled across it.
          *
-         * It starts at headTop, a pixel above the content region, for the
+         * It starts on the rule's row, a pixel above the content region, for the
          * reason the two lists start a pixel inside their headers: the
          * scroll bar draws its own black edge along the pane's first row,
          * and the window frame already rules a black line there. Starting at
          * bounds.top put the bar's edge directly under that line and the top
          * of the article's scroll bar came out two pixels thick.
          */
-        SetRect(&gReaderPane, (short)(split2 + 6), headTop,
+        SetRect(&gReaderPane, (short)(split2 + 6), rule,
                 (short)(bounds.right + 1), (short)(contentBottom + 1));
 
         /*
