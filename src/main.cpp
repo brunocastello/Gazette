@@ -91,12 +91,12 @@ static void    HandleToggleEnabled(void);
 static void    HandleMoveToGroup(short item);
 static void    HandleMoveStep(int delta);
 static Boolean CanMoveStep(int kind, int index, int delta);
-static void    HandleMarkAllReadOnly(void);
 static void    HandleOpenHomePage(void);
 static void    HandleCopyFeedURL(void);
 static void    HandleCopyHomeURL(void);
 static Boolean OpenURL(const char *url);
 static void    RebuildGroupMenu(MenuRef menu, int feedIndex);
+static void    AdjustMarkAllItem(MenuRef menu, MenuItemIndex item);
 static void    ShowSidebarContextMenu(int kind, int index, Point global);
 static void    ShowSmart(int which);
 static void    ResumeFullText(void);
@@ -533,7 +533,7 @@ static Boolean BuildMenuBar(void)
 
     /*
      * The sidebar's contextual menus. In the hierarchical list, which is
-     * where ContextualMenuSelect wants a menu it is handed, and where a
+     * where PopUpMenuSelect wants a menu it is handed, and where a
      * submenu has to be for its parent to find it.
      */
     ctx = NewMenu(kMenuCtxSmart, "\p");
@@ -954,13 +954,13 @@ static void HandleMenuChoice(long menuResult)
            handler and nothing else, for the reason the toolbar's are. */
         case kMenuCtxSmart:
             if (menuItem == kCtxSmartMarkAll) {
-                HandleMarkAllReadOnly();
+                HandleMarkAllRead();
             }
             break;
 
         case kMenuCtxGroup:
             switch (menuItem) {
-                case kCtxGroupMarkAll: HandleMarkAllReadOnly(); break;
+                case kCtxGroupMarkAll: HandleMarkAllRead();     break;
                 case kCtxGroupEnabled: HandleToggleEnabled();   break;
                 case kCtxGroupEdit:    HandleEditGroup();       break;
                 case kCtxGroupDelete:  HandleRemove();          break;
@@ -978,7 +978,7 @@ static void HandleMenuChoice(long menuResult)
 
         case kMenuCtxFeed:
             switch (menuItem) {
-                case kCtxFeedMarkAll:  HandleMarkAllReadOnly(); break;
+                case kCtxFeedMarkAll:  HandleMarkAllRead();     break;
                 case kCtxFeedHome:     HandleOpenHomePage();    break;
                 case kCtxFeedCopyURL:  HandleCopyFeedURL();     break;
                 case kCtxFeedCopyHome: HandleCopyHomeURL();     break;
@@ -1283,9 +1283,7 @@ static void RebuildGroupMenu(MenuRef menu, int feedIndex)
 static void ShowSidebarContextMenu(int kind, int index, Point global)
 {
     MenuRef       menu;
-    UInt32        chosen = kCMNothingSelected;
-    SInt16        menuID = 0;
-    MenuItemIndex item   = 0;
+    long          chosen;
 
     if (kind == kGazetteRowSmart && index == kGazetteSmartStarred) {
         return;                     /* Starred has nothing to offer */
@@ -1296,11 +1294,7 @@ static void ShowSidebarContextMenu(int kind, int index, Point global)
         case kGazetteRowSmart:
             menu = GetMenuHandle(kMenuCtxSmart);
             if (menu != nil) {
-                if (GazetteFeedsUnreadCount() > 0) {
-                    MacEnableMenuItem(menu, kCtxSmartMarkAll);
-                } else {
-                    DisableMenuItem(menu, kCtxSmartMarkAll);
-                }
+                AdjustMarkAllItem(menu, kCtxSmartMarkAll);
             }
             break;
 
@@ -1311,11 +1305,7 @@ static void ShowSidebarContextMenu(int kind, int index, Point global)
             if (menu == nil) {
                 return;
             }
-            if (GazetteFeedsUnreadCount() > 0) {
-                MacEnableMenuItem(menu, kCtxGroupMarkAll);
-            } else {
-                DisableMenuItem(menu, kCtxGroupMarkAll);
-            }
+            AdjustMarkAllItem(menu, kCtxGroupMarkAll);
             SetMenuItemText(menu, kCtxGroupEnabled,
                             GazetteCoreGroupEnabled(index) ? "\pTurn Off"
                                                            : "\pTurn On");
@@ -1343,11 +1333,7 @@ static void ShowSidebarContextMenu(int kind, int index, Point global)
             if (menu == nil) {
                 return;
             }
-            if (GazetteFeedsUnreadCount() > 0) {
-                MacEnableMenuItem(menu, kCtxFeedMarkAll);
-            } else {
-                DisableMenuItem(menu, kCtxFeedMarkAll);
-            }
+            AdjustMarkAllItem(menu, kCtxFeedMarkAll);
             /* The site is learned from the feed on its first refresh; until
                then there is nothing to open or to copy. */
             if (home) {
@@ -1385,10 +1371,37 @@ static void ShowSidebarContextMenu(int kind, int index, Point global)
         return;
     }
 
-    if (ContextualMenuSelect(menu, global, false, kCMHelpItemNoHelp, "\p",
-                             NULL, &chosen, &menuID, &item) == noErr &&
-        chosen == kCMMenuItemSelected) {
-        HandleMenuChoice(((long)menuID << 16) | (long)item);
+    /*
+     * PopUpMenuSelect rather than ContextualMenuSelect. The Contextual Menu
+     * Manager puts a Help item at the head of every menu it shows, and on
+     * Mac OS 9 it cannot be asked not to — kCMHelpItemRemoveHelp is
+     * documented as disabling the item there rather than removing it. The
+     * menu is ours and there is no help; the Menu Manager shows it as it is.
+     */
+    chosen = PopUpMenuSelect(menu, global.v, global.h, 0);
+    if ((chosen >> 16) != 0) {
+        HandleMenuChoice(chosen);
+    }
+}
+
+/*
+ * The contextual menus' first item, which turns round the way the Article
+ * menu's does: with something left unread it reads the rest, and with
+ * nothing left it puts it all back.
+ */
+static void AdjustMarkAllItem(MenuRef menu, MenuItemIndex item)
+{
+    int count = GazetteFeedsArticleCount();
+
+    if (count == 0) {
+        DisableMenuItem(menu, item);
+        SetMenuItemText(menu, item, "\pMark All as Read");
+    } else if (GazetteFeedsUnreadCount() > 0) {
+        MacEnableMenuItem(menu, item);
+        SetMenuItemText(menu, item, "\pMark All as Read");
+    } else {
+        MacEnableMenuItem(menu, item);
+        SetMenuItemText(menu, item, "\pMark All as Unread");
     }
 }
 
@@ -1660,26 +1673,6 @@ static void HandleMoveStep(int delta)
         GazetteUISelectFeed(moved);
     } else {
         GazetteUISelectGroup(moved);
-    }
-}
-
-/*
- * Mark All as Read from a contextual menu: one direction only. The menu bar's
- * item turns round and offers to mark everything unread once nothing is left
- * to read, because it is the one item in the Article menu; a menu that was
- * opened over a row to read it off is not that.
- */
-static void HandleMarkAllReadOnly(void)
-{
-    if (GazetteFeedsUnreadCount() <= 0) {
-        return;
-    }
-    GazetteFeedsMarkAllRead();
-
-    if (GazetteCoreHideReadArticles()) {
-        GazetteUIViewChanged();
-    } else {
-        GazetteUIUpdate();
     }
 }
 
