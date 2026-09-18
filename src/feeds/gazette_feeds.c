@@ -70,6 +70,7 @@ static GazetteFetch      *gFetch;
 static GazetteRefreshState gState = kGazetteRefreshIdle;
 static long               gMaxArticles;
 static int                gCleared;       /* store emptied for this refresh */
+static int                gReceived;      /* articles this refresh has given */
 static char               gError[192];
 static long               gFetchedAt;
 
@@ -495,7 +496,12 @@ static int ArticleSink(const GazetteArticle *article, void *context)
         GazetteFeedsClear();
         gCurrentFeed = gPendingFeed;
         gCleared     = 1;
+        /* The title goes with the articles it named. If this feed's parse
+           yields none, the cache is written with an empty one and the
+           header falls back to the sidebar's name — not the last feed's. */
+        gFeedTitle[0] = '\0';
     }
+    gReceived++;
 
     if (gArticleCount >= kGazetteMaxArticles ||
         (gMaxArticles > 0 && gArticleCount >= gMaxArticles)) {
@@ -580,6 +586,7 @@ int GazetteFeedsRefreshStart(int feedIndex, const char *url, long maxArticles,
     ReleaseRefresh();
     gError[0] = '\0';
     gCleared  = 0;
+    gReceived = 0;
     gMaxArticles = maxArticles;
     gPendingFeed = feedIndex;
     gRefreshHome[0] = '\0';
@@ -659,7 +666,14 @@ GazetteRefreshState GazetteFeedsRefreshPump(void)
               GazetteFeedParserLink(gParser),
               strlen(GazetteFeedParserLink(gParser)));
 
-    if (gArticleCount == 0) {
+    /*
+     * Judged by what *this* fetch gave, not by what the store holds: the
+     * store is not cleared until the first new article arrives, so after a
+     * parse that produced nothing it is still full of the previous feed's
+     * articles — and gArticleCount == 0 would have said all was well and
+     * written them into this feed's cache under this feed's address.
+     */
+    if (gReceived == 0) {
         int status = GazetteFetchStatus(gFetch);
 
         if (status != 200) {
