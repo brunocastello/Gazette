@@ -140,6 +140,22 @@ typedef struct {
     int  hideReadFeeds;
     int  hideSidebar;
     int  hideToolbar;
+
+    /*
+     * Where the window stood when Gazette last quit, and how wide its
+     * columns were. The content rectangle in global coordinates; a zero
+     * width means no window has been remembered yet and it opens where it
+     * always has. Whether the rectangle still fits is the window's question
+     * rather than this file's: the screen the file was written on need not
+     * be the screen it is read on, and a window that comes back off the
+     * edge of a smaller one is a window nobody can reach.
+     */
+    long windowLeft;
+    long windowTop;
+    long windowWidth;
+    long windowHeight;
+    long sidebarWidth;      /* 0 = the window's own default */
+    long listWidth;         /* the headline column, divider to divider */
 } GazettePrefs;
 
 /* Populate p with Gazette's out-of-the-box configuration: one Google News

@@ -258,7 +258,43 @@ void GazettePrefsSetDefaults(GazettePrefs *p)
     p->hideSidebar      = 0;
     p->hideToolbar      = 0;
 
+    /* No window remembered, no column widths: the window's own numbers. */
+    p->windowLeft   = 0;
+    p->windowTop    = 0;
+    p->windowWidth  = 0;
+    p->windowHeight = 0;
+    p->sidebarWidth = 0;
+    p->listWidth    = 0;
+
     GazettePrefsAddFeed(p, kStarterFeedURL, kStarterFeedTitle, -1);
+}
+
+/*
+ * Up to n decimal numbers off one value, separated by spaces: "40 48 620 420"
+ * is a rectangle a person can read, where four keys would be four lines to
+ * keep in step. Returns how many were found; out beyond that is untouched.
+ */
+static int ParseNums(const char *value, long *out, int n)
+{
+    const char *s = value;
+    int         got = 0;
+
+    while (got < n) {
+        const char *start;
+
+        while (*s == ' ' || *s == '\t') {
+            s++;
+        }
+        if (*s == '\0') {
+            break;
+        }
+        start = s;
+        while (*s != '\0' && *s != ' ' && *s != '\t') {
+            s++;
+        }
+        out[got++] = gz_parse_dec(start, (size_t)(s - start), 0);
+    }
+    return got;
 }
 
 /* ------------------------------------------------------------------ */
@@ -999,6 +1035,26 @@ int GazettePrefsParse(const char *text, size_t len, GazettePrefs *p)
     p->hideToolbar      = gz_prefs_get_num(text, len, "hide-toolbar",
                                            p->hideToolbar) ? 1 : 0;
 
+    /* The window's rectangle is all four numbers or nothing: three of them
+       would place a window nobody described. */
+    {
+        char value[64];
+        long nums[4];
+
+        if (gz_prefs_get(text, len, "window", value, sizeof value) &&
+            ParseNums(value, nums, 4) == 4 && nums[2] > 0 && nums[3] > 0) {
+            p->windowLeft   = nums[0];
+            p->windowTop    = nums[1];
+            p->windowWidth  = nums[2];
+            p->windowHeight = nums[3];
+        }
+        if (gz_prefs_get(text, len, "columns", value, sizeof value) &&
+            ParseNums(value, nums, 2) == 2) {
+            p->sidebarWidth = nums[0] > 0 ? nums[0] : 0;
+            p->listWidth    = nums[1] > 0 ? nums[1] : 0;
+        }
+    }
+
     if (p->refreshMinutes < 0) {
         p->refreshMinutes = 0;
     }
@@ -1195,6 +1251,41 @@ size_t GazettePrefsSerialize(const GazettePrefs *p, char *out, size_t cap)
     Append(out, cap, &len, "hide-toolbar       = ");
     AppendNum(out, cap, &len, p->hideToolbar ? 1 : 0);
     Append(out, cap, &len, "\r\r");
+
+    /* Where the window was. Written only once there is one to write: a file
+       saved before the window ever moved says nothing about it, and the
+       window opens where it always has. */
+    {
+        int haveWindow  = (p->windowWidth > 0 && p->windowHeight > 0);
+        int haveColumns = (p->sidebarWidth > 0 && p->listWidth > 0);
+
+        if (haveWindow || haveColumns) {
+            Append(out, cap, &len,
+                   "# window = <left> <top> <width> <height>   "
+                   "columns = <sidebar> <headlines>\r");
+        }
+        if (haveWindow) {
+            Append(out, cap, &len, "window  = ");
+            AppendNum(out, cap, &len, p->windowLeft);
+            Append(out, cap, &len, " ");
+            AppendNum(out, cap, &len, p->windowTop);
+            Append(out, cap, &len, " ");
+            AppendNum(out, cap, &len, p->windowWidth);
+            Append(out, cap, &len, " ");
+            AppendNum(out, cap, &len, p->windowHeight);
+            Append(out, cap, &len, "\r");
+        }
+        if (haveColumns) {
+            Append(out, cap, &len, "columns = ");
+            AppendNum(out, cap, &len, p->sidebarWidth);
+            Append(out, cap, &len, " ");
+            AppendNum(out, cap, &len, p->listWidth);
+            Append(out, cap, &len, "\r");
+        }
+        if (haveWindow || haveColumns) {
+            Append(out, cap, &len, "\r");
+        }
+    }
 
     Append(out, cap, &len,
            "# feed = <url> | <title> | <home page>   "

@@ -364,6 +364,8 @@ static void TestPrefsModel(void)
     CheckLong("nor are read feeds", p.hideReadFeeds, 0);
     CheckLong("nor is the sidebar", p.hideSidebar, 0);
     CheckLong("nor is the toolbar", p.hideToolbar, 0);
+    CheckLong("no window is remembered by default", p.windowWidth, 0);
+    CheckLong("nor a sidebar width", p.sidebarWidth, 0);
     CheckTrue("the default feed is Google News",
               strstr(p.feeds[0].url, "news.google.com") != NULL);
     CheckTrue("the default feed is enabled", p.feeds[0].enabled);
@@ -484,6 +486,32 @@ static void TestPrefsParse(void)
               GazettePrefsFindFeed(&p, "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"),
               -1);
 
+    /* Where the window was: four numbers, or the line says nothing. A
+       negative left is a second monitor to the left of the first. */
+    {
+        static const char window_ok[] =
+            "window = -200 60 700 480\rcolumns = 150 320\r";
+        static const char window_short[] = "window = 40 48 620\r";
+        static const char window_flat[]  =
+            "window = 40 48 0 420\rcolumns = 150 0\r";
+        GazettePrefs q;
+
+        GazettePrefsParse(window_ok, sizeof window_ok - 1, &q);
+        CheckLong("window's left", q.windowLeft, -200);
+        CheckLong("window's top", q.windowTop, 60);
+        CheckLong("window's width", q.windowWidth, 700);
+        CheckLong("window's height", q.windowHeight, 480);
+        CheckLong("sidebar width", q.sidebarWidth, 150);
+        CheckLong("headline column width", q.listWidth, 320);
+
+        GazettePrefsParse(window_short, sizeof window_short - 1, &q);
+        CheckLong("three numbers place no window", q.windowWidth, 0);
+
+        GazettePrefsParse(window_flat, sizeof window_flat - 1, &q);
+        CheckLong("a window with no width is no window", q.windowWidth, 0);
+        CheckLong("a column with no width has none", q.listWidth, 0);
+    }
+
     /* A settings-only file keeps the default feed list. */
     {
         static const char settings_only[] = "refresh-minutes = 60\r";
@@ -537,6 +565,12 @@ static void TestPrefsRoundTrip(void)
     before.hideReadFeeds    = 1;
     before.hideSidebar      = 1;
     before.hideToolbar      = 1;
+    before.windowLeft       = -12;
+    before.windowTop        = 48;
+    before.windowWidth      = 800;
+    before.windowHeight     = 560;
+    before.sidebarWidth     = 165;
+    before.listWidth        = 310;
 
     len = GazettePrefsSerialize(&before, text, sizeof text);
     CheckTrue("serialize writes something", len > 0);
@@ -564,6 +598,18 @@ static void TestPrefsRoundTrip(void)
               after.hideSidebar, before.hideSidebar);
     CheckLong("round-trip keeps hide-toolbar",
               after.hideToolbar, before.hideToolbar);
+    CheckLong("round-trip keeps the window's left",
+              after.windowLeft, before.windowLeft);
+    CheckLong("round-trip keeps the window's top",
+              after.windowTop, before.windowTop);
+    CheckLong("round-trip keeps the window's width",
+              after.windowWidth, before.windowWidth);
+    CheckLong("round-trip keeps the window's height",
+              after.windowHeight, before.windowHeight);
+    CheckLong("round-trip keeps the sidebar's width",
+              after.sidebarWidth, before.sidebarWidth);
+    CheckLong("round-trip keeps the headline column's width",
+              after.listWidth, before.listWidth);
 
     /* Serialising writes the enabled feeds and the disabled ones in file
        order, and parsing re-groups them the same way, so the two lists match

@@ -126,6 +126,22 @@ Boolean GazetteCoreHideToolbar(void);
 void    GazetteCoreSetHideToolbar(Boolean on);
 
 /*
+ * Where the window stood when Gazette last quit — its content rectangle in
+ * global coordinates — and how wide its two left-hand columns were. False
+ * when nothing has been remembered yet. The numbers come back as they were
+ * written; whether they still fit the screen is for the window to decide.
+ */
+Boolean GazetteCoreWindowBounds(long *left, long *top, long *width,
+                                long *height);
+Boolean GazetteCoreColumnWidths(long *sidebar, long *list);
+
+/* Record them. Each returns true when something actually changed, so the
+   caller can save only when there is something to save. */
+Boolean GazetteCoreSetWindowBounds(long left, long top, long width,
+                                   long height);
+Boolean GazetteCoreSetColumnWidths(long sidebar, long list);
+
+/*
  * Which sidebar lines are drawn. "Hide Read Feeds" is the only thing that
  * sets these, and it sets them from unread counts the engine does not keep —
  * so the window works them out and says so here, and the row model reads them

@@ -101,6 +101,7 @@ enum {
     kMinSidebar    = 120,
     kMinList       = 220,       /* divider to divider, the middle column      */
     kMinReader     = 200,       /* what is left for the article               */
+    kTitleBarHeight = 22,       /* a document window's, on Platinum           */
     kReaderMargin  = 6,         /* above the first line and below the last */
     /*
      * And down either side of it. Wider than kTextInset, which is what a list
@@ -5826,6 +5827,12 @@ void GazetteUIActivate(Boolean active)
     }
 }
 
+void GazetteUIColumnWidths(short *sidebar, short *list)
+{
+    *sidebar = gSidebarWidth;
+    *list    = gListWidth;
+}
+
 void GazetteUIResized(void)
 {
     Rect bounds;
@@ -6370,6 +6377,63 @@ static ControlRef MakeScroll(long reference)
                       kControlScrollBarProc, reference);
 }
 
+/*
+ * Where the window opens: where it stood last time, if that is still
+ * somewhere on the screen, and its usual place otherwise.
+ *
+ * The screen the preferences were written on need not be the one they are
+ * read on — a PowerBook comes home to a monitor, a resolution changes — and
+ * a window whose title bar is off every screen is a window nobody can drag
+ * back. So the rectangle is cut down to the main screen first, and then the
+ * title bar is asked whether some real piece of it, thirty-two pixels or so,
+ * still falls on a screen; GetGrayRgn is every screen at once. A window that
+ * was on a second monitor that is no longer there fails that test and opens
+ * where a first run does.
+ */
+static void OpeningBounds(Rect *bounds)
+{
+    long  left, top, width, height;
+    Rect  screen, strip;
+    short mbar;
+
+    SetRect(bounds, 40, 48, 40 + kGazetteMinWindowWidth + 200,
+            48 + kGazetteMinWindowHeight + 160);
+
+    if (!GazetteCoreWindowBounds(&left, &top, &width, &height)) {
+        return;
+    }
+
+    screen = (*GetMainDevice())->gdRect;
+    mbar   = GetMBarHeight();
+
+    /* The size first: it need not be where it was to be as big as it was,
+       and a window larger than the screen it now finds itself on is cut
+       down to fit under the menu bar. */
+    if (width > screen.right - screen.left) {
+        width = screen.right - screen.left;
+    }
+    if (height > screen.bottom - screen.top - mbar - kTitleBarHeight) {
+        height = screen.bottom - screen.top - mbar - kTitleBarHeight;
+    }
+    if (width < kGazetteMinWindowWidth) {
+        width = kGazetteMinWindowWidth;
+    }
+    if (height < kGazetteMinWindowHeight) {
+        height = kGazetteMinWindowHeight;
+    }
+
+    /* Then the place. A title bar that is off the screen cannot be grabbed,
+       and this asks for enough of it to grab. */
+    SetRect(&strip, (short)(left + 32), (short)(top - kTitleBarHeight),
+            (short)(left + width - 32), (short)(top - 2));
+    if (strip.right <= strip.left || !RectInRgn(&strip, GetGrayRgn())) {
+        return;
+    }
+
+    SetRect(bounds, (short)left, (short)top, (short)(left + width),
+            (short)(top + height));
+}
+
 Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
                       GazetteUIArticleChosen onArticleChosen,
                       GazetteUIGroupChosen onGroupChosen,
@@ -6379,6 +6443,7 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
     OSStatus         err;
     Rect             bounds;
     WindowAttributes attrs;
+    long             sidebar, list;
 
     if (gWindow != NULL) {
         return true;
@@ -6390,7 +6455,15 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
     gOnArticleChosen = onArticleChosen;
     gOnGroupChosen   = onGroupChosen;
 
-    SetRect(&bounds, 40, 48, 40 + 620, 48 + 420);
+    OpeningBounds(&bounds);
+
+    /* The columns as they were left. Layout clamps them to the window they
+       find themselves in, so a width saved from a wider window comes back
+       as wide as this one allows. */
+    if (GazetteCoreColumnWidths(&sidebar, &list)) {
+        gSidebarWidth = (short)sidebar;
+        gListWidth    = (short)list;
+    }
 
     /* No kWindowStandardHandlerAttribute: that installs the Carbon Event
        Manager's standard handler, which would compete with the

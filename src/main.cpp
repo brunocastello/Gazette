@@ -112,6 +112,7 @@ static void    HandleHideReadArticles(void);
 static void    HandleHideReadFeeds(void);
 static void    HandleHideSidebar(void);
 static void    HandleHideToolbar(void);
+static void    RememberWindowLayout(void);
 static void    HandleSearch(void);
 static void    ToolbarCommand(int command);
 static void    HandleFind(void);
@@ -803,6 +804,8 @@ static void HandleMouseDown(const EventRecord *event)
                     break;
                 }
                 GazetteUIClick(local, event->modifiers);
+                /* A click may have been a divider drag. */
+                RememberWindowLayout();
             }
             break;
 
@@ -810,6 +813,7 @@ static void HandleMouseDown(const EventRecord *event)
             /* A NULL bounding box means "the whole desktop"; that is legal
                from CarbonLib 1.0 forward. */
             DragWindow(window, event->where, nil);
+            RememberWindowLayout();
             break;
 
         case inGrow: {
@@ -818,12 +822,14 @@ static void HandleMouseDown(const EventRecord *event)
             Rect limits;
             long newSize;
 
-            SetRect(&limits, 420, 260, 32767, 32767);
+            SetRect(&limits, kGazetteMinWindowWidth, kGazetteMinWindowHeight,
+                    32767, 32767);
             newSize = GrowWindow(window, event->where, &limits);
             if (newSize != 0) {
                 SizeWindow(window, (short)(newSize & 0xFFFF),
                            (short)(newSize >> 16), true);
                 GazetteUIResized();
+                RememberWindowLayout();
             }
             break;
         }
@@ -833,6 +839,7 @@ static void HandleMouseDown(const EventRecord *event)
             if (TrackBox(window, event->where, part)) {
                 ZoomWindow(window, part, true);
                 GazetteUIResized();
+                RememberWindowLayout();
             }
             break;
 
@@ -1154,6 +1161,44 @@ static void HandleAbout(void)
 static void HandleQuit(void)
 {
     gDone = true;
+}
+
+/*
+ * Note where the window stands and where its dividers are, so that the next
+ * launch opens it the same way. Called after anything that can have moved
+ * either — a drag, a grow, a zoom, a click that turned out to be a divider
+ * drag. Saves at once, like everything else here, but only when a number
+ * has actually changed: most clicks move nothing, and cost nothing here.
+ */
+static void RememberWindowLayout(void)
+{
+    WindowRef window = GazetteUIWindow();
+    Rect      bounds;
+    short     sidebar, list;
+    Boolean   changed = false;
+
+    if (window == nil) {
+        return;
+    }
+
+    /* The content rectangle, in global coordinates — what CreateNewWindow
+       takes back on the next launch. */
+    if (GetWindowBounds(window, kWindowContentRgn, &bounds) == noErr) {
+        if (GazetteCoreSetWindowBounds(bounds.left, bounds.top,
+                                       bounds.right - bounds.left,
+                                       bounds.bottom - bounds.top)) {
+            changed = true;
+        }
+    }
+
+    GazetteUIColumnWidths(&sidebar, &list);
+    if (GazetteCoreSetColumnWidths(sidebar, list)) {
+        changed = true;
+    }
+
+    if (changed) {
+        GazetteCoreSavePrefs();
+    }
 }
 
 /* ------------------------------------------------------------------ */

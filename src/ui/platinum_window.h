@@ -84,6 +84,16 @@ void GazetteUIUpdate(void);
 /* Re-lay-out after a resize or a zoom, and redraw. */
 void GazetteUIResized(void);
 
+/* How wide the sidebar and the headline column are, as the dividers stand.
+   The shell reads these to remember them; see RememberWindowLayout there. */
+void GazetteUIColumnWidths(short *sidebar, short *list);
+
+/* The smallest the window may be grown to. */
+enum {
+    kGazetteMinWindowWidth  = 420,
+    kGazetteMinWindowHeight = 260
+};
+
 void GazetteUIActivate(Boolean active);
 
 /* A click in the content region, in local coordinates. */

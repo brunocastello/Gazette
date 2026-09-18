@@ -330,6 +330,65 @@ void GazetteCoreSetHideToolbar(Boolean on)
 }
 
 /* ------------------------------------------------------------------ */
+/* Where the window was                                                */
+/* ------------------------------------------------------------------ */
+
+Boolean GazetteCoreWindowBounds(long *left, long *top, long *width,
+                                long *height)
+{
+    if (!gInited || gPrefs.windowWidth <= 0 || gPrefs.windowHeight <= 0) {
+        return false;
+    }
+    *left   = gPrefs.windowLeft;
+    *top    = gPrefs.windowTop;
+    *width  = gPrefs.windowWidth;
+    *height = gPrefs.windowHeight;
+    return true;
+}
+
+Boolean GazetteCoreColumnWidths(long *sidebar, long *list)
+{
+    if (!gInited || gPrefs.sidebarWidth <= 0 || gPrefs.listWidth <= 0) {
+        return false;
+    }
+    *sidebar = gPrefs.sidebarWidth;
+    *list    = gPrefs.listWidth;
+    return true;
+}
+
+Boolean GazetteCoreSetWindowBounds(long left, long top, long width,
+                                   long height)
+{
+    if (!gInited || width <= 0 || height <= 0) {
+        return false;
+    }
+    if (gPrefs.windowLeft == left && gPrefs.windowTop == top &&
+        gPrefs.windowWidth == width && gPrefs.windowHeight == height) {
+        return false;
+    }
+    gPrefs.windowLeft   = left;
+    gPrefs.windowTop    = top;
+    gPrefs.windowWidth  = width;
+    gPrefs.windowHeight = height;
+    gPrefsDirty         = true;
+    return true;
+}
+
+Boolean GazetteCoreSetColumnWidths(long sidebar, long list)
+{
+    if (!gInited || sidebar <= 0 || list <= 0) {
+        return false;
+    }
+    if (gPrefs.sidebarWidth == sidebar && gPrefs.listWidth == list) {
+        return false;
+    }
+    gPrefs.sidebarWidth = sidebar;
+    gPrefs.listWidth    = list;
+    gPrefsDirty         = true;
+    return true;
+}
+
+/* ------------------------------------------------------------------ */
 /* Which sidebar lines are drawn                                       */
 /*                                                                     */
 /* Not preferences, so none of these marks the block dirty: they are a */
