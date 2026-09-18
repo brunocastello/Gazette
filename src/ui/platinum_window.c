@@ -545,6 +545,7 @@ static void DrawHeaderTitle(const Rect *r, const char *text,
 static void DrawReaderRule(void);
 static void DrawReaderPhotos(void);
 static void ForgetPhotos(void);
+static void PaintGrey(const Rect *r, short grey);
 static void ReaderHiliteColours(void);
 static void GreyPen(short grey);
 static void SyncSidebarRows(void);
