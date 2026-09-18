@@ -371,6 +371,24 @@ const char *GazetteExtractText(const GazetteExtract *e)
     return (e != NULL) ? e->scratch : "";
 }
 
+int GazetteExtractPhotoCount(const GazetteExtract *e)
+{
+    return (e != NULL) ? e->photoCount : 0;
+}
+
+int GazetteExtractHasLead(const GazetteExtract *e)
+{
+    return (e != NULL && e->hasLead) ? 1 : 0;
+}
+
+const GazettePhotoRef *GazetteExtractPhoto(const GazetteExtract *e, int i)
+{
+    if (e == NULL || i < 0 || i >= e->photoCount) {
+        return NULL;
+    }
+    return &e->photos[i];
+}
+
 /* ------------------------------------------------------------------ */
 /* Output                                                              */
 /* ------------------------------------------------------------------ */
@@ -420,6 +438,225 @@ static void PutBreak(GazetteExtract *e)
 }
 
 /* ------------------------------------------------------------------ */
+/* Photos                                                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * What an <img> is when it is not a photograph: the site's logo, the
+ * author's avatar, a share button, a tracking pixel, the spinner a lazy
+ * loader shows first. Matched as substrings against the class, the source
+ * and the alt text, the way the unwanted blocks are.
+ */
+static const char *const kFurnitureWords[] = {
+    "icon", "logo", "avatar", "gravatar", "badge", "pixel", "spinner",
+    "loader", "loading", "placeholder", "sprite", "emoji", "button",
+    "tracking", "1x1", "spacer", "blank.", "transparent", "lazy.gif"
+};
+
+/* Photos[] from the article's block on: the lead stays, it is the page's. */
+static void ResetArticlePhotos(GazetteExtract *e)
+{
+    e->photoCount = e->hasLead ? 1 : 0;
+}
+
+static int PhotoRoom(const GazetteExtract *e)
+{
+    return e->photoCount < kGazetteMaxPhotos;
+}
+
+/* A URL is one Gazette can fetch and QuickTime can draw: absolute or
+   relative to the page, not inline data, not a vector. */
+static int PhotoURLUsable(const char *value, size_t len)
+{
+    if (len == 0 || len >= kGazettePhotoURLLen) {
+        return 0;
+    }
+    if (gz_starts_ci(value, len, "data:") || gz_starts_ci(value, len, "blob:") ||
+        gz_starts_ci(value, len, "javascript:")) {
+        return 0;
+    }
+    if (gz_contains_ci(value, len, ".svg")) {
+        return 0;
+    }
+    return 1;
+}
+
+static int SamePhotoURL(const char *a, const char *b, size_t bLen)
+{
+    return strlen(a) == bLen && memcmp(a, b, bLen) == 0;
+}
+
+/*
+ * The page's own choice of picture. og:image is what every news site sets
+ * for the link previews, and it is the editor's lead photo; twitter:image
+ * is the same thing said the other way, and stands in only until an
+ * og:image is met. Both live in <head>, which is otherwise skipped, so this
+ * runs before the skip bookkeeping gets a look at the tag.
+ */
+static void NoteMeta(GazetteExtract *e)
+{
+    const char *key;
+    size_t      keyLen;
+    const char *value;
+    size_t      valueLen;
+    int         isOg, isTwitter, isAlt;
+
+    if (!GazetteHtmlAttr(e->tag, e->tagLen, "property", &key, &keyLen) &&
+        !GazetteHtmlAttr(e->tag, e->tagLen, "name", &key, &keyLen)) {
+        return;
+    }
+    isOg      = (keyLen == 8  && gz_strnicmp(key, "og:image", 8) == 0);
+    isTwitter = (keyLen == 13 && gz_strnicmp(key, "twitter:image", 13) == 0);
+    isAlt     = (keyLen == 12 && gz_strnicmp(key, "og:image:alt", 12) == 0);
+    if (!isOg && !isTwitter && !isAlt) {
+        return;
+    }
+    if (!GazetteHtmlAttr(e->tag, e->tagLen, "content", &value, &valueLen)) {
+        return;
+    }
+
+    if (isAlt) {
+        if (e->hasLead) {
+            gz_copy_n(e->photos[0].alt, sizeof e->photos[0].alt,
+                      value, valueLen);
+        }
+        return;
+    }
+    if (!PhotoURLUsable(value, valueLen)) {
+        return;
+    }
+    if (e->hasLead && !(isOg && e->leadIsFallback)) {
+        return;                     /* the first og:image is the one */
+    }
+    if (!e->hasLead) {
+        /* Make room at the front. Head comes before body, so in practice
+           the list is empty here; the shuffle is for a page that is not
+           in practice. */
+        int i;
+
+        if (e->photoCount == kGazetteMaxPhotos) {
+            e->photoCount--;
+        }
+        for (i = e->photoCount; i > 0; i--) {
+            e->photos[i] = e->photos[i - 1];
+        }
+        e->photoCount++;
+        e->hasLead = 1;
+        e->photos[0].alt[0] = '\0';
+    }
+    gz_copy_n(e->photos[0].url, sizeof e->photos[0].url, value, valueLen);
+    e->leadIsFallback = isTwitter ? 1 : 0;
+}
+
+/* The first address in a srcset: "a.jpg 320w, b.jpg 640w" names the
+   smallest first, and the smallest is the one for a modem. */
+static void FirstOfSrcset(const char **value, size_t *len)
+{
+    size_t n = 0;
+
+    while (n < *len && (*value)[n] == ' ') {
+        n++;
+    }
+    *value += n;
+    *len   -= n;
+    n = 0;
+    while (n < *len && (*value)[n] != ' ' && (*value)[n] != ',') {
+        n++;
+    }
+    *len = n;
+}
+
+/*
+ * An <img> in the article. Its address may be in src, or — on a page that
+ * loads its pictures lazily — in one of the data- attributes the script
+ * would have copied into src, or in a srcset with no src at all. The
+ * furniture is turned away by its size and by its name, and what is left
+ * takes a marker in the text at the place it stood.
+ */
+static int NoteImage(GazetteExtract *e)
+{
+    /* The lazy ones first: where a page carries both, src is the grey
+       stand-in the script would have replaced. */
+    static const char *const kSources[] = {
+        "data-src", "data-lazy-src", "data-original", "src", "srcset",
+        "data-srcset"
+    };
+    static const char *const kNamed[] = { "class", "alt" };
+    const char *value = NULL;
+    size_t      valueLen = 0;
+    const char *other;
+    size_t      otherLen;
+    size_t      i;
+    int         k;
+
+    if (!PhotoRoom(e)) {
+        return 0;
+    }
+
+    for (i = 0; i < sizeof kSources / sizeof kSources[0]; i++) {
+        if (GazetteHtmlAttr(e->tag, e->tagLen, kSources[i],
+                            &value, &valueLen) && valueLen > 0) {
+            if (strstr(kSources[i], "srcset") != NULL) {
+                FirstOfSrcset(&value, &valueLen);
+            }
+            if (PhotoURLUsable(value, valueLen)) {
+                break;
+            }
+        }
+        value = NULL;
+    }
+    if (value == NULL) {
+        return 0;
+    }
+
+    /* Anything that says it is under a hundred pixels on a side is an
+       icon, whatever it calls itself. */
+    for (i = 0; i < 2; i++) {
+        if (GazetteHtmlAttr(e->tag, e->tagLen, i == 0 ? "width" : "height",
+                            &other, &otherLen)) {
+            long px = gz_parse_dec(other, otherLen, 0);
+
+            if (px > 0 && px < 100) {
+                return 0;
+            }
+        }
+    }
+
+    if (ValueHasAny(value, valueLen, kFurnitureWords,
+                    sizeof kFurnitureWords / sizeof kFurnitureWords[0])) {
+        return 0;
+    }
+    for (i = 0; i < sizeof kNamed / sizeof kNamed[0]; i++) {
+        if (GazetteHtmlAttr(e->tag, e->tagLen, kNamed[i], &other, &otherLen) &&
+            ValueHasAny(other, otherLen, kFurnitureWords,
+                        sizeof kFurnitureWords / sizeof kFurnitureWords[0])) {
+            return 0;
+        }
+    }
+
+    /* The lead again, or a picture the page repeats: once is enough. */
+    for (k = 0; k < e->photoCount; k++) {
+        if (SamePhotoURL(e->photos[k].url, value, valueLen)) {
+            return 0;
+        }
+    }
+
+    k = e->photoCount;
+    gz_copy_n(e->photos[k].url, sizeof e->photos[k].url, value, valueLen);
+    e->photos[k].alt[0] = '\0';
+    if (GazetteHtmlAttr(e->tag, e->tagLen, "alt", &other, &otherLen)) {
+        gz_copy_n(e->photos[k].alt, sizeof e->photos[k].alt, other, otherLen);
+    }
+    e->photoCount++;
+
+    /* A paragraph of its own, holding the marker and nothing else. */
+    PutBreak(e);
+    PutChar(e, (char)kGazettePhotoMarker);
+    PutBreak(e);
+    return 1;
+}
+
+/* ------------------------------------------------------------------ */
 /* Tags                                                                */
 /* ------------------------------------------------------------------ */
 
@@ -460,6 +697,12 @@ static void FinishTag(GazetteExtract *e)
         }
         /* Cannot happen for the names above; fall through rather than
            silently treating a script as prose. */
+    }
+
+    /* <head> is skipped, and the page's lead picture is named in it. */
+    if (!e->closing && strcmp(name, "meta") == 0) {
+        NoteMeta(e);
+        return;
     }
 
     if (e->skip[0] != '\0') {
@@ -504,6 +747,11 @@ static void FinishTag(GazetteExtract *e)
         gz_copy_n(e->focus, sizeof e->focus, name, strlen(name));
         e->focusDepth = 1;
         e->outLen     = 0;
+        ResetArticlePhotos(e);
+        return;
+    }
+
+    if (!e->closing && strcmp(name, "img") == 0 && NoteImage(e)) {
         return;
     }
 
@@ -662,5 +910,21 @@ size_t GazetteExtractFinish(GazetteExtract *e)
     len = gz_flatten_lines(e->scratch, len);
 
     e->textLen = len;
+
+    /* The captions are text too, and go the same way. The buffer is a
+       caption's length, which is nothing next to the two above. */
+    {
+        int i;
+
+        for (i = 0; i < e->photoCount; i++) {
+            char  *alt = e->photos[i].alt;
+            char   ascii[kGazettePhotoAltLen];
+            size_t n   = GazetteDecodeEntities(alt, strlen(alt));
+
+            n = gz_utf8_to_ascii(alt, n, ascii, sizeof ascii);
+            n = gz_flatten_ws(ascii, n);
+            gz_copy_n(alt, kGazettePhotoAltLen, ascii, n);
+        }
+    }
     return len;
 }

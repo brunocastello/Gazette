@@ -42,6 +42,7 @@
 #include "extract/gazette_extract.h"
 #include "feeds/gazette_feeds.h"
 #include "feeds/gazette_index.h"
+#include "feeds/gazette_photos.h"
 #include "portable/gazette_portable.h"
 
 #include <Appearance.h>
@@ -52,7 +53,12 @@
 #include <Events.h>   /* GetMouse and StillDown, for the toolbar's buttons */
 #include <Folders.h>   /* kOnSystemDisk, which GetIconRef wants */
 #include <Fonts.h>
+#include <Gestalt.h>            /* whether QuickTime is there at all */
 #include <Icons.h>
+#include <ImageCompression.h>   /* the Graphics Importers: a JPEG into a GWorld */
+#include <Movies.h>             /* EnterMovies, which the importers stand on */
+#include <QDOffscreen.h>
+#include <QuickTimeComponents.h> /* kQTFileTypeJPEG and its neighbours */
 #include <Lists.h>
 #include <Menus.h>
 #include <Quickdraw.h>
@@ -119,6 +125,16 @@ enum {
      * drawn in it — only its metrics are ever used.
      */
     kReaderRuleAir = 4,
+
+    /*
+     * A photograph in the article: as wide as the column up to this, and
+     * never taller than this, scaled down to fit and never up. 320 is what
+     * a news site serves to a phone, and on a 640-wide window's column it
+     * fills the width without dominating the page.
+     */
+    kPhotoMaxWidth  = 320,
+    kPhotoMaxHeight = 240,
+    kPhotoFrameGrey = 170,      /* the placeholder's edge */
 
     kMaxTitleLines = 3,         /* a headline wraps, but not without end   */
     kHeadlineLines = 2,         /* and in the list, always exactly two     */
@@ -436,6 +452,33 @@ static short gReaderGap  = 21;
    placed from. Zero when there is no article open. */
 static short gReaderBodyStart;
 
+/*
+ * The photographs, as they stand in the text on screen. Each takes a run of
+ * empty lines — TextEdit cannot hold a picture, so the article carries the
+ * space and ReaderDraw fills it, the way the rule above the body is drawn
+ * across an empty line — and remembers where that run starts, which is what
+ * TEGetPoint turns into a place on screen after any scroll.
+ *
+ * A decoded picture is kept across recompositions: the pane is composed
+ * again each time a picture lands, and a JPEG decoded on a G3 is not
+ * something to do three times over. It goes when the article does.
+ */
+typedef struct {
+    GWorldPtr world;            /* decoded at display size; NULL until then */
+    short     width;            /* of the world */
+    short     height;
+    Boolean   undrawable;       /* QuickTime could not read it; no space */
+    short     start;            /* offset of its first reserved line, or -1 */
+    short     lines;            /* how many it was given */
+    short     airAbove;         /* of those, how many before the picture */
+    Boolean   placeholder;      /* grey while it is still coming */
+    Boolean   captioned;        /* a line of alt text under it */
+} ReaderPhoto;
+
+static ReaderPhoto gPhotos[kGazetteMaxPhotos];
+static int         gPhotoArticle = -1;  /* whose the worlds are */
+static Boolean     gMoviesEntered;
+
 
 /*
  * The article, staged here and then handed to TextEdit, which keeps its own
@@ -500,6 +543,8 @@ static void DrawStatusText(void);
 static void DrawHeaderTitle(const Rect *r, const char *text,
                             const char *count);
 static void DrawReaderRule(void);
+static void DrawReaderPhotos(void);
+static void ForgetPhotos(void);
 static void ReaderHiliteColours(void);
 static void GreyPen(short grey);
 static void SyncSidebarRows(void);
@@ -1955,9 +2000,10 @@ static void ScrollReaderTo(short offset)
      * only the strip that has come into view — and it redraws it as text,
      * which the rule is not. So it goes back on afterwards: over the blitted
      * copy it is a no-op, and in the new strip it is the only thing that
-     * puts it there.
+     * puts it there. The pictures likewise.
      */
     DrawReaderRule();
+    DrawReaderPhotos();
 
     if (save != NULL) {
         SetClip(save);
@@ -1985,30 +2031,397 @@ static size_t AppendChar(size_t used, char c)
     return used;
 }
 
+/* ------------------------------------------------------------------ */
+/* Photographs                                                         */
+/* ------------------------------------------------------------------ */
+
+/* Whether QuickTime is installed. Every Mac OS 9 has it, but a Carbon
+   application is asked to look before it calls, and this is the look. */
+static Boolean HaveQuickTime(void)
+{
+    static Boolean checked, have;
+    long           version;
+
+    if (!checked) {
+        checked = true;
+        have    = (Gestalt(gestaltQuickTimeVersion, &version) == noErr &&
+                   version != 0);
+        if (have && !gMoviesEntered) {
+            gMoviesEntered = (EnterMovies() == noErr);
+            have           = gMoviesEntered;
+        }
+    }
+    return have;
+}
+
+/* The width a picture may be drawn at in the column as it stands. */
+static short PhotoColumnWidth(void)
+{
+    short width = (short)(gReaderRect.right - gReaderRect.left -
+                          2 * kReaderSide);
+
+    if (width > kPhotoMaxWidth) {
+        width = kPhotoMaxWidth;
+    }
+    if (width < 32) {
+        width = 32;
+    }
+    return width;
+}
+
+static void DisposePhotoWorld(ReaderPhoto *p)
+{
+    if (p->world != NULL) {
+        DisposeGWorld(p->world);
+        p->world = NULL;
+    }
+    p->width = p->height = 0;
+}
+
+/* The worlds go with the article they were decoded for. */
+static void ForgetPhotos(void)
+{
+    int i;
+
+    for (i = 0; i < kGazetteMaxPhotos; i++) {
+        DisposePhotoWorld(&gPhotos[i]);
+        gPhotos[i].undrawable = false;
+        gPhotos[i].start      = -1;
+        gPhotos[i].lines      = 0;
+    }
+    gPhotoArticle = -1;
+}
+
+/*
+ * Decode one picture into an offscreen world at the size it will be drawn.
+ * The Graphics Importer reads the bytes out of a Handle, scales as it
+ * decodes, and leaves pixels the pane can CopyBits at every redraw — which
+ * is the whole reason for decoding once rather than drawing the JPEG each
+ * time: a 2000-pixel photograph is a second's work on a G3, and CopyBits of
+ * a 300-pixel one is nothing.
+ */
+static Boolean DecodePhoto(ReaderPhoto *p, const char *bytes, long len)
+{
+    Handle                   h    = NULL;
+    GraphicsImportComponent  gi   = 0;
+    GWorldPtr                world = NULL;
+    Rect                     natural, dest;
+    OSType                   kind;
+    long                     w, hgt, maxW;
+    Boolean                  ok = false;
+
+    if (!HaveQuickTime() || bytes == NULL || len < 4) {
+        return false;
+    }
+    kind = ((unsigned char)bytes[0] == 0xFF) ? kQTFileTypeJPEG
+         : ((unsigned char)bytes[0] == 0x89) ? kQTFileTypePNG
+         :                                     kQTFileTypeGIF;
+
+    if (PtrToHand(bytes, &h, len) != noErr || h == NULL) {
+        return false;
+    }
+    if (OpenADefaultComponent(GraphicsImporterComponentType, kind, &gi) != noErr ||
+        gi == 0) {
+        DisposeHandle(h);
+        return false;
+    }
+
+    if (GraphicsImportSetDataHandle(gi, h) == noErr &&
+        GraphicsImportGetNaturalBounds(gi, &natural) == noErr) {
+        w    = natural.right - natural.left;
+        hgt  = natural.bottom - natural.top;
+        maxW = PhotoColumnWidth();
+
+        if (w > 0 && hgt > 0) {
+            /* Down to fit, never up: a small picture stays small. */
+            if (w > maxW) {
+                hgt = hgt * maxW / w;
+                w   = maxW;
+            }
+            if (hgt > kPhotoMaxHeight) {
+                w   = w * kPhotoMaxHeight / hgt;
+                hgt = kPhotoMaxHeight;
+            }
+            if (w < 1)   w = 1;
+            if (hgt < 1) hgt = 1;
+
+            SetRect(&dest, 0, 0, (short)w, (short)hgt);
+            if (NewGWorld(&world, 16, &dest, NULL, NULL, 0) == noErr &&
+                world != NULL) {
+                CGrafPtr  savePort;
+                GDHandle  saveDevice;
+
+                GetGWorld(&savePort, &saveDevice);
+                SetGWorld(world, NULL);
+                LockPixels(GetGWorldPixMap(world));
+                EraseRect(&dest);
+                (void)GraphicsImportSetGWorld(gi, world, NULL);
+                (void)GraphicsImportSetBoundsRect(gi, &dest);
+                (void)GraphicsImportSetQuality(gi, codecHighQuality);
+                ok = (GraphicsImportDraw(gi) == noErr);
+                UnlockPixels(GetGWorldPixMap(world));
+                SetGWorld(savePort, saveDevice);
+
+                if (ok) {
+                    p->world  = world;
+                    p->width  = (short)w;
+                    p->height = (short)hgt;
+                } else {
+                    DisposeGWorld(world);
+                }
+            }
+        }
+    }
+
+    CloseComponent(gi);
+    DisposeHandle(h);
+    return ok;
+}
+
+/*
+ * The size a picture takes on screen, whether it is here or not. While it is
+ * still coming the placeholder stands at the column's width and a photograph's
+ * proportion, so the page does not jump more than it must when the real one
+ * lands. Returns false when the slot takes no space at all: not coming, or
+ * QuickTime could not read it.
+ */
+static Boolean PhotoSize(int slot, short *width, short *height)
+{
+    ReaderPhoto *p = &gPhotos[slot];
+    const char  *bytes;
+    long         len;
+
+    if (p->undrawable) {
+        return false;
+    }
+    switch (GazettePhotosState(slot)) {
+        case kGazettePhotoLoaded:
+            if (p->world == NULL) {
+                bytes = GazettePhotosData(slot, &len);
+                if (!DecodePhoto(p, bytes, len)) {
+                    p->undrawable = true;
+                    return false;
+                }
+            }
+            *width         = p->width;
+            *height        = p->height;
+            p->placeholder = false;
+            return true;
+
+        case kGazettePhotoPending:
+            *width  = PhotoColumnWidth();
+            *height = (short)(*width * 2 / 3);
+            if (*height > kPhotoMaxHeight) {
+                *height = kPhotoMaxHeight;
+            }
+            p->placeholder = true;
+            return true;
+
+        default:
+            return false;
+    }
+}
+
+/*
+ * Reserve a picture's lines in the text: a run of empty paragraphs tall
+ * enough for it, its air, and a caption when it has one. airAbove is the
+ * empty lines before the picture itself — one for a picture in the flow,
+ * which wants the same gap a paragraph gets; none for the lead, which sits
+ * directly under the rule.
+ */
+static size_t AppendPhotoRun(size_t used, int slot, short height,
+                             short airAbove)
+{
+    ReaderPhoto *p     = &gPhotos[slot];
+    short        line  = gReaderLine > 0 ? gReaderLine : 1;
+    short        lines = (short)(airAbove + (height + line - 1) / line + 1);
+    short        i;
+
+    p->captioned = (GazettePhotosCaption(slot)[0] != '\0');
+    if (p->captioned) {
+        lines++;
+    }
+    p->start    = (short)used;
+    p->lines    = lines;
+    p->airAbove = airAbove;
+
+    for (i = 0; i < lines; i++) {
+        used = AppendChar(used, '\r');
+    }
+    return used;
+}
+
+/* Which slot the k-th marker in the text stands for: the markers count from
+   after the lead, which has no marker. */
+static int PhotoSlotForMarker(int k)
+{
+    int slot = k + (GazettePhotosHasLead() ? 1 : 0);
+
+    return (slot < GazettePhotosCount()) ? slot : -1;
+}
+
 /*
  * The body arrives with its paragraphs marked by newlines. TextEdit breaks
  * on carriage returns, and a paragraph wants a blank line after it, so each
  * run of newlines becomes exactly two — however many the extractor left.
+ *
+ * A paragraph that is only the photo marker is where a picture stood in the
+ * article. When the picture takes space it becomes its run of empty lines,
+ * with the blank line that would have separated the paragraphs folded into
+ * the run's air; when it does not — not coming, photos off, unreadable —
+ * the paragraph is dropped and the text closes over it.
  */
 static size_t AppendBody(size_t used, const char *body)
 {
-    const char *p = body;
+    const char *p       = body;
+    int         marker  = 0;
+    Boolean     first   = true;
+    Boolean     afterRun = false;
 
     while (*p != '\0') {
-        if (*p == '\n') {
-            while (*p == '\n') {
-                p++;
-            }
-            if (*p == '\0') {
-                break;
-            }
-            used = AppendChar(used, '\r');
-            used = AppendChar(used, '\r');
-            continue;
+        const char *end = p;
+
+        while (*end != '\0' && *end != '\n') {
+            end++;
         }
-        used = AppendChar(used, *p++);
+
+        if (end - p == 1 && *p == (char)kGazettePhotoMarker) {
+            int   slot = PhotoSlotForMarker(marker++);
+            short w, h;
+
+            if (slot >= 0 && PhotoSize(slot, &w, &h)) {
+                if (!first && !afterRun) {
+                    used = AppendChar(used, '\r');   /* ends the paragraph */
+                }
+                used     = AppendPhotoRun(used, slot, h, first ? 0 : 1);
+                first    = false;
+                afterRun = true;
+            }
+        } else if (end > p) {
+            if (!first && !afterRun) {
+                used = AppendChar(used, '\r');
+                used = AppendChar(used, '\r');
+            }
+            used     = AppendText(used, p, (size_t)(end - p));
+            first    = false;
+            afterRun = false;
+        }
+
+        p = end;
+        while (*p == '\n') {
+            p++;
+        }
     }
     return used;
+}
+
+/*
+ * Paint the pictures over their reserved lines. TEGetPoint answers with the
+ * bottom of the line a character is on, so the run's first line begins one
+ * line above that, and the picture begins airAbove lines further down. A
+ * picture still coming is a grey field with a darker edge; a picture here is
+ * its world, copied at its own size, or shrunk to the column if the column
+ * has since been dragged narrower than it.
+ */
+static void DrawReaderPhotos(void)
+{
+    Rect  view;
+    int   i;
+
+    if (gReaderTE == NULL || GazettePhotosArticle() < 0 ||
+        GazettePhotosArticle() != gSelectedArticle) {
+        return;
+    }
+    view = (**gReaderTE).viewRect;
+
+    for (i = 0; i < kGazetteMaxPhotos; i++) {
+        ReaderPhoto *p = &gPhotos[i];
+        Point        where;
+        Rect         box;
+        short        top, w, h, room;
+
+        if (p->start < 0 || p->lines <= 0) {
+            continue;
+        }
+        where = TEGetPoint(p->start, gReaderTE);
+        top   = (short)(where.v - gReaderLine + p->airAbove * gReaderLine);
+
+        if (p->placeholder || p->world == NULL) {
+            if (!p->placeholder) {
+                continue;
+            }
+            w = PhotoColumnWidth();
+            h = (short)(w * 2 / 3);
+            if (h > kPhotoMaxHeight) {
+                h = kPhotoMaxHeight;
+            }
+        } else {
+            w = p->width;
+            h = p->height;
+        }
+
+        /* The column may have narrowed since the picture was decoded. */
+        room = (short)(view.right - view.left);
+        if (w > room && w > 0) {
+            h = (short)((long)h * room / w);
+            w = room;
+        }
+
+        SetRect(&box, view.left, top, (short)(view.left + w),
+                (short)(top + h));
+        if (box.bottom <= view.top || box.top >= view.bottom) {
+            continue;                       /* scrolled out of the pane */
+        }
+
+        if (p->placeholder) {
+            PaintGrey(&box, kBandGrey);
+            GreyPen(kPhotoFrameGrey);
+            FrameRect(&box);
+        } else {
+            Rect     src;
+            RGBColor black = { 0, 0, 0 };
+            RGBColor white = { 0xFFFF, 0xFFFF, 0xFFFF };
+
+            SetRect(&src, 0, 0, p->width, p->height);
+            /* Black on white, or CopyBits colourises the picture with
+               whatever the port's colours were last set to. */
+            RGBForeColor(&black);
+            RGBBackColor(&white);
+            LockPixels(GetGWorldPixMap(p->world));
+            CopyBits(GetPortBitMapForCopyBits(p->world),
+                     GetPortBitMapForCopyBits(GetWindowPort(gWindow)),
+                     &src, &box, srcCopy, NULL);
+            UnlockPixels(GetGWorldPixMap(p->world));
+        }
+
+        /* The caption, on the line under it, in the byline's face. */
+        if (p->captioned) {
+            const char *alt = GazettePhotosCaption(i);
+            RgnHandle   clip = NewRgn();
+            Rect        capBox;
+            FontInfo    fi;
+            RGBColor    black = { 0, 0, 0 };
+
+            SetRect(&capBox, view.left, (short)(top + h),
+                    (short)(view.left + w), (short)(top + h + gReaderLine));
+            if (clip != NULL) {
+                GetClip(clip);
+            }
+            ClipRect(&capBox);
+            TextFont(gViewFont);
+            TextSize(gLabelSize);
+            TextFace(normal);
+            GetFontInfo(&fi);
+            RGBForeColor(&black);
+            MoveTo(view.left, (short)(top + h + fi.ascent + 2));
+            DrawText(alt, 0, (short)strlen(alt));
+            if (clip != NULL) {
+                SetClip(clip);
+                DisposeRgn(clip);
+            }
+        }
+    }
+    ForeColor(blackColor);
 }
 
 /* One of the three weights the pane has always had, applied to a range that
@@ -2069,6 +2482,21 @@ static void SetReaderText(void)
     gArticleTitle[0]  = '\0';
     gArticleByline[0] = '\0';
     gReaderBodyStart  = 0;
+
+    /* The pictures' places are composed afresh below; the decoded ones are
+       kept only while they are still this article's. */
+    if (gPhotoArticle != GazettePhotosArticle()) {
+        ForgetPhotos();
+        gPhotoArticle = GazettePhotosArticle();
+    }
+    {
+        int i;
+
+        for (i = 0; i < kGazetteMaxPhotos; i++) {
+            gPhotos[i].start = -1;
+            gPhotos[i].lines = 0;
+        }
+    }
 
     a = GazetteFeedsArticleAt(gSelectedArticle);
     if (a == NULL) {
@@ -2147,6 +2575,18 @@ static void SetReaderText(void)
         used     = AppendChar(used, '\r');
         gReaderBodyStart = (short)used;
         gap              = used;
+
+        /* The lead photograph, under the rule and above the first line —
+           where a newspaper puts it. Only with the page's own text: the
+           pictures are the page's, and belong over its words. */
+        if (body != NULL && GazettePhotosArticle() == gSelectedArticle &&
+            GazettePhotosHasLead()) {
+            short w, h;
+
+            if (PhotoSize(0, &w, &h)) {
+                used = AppendPhotoRun(used, 0, h, 0);
+            }
+        }
 
         if (body == NULL) {
             static const char kWaiting[] = "Reading the full article\311";
@@ -3526,6 +3966,7 @@ static pascal void ReaderDraw(ControlRef control, SInt16 part)
         TEUpdate(&view, gReaderTE);
     }
     DrawReaderRule();
+    DrawReaderPhotos();
 
     if (clip != NULL) {
         SetClip(clip);
@@ -5919,6 +6360,49 @@ void GazetteUIArticleTextChanged(void)
     }
 }
 
+/*
+ * A picture has landed, or has turned out not to be coming. The article is
+ * composed again with the space it now needs, keeping its place: the reader
+ * may be halfway down it, and a photograph arriving is no reason to send
+ * them back to the top.
+ */
+void GazetteUIPhotosChanged(void)
+{
+    GrafPtr savePort;
+    Rect    view;
+    short   was, max;
+
+    if (gWindow == NULL || gReaderTE == NULL) {
+        return;
+    }
+    if (GazettePhotosArticle() != gSelectedArticle) {
+        return;
+    }
+
+    GetPort(&savePort);
+    SetPortWindowPort(gWindow);
+
+    was = ReaderOffset();
+    SetReaderText();
+
+    max = ReaderMaxOffset();
+    if (was > max) {
+        was = max;
+    }
+    if (was < 0) {
+        was = 0;
+    }
+    ReaderRects(&view);
+    (**gReaderTE).destRect.top = (short)(ReaderTextTop(&view) - was);
+    SyncReaderScroll();
+
+    SetPort(savePort);
+    DrawReader();
+    if (gReaderScroll != NULL) {
+        Draw1Control(gReaderScroll);
+    }
+}
+
 Boolean GazetteUIReaderHasSelection(void)
 {
     if (gReaderTE == NULL) {
@@ -6634,6 +7118,12 @@ void GazetteUIClose(void)
     gReaderCtl         = NULL;
     gFocusPane         = NULL;
     gRootControl       = NULL;
+
+    ForgetPhotos();
+    if (gMoviesEntered) {
+        ExitMovies();
+        gMoviesEntered = false;
+    }
 
     if (gReaderTE != NULL) {
         TEDispose(gReaderTE);

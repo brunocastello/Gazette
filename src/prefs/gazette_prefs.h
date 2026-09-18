@@ -140,6 +140,7 @@ typedef struct {
     int  hideReadFeeds;
     int  hideSidebar;
     int  hideToolbar;
+    int  showPhotos;        /* the pictures in an article; off for a modem */
 
     /*
      * Where the window stood when Gazette last quit, and how wide its

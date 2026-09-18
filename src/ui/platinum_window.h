@@ -152,6 +152,10 @@ void GazetteUIArticlesChanged(void);
  */
 void GazetteUIArticleTextChanged(void);
 
+/* A photograph has landed or been given up on: the article is composed
+   again with the space it needs, keeping the reader's place. */
+void GazetteUIPhotosChanged(void);
+
 /* Which article the reader pane is showing, or -1. */
 int GazetteUISelectedArticle(void);
 

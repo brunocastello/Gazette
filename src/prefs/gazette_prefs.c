@@ -257,6 +257,7 @@ void GazettePrefsSetDefaults(GazettePrefs *p)
     p->hideReadFeeds    = 0;
     p->hideSidebar      = 0;
     p->hideToolbar      = 0;
+    p->showPhotos       = 1;
 
     /* No window remembered, no column widths: the window's own numbers. */
     p->windowLeft   = 0;
@@ -1034,6 +1035,8 @@ int GazettePrefsParse(const char *text, size_t len, GazettePrefs *p)
                                            p->hideSidebar) ? 1 : 0;
     p->hideToolbar      = gz_prefs_get_num(text, len, "hide-toolbar",
                                            p->hideToolbar) ? 1 : 0;
+    p->showPhotos       = gz_prefs_get_num(text, len, "show-photos",
+                                           p->showPhotos) ? 1 : 0;
 
     /* The window's rectangle is all four numbers or nothing: three of them
        would place a window nobody described. */
@@ -1250,6 +1253,10 @@ size_t GazettePrefsSerialize(const GazettePrefs *p, char *out, size_t cap)
 
     Append(out, cap, &len, "hide-toolbar       = ");
     AppendNum(out, cap, &len, p->hideToolbar ? 1 : 0);
+    Append(out, cap, &len, "\r");
+
+    Append(out, cap, &len, "show-photos        = ");
+    AppendNum(out, cap, &len, p->showPhotos ? 1 : 0);
     Append(out, cap, &len, "\r\r");
 
     /* Where the window was. Written only once there is one to write: a file

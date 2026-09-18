@@ -82,6 +82,12 @@ jobs:
           test -f "$RINCLUDES/Dialogs.r"
           test -f "$RINCLUDES/Processes.r"
 
+          # The photographs link against QuickTimeLib; the staging script
+          # makes an import library from Apple's stub for every library it
+          # finds, and this is where it puts them.
+          echo "Import libraries:"
+          ls "$TOOLCHAIN/powerpc-apple-macos/lib" | grep -i 'QuickTime\|CarbonLib' || true
+
           # Retro68's own Rez templates must survive alongside Apple's RIncludes;
           # add_application() rezzes the app against RetroCarbonAPPL.r.
           echo "Retro68 Rez templates:"

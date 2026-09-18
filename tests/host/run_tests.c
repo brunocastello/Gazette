@@ -364,6 +364,7 @@ static void TestPrefsModel(void)
     CheckLong("nor are read feeds", p.hideReadFeeds, 0);
     CheckLong("nor is the sidebar", p.hideSidebar, 0);
     CheckLong("nor is the toolbar", p.hideToolbar, 0);
+    CheckLong("photos are shown by default", p.showPhotos, 1);
     CheckLong("no window is remembered by default", p.windowWidth, 0);
     CheckLong("nor a sidebar width", p.sidebarWidth, 0);
     CheckTrue("the default feed is Google News",
@@ -565,6 +566,7 @@ static void TestPrefsRoundTrip(void)
     before.hideReadFeeds    = 1;
     before.hideSidebar      = 1;
     before.hideToolbar      = 1;
+    before.showPhotos       = 0;
     before.windowLeft       = -12;
     before.windowTop        = 48;
     before.windowWidth      = 800;
@@ -598,6 +600,8 @@ static void TestPrefsRoundTrip(void)
               after.hideSidebar, before.hideSidebar);
     CheckLong("round-trip keeps hide-toolbar",
               after.hideToolbar, before.hideToolbar);
+    CheckLong("round-trip keeps show-photos",
+              after.showPhotos, before.showPhotos);
     CheckLong("round-trip keeps the window's left",
               after.windowLeft, before.windowLeft);
     CheckLong("round-trip keeps the window's top",
@@ -784,6 +788,13 @@ static void TestURLResolve(void)
        ending attached. */
     CheckResolve("https://example.com/x", "/y\r\n", "https://example.com/y");
     CheckResolve("https://example.com/x", "  /y  ", "https://example.com/y");
+
+    /* Scheme-relative: the base's scheme, the reference's host. The base's
+       port does not come along — it belongs to the base's host. */
+    CheckResolve("https://example.com:8443/a/b", "//cdn.example/p.jpg",
+                 "https://cdn.example/p.jpg");
+    CheckResolve("http://example.com/a", "//cdn.example/p.jpg",
+                 "http://cdn.example/p.jpg");
 
     /* A non-default port is carried across a same-origin redirect, and shows
        up again when the URL is printed. */
@@ -2369,6 +2380,92 @@ static void TestExtractTags(void)
     CheckLong("nor does an empty name", GazetteHtmlIsBlockTag(""), 0);
 }
 
+/* The pictures a page carries, and the markers that place them. */
+static void TestExtractPhotos(void)
+{
+    static GazetteExtract e;
+    const char *text;
+
+    /* The lead from <head>, which is otherwise skipped whole; the article's
+       own <img> after it, with a paragraph of its own in the text. */
+    text = Extract(&e,
+                   "<html><head><title>T</title>"
+                   "<meta property=\"og:image\" content=\"https://s.example/lead.jpg\">"
+                   "<meta property=\"og:image:alt\" content=\"The lead &amp; more\">"
+                   "</head><body><article>"
+                   "<p>First.</p>"
+                   "<img src=\"/pics/one.jpg\" alt=\"A caf\xc3\xa9 at dusk\">"
+                   "<p>Second.</p></article></body></html>", 0);
+    CheckStr("the marker takes a paragraph of its own", text,
+             "First.\n\001\nSecond.");
+    CheckLong("two photos", GazetteExtractPhotoCount(&e), 2);
+    CheckTrue("the first is the lead", GazetteExtractHasLead(&e));
+    CheckStr("the lead's address", GazetteExtractPhoto(&e, 0)->url,
+             "https://s.example/lead.jpg");
+    CheckStr("the lead's caption is decoded", GazetteExtractPhoto(&e, 0)->alt,
+             "The lead & more");
+    CheckStr("the article's photo as the page wrote it",
+             GazetteExtractPhoto(&e, 1)->url, "/pics/one.jpg");
+    CheckStr("its caption is transliterated", GazetteExtractPhoto(&e, 1)->alt,
+             "A cafe at dusk");
+
+    /* twitter:image stands in until og:image is met, whichever order. */
+    Extract(&e, "<head><meta name=\"twitter:image\" content=\"https://s/t.jpg\">"
+                "<meta property=\"og:image\" content=\"https://s/og.jpg\"></head>"
+                "<body><p>Enough text to count, one hopes.</p></body>", 0);
+    CheckStr("og:image outranks twitter:image",
+             GazetteExtractPhoto(&e, 0)->url, "https://s/og.jpg");
+    Extract(&e, "<head><meta property=\"og:image\" content=\"https://s/og.jpg\">"
+                "<meta name=\"twitter:image\" content=\"https://s/t.jpg\"></head>"
+                "<body><p>Text.</p></body>", 0);
+    CheckStr("in either order", GazetteExtractPhoto(&e, 0)->url,
+             "https://s/og.jpg");
+    CheckLong("and is one photo, not two", GazetteExtractPhotoCount(&e), 1);
+
+    /* The furniture: named, sized, inline, vector, or the lead again. */
+    text = Extract(&e,
+                   "<head><meta property=\"og:image\" content=\"https://s/og.jpg\"></head>"
+                   "<body><article>"
+                   "<img src=\"https://s/logo.png\">"
+                   "<img class=\"author-avatar\" src=\"https://s/me.jpg\">"
+                   "<img src=\"https://s/px.gif\" width=\"1\" height=\"1\">"
+                   "<img src=\"data:image/gif;base64,R0lGOD\">"
+                   "<img src=\"https://s/chart.svg\">"
+                   "<img src=\"https://s/og.jpg\">"
+                   "<p>Text.</p></article></body>", 0);
+    CheckLong("none of it is a photo", GazetteExtractPhotoCount(&e), 1);
+    CheckStr("and none of it left a marker", text, "Text.");
+
+    /* Lazy loading: the address is wherever the script would have found it,
+       and a srcset's first candidate is the small one. */
+    Extract(&e, "<body><article>"
+                "<img data-src=\"https://s/lazy.jpg\" src=\"https://s/loading.gif\">"
+                "<img srcset=\"https://s/a-320.jpg 320w, https://s/a-1280.jpg 1280w\">"
+                "<p>Text.</p></article></body>", 0);
+    CheckLong("both lazy pictures are found", GazetteExtractPhotoCount(&e), 2);
+    CheckStr("data-src over a loading gif", GazetteExtractPhoto(&e, 0)->url,
+             "https://s/lazy.jpg");
+    CheckStr("the small candidate of a srcset", GazetteExtractPhoto(&e, 1)->url,
+             "https://s/a-320.jpg");
+    CheckLong("no lead when the page named none", GazetteExtractHasLead(&e), 0);
+
+    /* The cap, and the article block starting the list over. */
+    text = Extract(&e, "<body><img src=\"https://s/page.jpg\">"
+                       "<article><p>One.</p>"
+                       "<img src=\"https://s/1.jpg\"><img src=\"https://s/2.jpg\">"
+                       "<img src=\"https://s/3.jpg\"><img src=\"https://s/4.jpg\">"
+                       "<p>Two.</p></article></body>", 0);
+    CheckLong("three at most", GazetteExtractPhotoCount(&e), 3);
+    CheckStr("the page's picture before the article went with the page",
+             GazetteExtractPhoto(&e, 0)->url, "https://s/1.jpg");
+    CheckStr("three markers, no more", text, "One.\n\001\n\001\n\001\nTwo.");
+
+    /* A rejected <img> is still an inline tag: it separates words. */
+    CheckStr("a rejected image still separates words",
+             Extract(&e, "<body><p>a<img src=\"https://s/logo.png\">b</p></body>", 0),
+             "a b");
+}
+
 static void TestExtract(void)
 {
     static GazetteExtract e;   /* 16 KB: too big for this stack, as in the app */
@@ -2808,6 +2905,7 @@ int main(void)
     TestFeedParsing();
     TestExtractTags();
     TestExtract();
+    TestExtractPhotos();
     TestDiscovery();
     TestDiscoveryPaths();
     TestGoogleNews();

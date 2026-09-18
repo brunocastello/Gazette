@@ -38,6 +38,7 @@ set(GAZETTE_SOURCES
 
     # Feed engine — RSS/Atom parser, Google News maps, article store
     src/feeds/gazette_feeds.c
+    src/feeds/gazette_photos.c
     src/feeds/gazette_index.c
     src/feeds/gazette_feed_parse.c
     src/feeds/gazette_googlenews.c
@@ -178,3 +179,10 @@ endif()
 # already carries both definitions here; naming them again would be a second
 # place to get them wrong.
 target_link_libraries(Gazette certainly bearssl)
+
+# The photographs in an article are decoded by QuickTime's Graphics
+# Importers, which live in QuickTimeLib rather than CarbonLib. Retro68's
+# interfaces-and-libraries.sh turns Apple's stub library into an import
+# library alongside CarbonLib's, so it links by name. Every Mac OS 9 ships
+# QuickTime; the window still asks Gestalt before the first picture.
+target_link_libraries(Gazette QuickTimeLib)

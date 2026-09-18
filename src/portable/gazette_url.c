@@ -122,6 +122,48 @@ int GazetteURLResolve(const GazetteURL *base, const char *loc, size_t locLen,
         return GazetteURLSplit(loc, locLen, out);
     }
 
+    /*
+     * Scheme-relative: "//cdn.example/x.jpg" is an image source on half the
+     * web, and it means the base's scheme on a different host. Split as an
+     * absolute URL with that scheme put in front, and the port that comes
+     * with it — the base's port is the base's host's.
+     */
+    if (locLen >= 2 && loc[0] == '/' && loc[1] == '/') {
+        const char *auth    = loc + 2;
+        size_t      authLen = 0;
+        size_t      rest;
+
+        while (authLen < locLen - 2 && auth[authLen] != '/' &&
+               auth[authLen] != '?' && auth[authLen] != '#') {
+            authLen++;
+        }
+        out->tls = base->tls;
+        if (!GazetteURLSplitAuthority(auth, authLen,
+                                      (unsigned short)(base->tls ? 443 : 80),
+                                      out->host, sizeof out->host,
+                                      &out->port)) {
+            return 0;
+        }
+        rest = locLen - 2 - authLen;
+        if (rest == 0 || auth[authLen] != '/') {
+            /* No path, or a query with no path before it: origin-form
+               always starts with a slash. */
+            if (rest + 1 >= sizeof out->path) {
+                return 0;
+            }
+            out->path[0] = '/';
+            memcpy(out->path + 1, auth + authLen, rest);
+            out->path[rest + 1] = '\0';
+        } else {
+            if (rest >= sizeof out->path) {
+                return 0;
+            }
+            memcpy(out->path, auth + authLen, rest);
+            out->path[rest] = '\0';
+        }
+        return 1;
+    }
+
     /* Same origin; only the path changes. */
     *out = *base;
 

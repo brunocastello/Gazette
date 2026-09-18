@@ -49,6 +49,7 @@
 #include "core/gazette_core.h"
 #include "feeds/gazette_feeds.h"
 #include "feeds/gazette_index.h"
+#include "feeds/gazette_photos.h"
 #include "portable/gazette_portable.h"
 #include "portable/gazette_url.h"
 #include "prefs/gazette_opml.h"
@@ -112,7 +113,11 @@ static void    HandleHideReadArticles(void);
 static void    HandleHideReadFeeds(void);
 static void    HandleHideSidebar(void);
 static void    HandleHideToolbar(void);
+static void    HandleShowPhotos(void);
 static void    RememberWindowLayout(void);
+static void    StartPhotos(void);
+static void    PumpPhotos(void);
+static void    ResumePhotos(void);
 static void    HandleSearch(void);
 static void    ToolbarCommand(int command);
 static void    HandleFind(void);
@@ -225,10 +230,11 @@ enum {
     kViewItemGroupByFeed = 3,     /* grey until a later phase */
     kViewItemHideRead    = 4,
     kViewItemHideFeeds   = 5,
-    /* 6 is a divider */
-    kViewItemHideSidebar = 7,
-    /* 8 is a divider */
-    kViewItemHideToolbar = 9
+    kViewItemShowPhotos  = 6,
+    /* 7 is a divider */
+    kViewItemHideSidebar = 8,
+    /* 9 is a divider */
+    kViewItemHideToolbar = 10
 };
 
 /* Sort Articles By: the two orders, one of them checked. */
@@ -495,7 +501,8 @@ static Boolean BuildMenuBar(void)
     }
     AppendMenu(viewMenu,
                "\pSort Articles By;(-;"
-               "(Group by Feed;Hide Read Articles/H;Hide Read Feeds/H;(-;"
+               "(Group by Feed;Hide Read Articles/H;Hide Read Feeds/H;"
+               "Show Photos;(-;"
                "Hide Sidebar/S;(-;"
                "Hide Toolbar/T");
     SetShiftKey(viewMenu, kViewItemHideFeeds);
@@ -669,6 +676,8 @@ static void RunGazette(void)
             PumpRefresh();
             PumpFullText();
             ResumeFullText();
+            PumpPhotos();
+            ResumePhotos();
             CheckAutoRefresh();
         }
         /* Either way, the window has a look at where the mouse is: the
@@ -902,6 +911,7 @@ static void HandleMenuChoice(long menuResult)
             switch (menuItem) {
                 case kViewItemHideRead:    HandleHideReadArticles(); break;
                 case kViewItemHideFeeds:   HandleHideReadFeeds();    break;
+                case kViewItemShowPhotos:  HandleShowPhotos();       break;
                 case kViewItemHideSidebar: HandleHideSidebar();      break;
                 case kViewItemHideToolbar: HandleHideToolbar();      break;
                 default: break;
@@ -1242,6 +1252,8 @@ static void AdjustMenus(void)
                          GazetteCoreHideReadArticles() ? true : false);
         MacCheckMenuItem(view, kViewItemHideFeeds,
                          GazetteCoreHideReadFeeds() ? true : false);
+        MacCheckMenuItem(view, kViewItemShowPhotos,
+                         GazetteCoreShowPhotos() ? true : false);
 
         /* The item says what it would do, so it reads as one command rather
            than as a check box whose label is only true half the time. */
@@ -2035,6 +2047,29 @@ static void HandleHideReadFeeds(void)
                               : "Showing every feed.");
 }
 
+/*
+ * Photos on or off. Off drops whatever is in flight and closes the gaps in
+ * the article on screen; on fetches the pictures of the article that is
+ * open, if its page has been read — its list is still held with the text.
+ */
+static void HandleShowPhotos(void)
+{
+    Boolean wanted = GazetteCoreShowPhotos() ? false : true;
+
+    GazetteCoreSetShowPhotos(wanted);
+    GazetteCoreSavePrefs();
+
+    if (!wanted) {
+        GazettePhotosCancel();
+        GazetteUIArticleTextChanged();
+        GazetteUISetStatus("Photos off.");
+    } else {
+        StartPhotos();
+        GazetteUIArticleTextChanged();
+        GazetteUISetStatus("Photos on.");
+    }
+}
+
 static void HandleHideSidebar(void)
 {
     Boolean wanted = GazetteCoreHideSidebar() ? false : true;
@@ -2352,6 +2387,55 @@ static void ResumeFullText(void)
     }
 }
 
+/* Fetch the pictures of the article whose page has just been read, when
+   the user wants pictures. */
+static void StartPhotos(void)
+{
+    const GazettePhotoRef *refs;
+    int                    hasLead;
+    int                    count;
+    int                    article = GazetteFeedsFullTextArticle();
+
+    if (!GazetteCoreShowPhotos() || article < 0) {
+        return;
+    }
+    count = GazetteFeedsFullTextPhotos(&refs, &hasLead);
+    if (count <= 0) {
+        return;
+    }
+    (void)GazettePhotosStart(article, GazetteFeedsFullTextFinalURL(),
+                             refs, count, hasLead);
+}
+
+static void ResumePhotos(void)
+{
+    (void)GazettePhotosResume();
+}
+
+/* A slice of the picture fetch. Each picture that lands, or does not, is
+   worth a redraw of the pane and nothing more: no status line, because the
+   article is already there to read. */
+static void PumpPhotos(void)
+{
+    int before[kGazetteMaxPhotos];
+    int count = GazettePhotosCount();
+    int i;
+
+    if (GazettePhotosGetState() != kGazetteRefreshRunning) {
+        return;
+    }
+    for (i = 0; i < count; i++) {
+        before[i] = GazettePhotosState(i);
+    }
+    (void)GazettePhotosPump();
+    for (i = 0; i < count; i++) {
+        if (GazettePhotosState(i) != before[i]) {
+            GazetteUIPhotosChanged();
+            break;
+        }
+    }
+}
+
 static void PumpFullText(void)
 {
     char message[224];
@@ -2362,6 +2446,10 @@ static void PumpFullText(void)
 
     switch (GazetteFeedsFullTextPump()) {
         case kGazetteRefreshDone:
+            /* The pictures go after the text, on the same line: the article
+               is readable at once and they fill in behind it. Asked for
+               before the pane composes, so it knows to leave them room. */
+            StartPhotos();
             /* The pane is showing the summary; this is what swaps it. */
             GazetteUIArticleTextChanged();
             GazetteUISetStatus("Full article.");
@@ -2790,6 +2878,7 @@ static void DoExitGazette(void)
        connection and frees the parser or the extractor behind it. */
     GazetteFeedsRefreshCancel();
     GazetteFeedsFullTextCancel();
+    GazettePhotosCancel();
 
     /* And what was read in the feed still on screen. */
     GazetteFeedsFlush();

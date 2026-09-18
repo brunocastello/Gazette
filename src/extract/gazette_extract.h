@@ -79,8 +79,35 @@ enum {
 
     /* Below this, the page yielded nothing worth replacing the feed's own
        summary with — a paywall stub, a cookie wall, a redirect notice. */
-    kGazetteExtractMin = 200
+    kGazetteExtractMin = 200,
+
+    /*
+     * The photos. Three is a news story's worth — the lead picture and a
+     * couple more — and it is also what a modem and an 8 MB partition can
+     * be asked to carry for an article somebody may only glance at.
+     */
+    kGazetteMaxPhotos   = 3,
+    kGazettePhotoURLLen = 512,
+    kGazettePhotoAltLen = 160,
+
+    /*
+     * Where a photo stands in the text. A paragraph made of this one byte
+     * marks the place an <img> stood in the article: the k-th marker is the
+     * k-th photo after the lead. It is below every printable character and
+     * survives the pipeline untouched — the transliterator passes ASCII
+     * through and the flattener knows only whitespace — and the reader
+     * pane turns it into the space the picture is drawn in.
+     */
+    kGazettePhotoMarker = 1
 };
+
+/* One picture the page carries: where it is, as the page wrote it (resolved
+   against the page's own address by whoever fetches it), and what the page
+   said it showed. */
+typedef struct {
+    char url[kGazettePhotoURLLen];
+    char alt[kGazettePhotoAltLen];
+} GazettePhotoRef;
 
 typedef struct {
     int    state;
@@ -124,6 +151,19 @@ typedef struct {
     size_t outLen;
     size_t textLen;                 /* the finished text, after Finish */
     int    full;
+
+    /*
+     * The pictures. photos[0] is the lead when hasLead says so — the page's
+     * og:image, which is the picture its editor chose and which stands
+     * above the body rather than at a marker. The rest are the <img>s met
+     * in the article, in order, each with a marker in the text. A page
+     * that names its article block starts the list over when the block
+     * opens, the way the text starts over: what came before was the page.
+     */
+    GazettePhotoRef photos[kGazetteMaxPhotos];
+    int    photoCount;
+    int    hasLead;
+    int    leadIsFallback;          /* twitter:image; og:image replaces it */
 } GazetteExtract;
 
 void GazetteExtractInit(GazetteExtract *e);
@@ -142,6 +182,12 @@ size_t GazetteExtractFinish(GazetteExtract *e);
 
 /* The finished text. "" before Finish. */
 const char *GazetteExtractText(const GazetteExtract *e);
+
+/* The pictures, once Finish has run — their alt text goes through the same
+   pipeline as the text then. Count includes the lead when there is one. */
+int                    GazetteExtractPhotoCount(const GazetteExtract *e);
+int                    GazetteExtractHasLead(const GazetteExtract *e);
+const GazettePhotoRef *GazetteExtractPhoto(const GazetteExtract *e, int i);
 
 #ifdef __cplusplus
 }

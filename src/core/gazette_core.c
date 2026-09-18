@@ -329,6 +329,20 @@ void GazetteCoreSetHideToolbar(Boolean on)
     gPrefsDirty        = true;
 }
 
+Boolean GazetteCoreShowPhotos(void)
+{
+    return (gInited && gPrefs.showPhotos) ? true : false;
+}
+
+void GazetteCoreSetShowPhotos(Boolean on)
+{
+    if (!gInited || gPrefs.showPhotos == (on ? 1 : 0)) {
+        return;
+    }
+    gPrefs.showPhotos = on ? 1 : 0;
+    gPrefsDirty       = true;
+}
+
 /* ------------------------------------------------------------------ */
 /* Where the window was                                                */
 /* ------------------------------------------------------------------ */

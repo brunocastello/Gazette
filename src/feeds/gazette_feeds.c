@@ -10,6 +10,7 @@
 #include "extract/gazette_extract.h"
 #include "core/gazette_core.h"
 #include "feeds/gazette_index.h"
+#include "feeds/gazette_photos.h"
 #include "net/gazette_fetch.h"
 #include "portable/gazette_portable.h"
 #include "store/gazette_store.h"
@@ -108,6 +109,14 @@ static int                 gWantArticle = -1;
 static char                gWantURL[kGazetteArticleLinkLen];
 static char                gFullText[kGazetteExtractMax];
 static char                gFullError[192];
+
+/* The pictures the page named, and the page's own address once the
+   redirects were followed — what a relative picture resolves against.
+   Copied out of the extractor at the finish, since the extractor goes. */
+static GazettePhotoRef     gFullPhotos[kGazetteMaxPhotos];
+static int                 gFullPhotoCount;
+static int                 gFullHasLead;
+static char                gFullFinalURL[kGazetteArticleLinkLen];
 
 /*
  * Seconds between the Macintosh epoch (1904) and the Unix one (1970).
@@ -563,8 +572,10 @@ int GazetteFeedsRefreshStart(int feedIndex, const char *url, long maxArticles,
     }
 
     /* There is one connection and headlines outrank an article's page — but
-       the page is postponed, not abandoned. See PauseFullText. */
+       the page is postponed, not abandoned. See PauseFullText. The pictures
+       are postponed the same way. */
     PauseFullText();
+    GazettePhotosPause();
 
     ReleaseRefresh();
     gError[0] = '\0';
@@ -714,8 +725,12 @@ static void ReleaseFullText(void)
 void GazetteFeedsFullTextCancel(void)
 {
     ReleaseFullText();
+    GazettePhotosCancel();          /* they were the page's; the page goes */
     gFullText[0]        = '\0';
     gFullError[0]       = '\0';
+    gFullPhotoCount     = 0;
+    gFullHasLead        = 0;
+    gFullFinalURL[0]    = '\0';
     gFullArticle        = -1;
     gPendingFullArticle = -1;
     gWantArticle        = -1;
@@ -768,6 +783,22 @@ const char *GazetteFeedsFullText(void)
 const char *GazetteFeedsFullTextErrorText(void)
 {
     return gFullError;
+}
+
+int GazetteFeedsFullTextPhotos(const GazettePhotoRef **refs, int *hasLead)
+{
+    if (refs != NULL) {
+        *refs = gFullPhotos;
+    }
+    if (hasLead != NULL) {
+        *hasLead = gFullHasLead;
+    }
+    return gFullArticle >= 0 ? gFullPhotoCount : 0;
+}
+
+const char *GazetteFeedsFullTextFinalURL(void)
+{
+    return gFullFinalURL;
 }
 
 GazetteRefreshState GazetteFeedsFullTextGetState(void)
@@ -890,6 +921,21 @@ GazetteRefreshState GazetteFeedsFullTextPump(void)
 
     gz_copy_n(gFullText, sizeof gFullText, GazetteExtractText(gExtract), len);
     gFullArticle = gPendingFullArticle;
+
+    /* The pictures and the address to resolve them against, before the
+       extractor and the fetch go. */
+    {
+        int i;
+
+        gFullPhotoCount = GazetteExtractPhotoCount(gExtract);
+        gFullHasLead    = GazetteExtractHasLead(gExtract);
+        for (i = 0; i < gFullPhotoCount; i++) {
+            gFullPhotos[i] = *GazetteExtractPhoto(gExtract, i);
+        }
+        gz_copy_n(gFullFinalURL, sizeof gFullFinalURL,
+                  GazetteFetchFinalURL(gFullFetch),
+                  strlen(GazetteFetchFinalURL(gFullFetch)));
+    }
 
     ReleaseFullText();
     gWantArticle = -1;              /* settled: it is here */

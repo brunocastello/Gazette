@@ -13,6 +13,8 @@
 #ifndef GAZETTE_FEEDS_H
 #define GAZETTE_FEEDS_H
 
+#include "extract/gazette_extract.h"    /* GazettePhotoRef */
+
 #include <stddef.h>
 
 #include "feeds/gazette_feed_parse.h"
@@ -354,6 +356,17 @@ const char *GazetteFeedsFullText(void);
 
 /* Why the last attempt came to nothing, or "". */
 const char *GazetteFeedsFullTextErrorText(void);
+
+/*
+ * The pictures the page named, once the text is here: the list the
+ * extractor built (see kGazettePhotoMarker there), and whether its first
+ * entry is the page's lead. Returns how many; 0 while no text is held. The
+ * addresses are as the page wrote them, to be resolved against the page's
+ * own address — which is FinalURL, the one the text actually came from.
+ */
+int         GazetteFeedsFullTextPhotos(const GazettePhotoRef **refs,
+                                       int *hasLead);
+const char *GazetteFeedsFullTextFinalURL(void);
 
 /* Abandon a fetch in flight and drop whatever was held. */
 void GazetteFeedsFullTextCancel(void);

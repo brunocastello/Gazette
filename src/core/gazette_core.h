@@ -125,6 +125,9 @@ void    GazetteCoreSetHideSidebar(Boolean on);
 Boolean GazetteCoreHideToolbar(void);
 void    GazetteCoreSetHideToolbar(Boolean on);
 
+Boolean GazetteCoreShowPhotos(void);
+void    GazetteCoreSetShowPhotos(Boolean on);
+
 /*
  * Where the window stood when Gazette last quit — its content rectangle in
  * global coordinates — and how wide its two left-hand columns were. False
