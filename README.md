@@ -73,6 +73,15 @@ third_party/certainly/   Certainly over BearSSL, vendored — see its PATCHES.md
 tools/          the icon generators and the Google News topic table
 ```
 
+## Contributors
+
+- [Bruno Castelló](https://github.com/brunocastello) — the idea, the
+  direction, every decision about how it should look and behave, and the
+  testing on the real thing.
+- [Claude](https://claude.com/claude-code) (Anthropic's Claude Opus 5, by way
+  of Claude Code) — the code, written in conversation with Bruno across every
+  phase, from the first `WaitNextEvent` loop to the article extractor.
+
 ## Thanks
 
 [Newsstand](https://getnewsstand.com) by Alex Robb is the reader this one
