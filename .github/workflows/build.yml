@@ -4,12 +4,24 @@ name: Build Gazette (Carbon PPC)
 
 on:
   push:
+    # Both filters are needed. Naming tags alone restricts push events to tags
+    # and silently stops every branch build.
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+    # These filters also apply to tag pushes, so tagging a commit that touched
+    # nothing in the list skips the build and therefore the release. When that
+    # happens, publish it by hand against the tag:
+    #
+    #     gh workflow run build.yml --ref v0.1.0
     paths:
       - 'src/**'
       - 'Resources/**'
       - 'CMakeLists.txt'
       - 'third_party/AUI/**'
       - 'tests/**'
+      - 'docs/release-notes.md'
       - '.github/workflows/build.yml'
   pull_request:
     paths:
@@ -38,6 +50,8 @@ jobs:
   build:
     needs: host-tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: write        # only used by the release step, on tags
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -131,3 +145,32 @@ jobs:
             build/Gazette.bin
             package/Gazette.sit
           if-no-files-found: error
+
+      # Tag pushes become releases. Two assets: the StuffIt archive, which
+      # carries the application with its resource fork intact for a real Mac,
+      # and the disk image, which is what an emulator wants.
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp package/Gazette.sit "release/Gazette-${GITHUB_REF_NAME}.sit"
+          cp build/Gazette.dsk   "release/Gazette-${GITHUB_REF_NAME}.dsk"
+
+          # Idempotent: re-running a tag build refreshes the assets and the
+          # notes rather than failing because the release already exists.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" --clobber \
+              "release/Gazette-${GITHUB_REF_NAME}.sit" \
+              "release/Gazette-${GITHUB_REF_NAME}.dsk"
+            gh release edit "$GITHUB_REF_NAME" \
+              --notes-file docs/release-notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "Gazette $GITHUB_REF_NAME" \
+              --notes-file docs/release-notes.md \
+              "release/Gazette-${GITHUB_REF_NAME}.sit" \
+              "release/Gazette-${GITHUB_REF_NAME}.dsk"
+          fi

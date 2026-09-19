@@ -19,5 +19,7 @@ __pycache__/
 /*.png
 
 # Working notes dropped in docs/ to say what to build next. Same as the
-# screenshots above: working material, not part of the build.
-docs/
+# screenshots above: working material, not part of the build. The release
+# notes are the one file in there that is.
+docs/*
+!docs/release-notes.md
