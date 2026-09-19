@@ -1712,17 +1712,19 @@ static void Layout(void)
            is what the hidden sidebar's groove has to be. */
         /* From the rule's row, so the groove cuts through the rule the way
            OE's does rather than starting beneath it. */
-        /* And through the status strip to the window's bottom edge, so the
-           grooves run the whole height the way they start at the toolbar's
-           rule: the strip is divided the way the panes above it are. */
+        /* Down to the status strip's rule and not through it: the grooves
+           end on the rule, the way the scroll bars beside them do, and the
+           strip is one piece under all three columns. They used to run on
+           to the window's bottom edge, and cut the rule where they crossed
+           it. */
         if (noSidebar) {
             SetRect(&gVDivider, 0, 0, 0, 0);
         } else {
             SetRect(&gVDivider, split, rule,
-                    (short)(split + kVDividerWidth), bounds.bottom);
+                    (short)(split + kVDividerWidth), contentBottom);
         }
         SetRect(&gVDivider2, split2, rule,
-                (short)(split2 + kVDividerWidth), bounds.bottom);
+                (short)(split2 + kVDividerWidth), contentBottom);
 
         /*
          * A pane starts one pixel *inside* the header above it, so that its
@@ -4192,7 +4194,18 @@ static void GreyPen(short grey)
  */
 static void DrawVDivider(const Rect *r)
 {
-    EraseWith(r, kThemeBrushDialogBackgroundActive);
+    /*
+     * The groove proper is six columns: white, four of grey, black. The
+     * two grey columns after it are the rectangle's for grabbing, and the
+     * pane beside it paints them — and on the rule rows they are the
+     * rule's, which erasing the whole rectangle used to wipe, leaving two
+     * grey pixels between each rule and the groove's black at every
+     * corner. So only the six are erased here.
+     */
+    Rect groove = *r;
+
+    groove.right = (short)(r->left + 6);
+    EraseWith(&groove, kThemeBrushDialogBackgroundActive);
 
     GreyPen(255);
     MoveTo(r->left, r->top);
@@ -4917,16 +4930,10 @@ static void DrawStatusText(void)
     MoveTo(gStatusRect.left, gStatusRect.top);
     LineTo((short)(gStatusRect.right - 1), gStatusRect.top);
 
-    /* The text has the strip up to the first groove: the grooves run
-       through the strip, and the words stop short of them. */
+    /* The text has the whole strip: the grooves end on its rule. */
     {
         short right = gStatusRect.right;
 
-        if (gVDivider.right > gVDivider.left) {
-            right = gVDivider.left;
-        } else if (gVDivider2.right > gVDivider2.left) {
-            right = gVDivider2.left;
-        }
         UseViewFont();
         TextSize(gStatusSize);
         SetThemeTextColor(kThemeTextColorDialogActive, 8, true);
@@ -4936,9 +4943,6 @@ static void DrawStatusText(void)
                       (short)(right - gStatusRect.left - 2 * kTextInset - 8));
     }
     ForeColor(blackColor);
-
-    /* The erase above took the grooves' lower ends with it. */
-    DrawDividers();
 }
 
 /* The two grooves, with their grab handles. */
