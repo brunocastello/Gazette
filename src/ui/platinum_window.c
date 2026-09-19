@@ -547,6 +547,7 @@ static void DrawHeaderTitle(const Rect *r, const char *text,
                             const char *count);
 static void DrawReaderRule(void);
 static void DrawReaderPhotos(void);
+static void ApplyRunStyle(long start, long end, short face, short size);
 static void ForgetPhotos(void);
 static void PaintGrey(const Rect *r, short grey);
 static void ReaderHiliteColours(void);
@@ -2267,17 +2268,18 @@ static int PhotoSlotForMarker(int k)
  * and AppendBody takes each out as it copies, noting where the face it
  * switches begins and ends; SetReaderText applies the runs once the text
  * is in the record. A heading is a bold paragraph, a quotation an italic
- * one, and the inline marks add to whatever the paragraph is.
+ * one, and the inline marks add to whatever the paragraph is. (Not
+ * StyleRun: TextEdit has one of those already.)
  */
 typedef struct {
     short start;
     short end;
     short face;
-} StyleRun;
+} ReaderFace;
 
 enum { kMaxStyleRuns = 400 };
 
-static StyleRun gStyleRuns[kMaxStyleRuns];
+static ReaderFace gStyleRuns[kMaxStyleRuns];
 static int      gStyleRunCount;
 
 /* Close the run in progress, if it wore anything, and start the next. */
@@ -2305,7 +2307,7 @@ static void NoteFace(size_t at, short *runStart, short *runFace, short face)
  * the run's air; when it does not — not coming, photos off, unreadable —
  * the paragraph is dropped and the text closes over it.
  *
- * The style marks come out as the text is copied; see StyleRun. A list
+ * The style marks come out as the text is copied; see ReaderFace. A list
  * item gets a bullet in front of it, which is the one thing about a list
  * TextEdit can show.
  */
