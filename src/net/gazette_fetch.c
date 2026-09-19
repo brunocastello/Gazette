@@ -36,6 +36,7 @@ enum {
     /* Request line + Host + the fixed headers, with the path being the only
        part that can be long. */
     kRequestMax  = kGazetteMaxPath + 512,
+    kPostBodyMax = 3072,                /* what a POST may carry; see Start */
 
     /*
      * Redirect chains: Google News alone spends three hops getting from a
@@ -66,6 +67,12 @@ struct GazetteFetch {
     char              request[kRequestMax];
     size_t            requestLen;
     size_t            requestSent;
+
+    /* A POST's body, kept so a redirect can send it again. */
+    int               post;
+    char              contentType[64];
+    char              body[kPostBodyMax];
+    size_t            bodyLen;
 
     char              head[kHeadMax];
     size_t            headHave;         /* bytes accumulated in head[]     */
@@ -130,7 +137,10 @@ static int BeginRequest(GazetteFetch *f)
 {
     GazetteURLFormat(&f->url, f->finalURL, sizeof f->finalURL);
 
-    f->requestLen = GazetteHTTPBuildGet(&f->url, f->request, sizeof f->request);
+    f->requestLen = f->post
+        ? GazetteHTTPBuildPost(&f->url, f->contentType, f->body, f->bodyLen,
+                               f->request, sizeof f->request)
+        : GazetteHTTPBuildGet(&f->url, f->request, sizeof f->request);
     if (f->requestLen == 0) {
         Fail(f, "URL is too long to request");
         return 0;
@@ -266,9 +276,19 @@ static void StartBody(GazetteFetch *f)
 GazetteFetch *GazetteFetchStart(const char *url,
                                 GazetteFetchSink sink, void *context)
 {
+    return GazetteFetchStartPost(url, NULL, NULL, 0, sink, context);
+}
+
+GazetteFetch *GazetteFetchStartPost(const char *url, const char *contentType,
+                                    const char *body, size_t bodyLen,
+                                    GazetteFetchSink sink, void *context)
+{
     GazetteFetch *f;
 
     if (url == NULL || url[0] == '\0' || !GazetteNetIsUp()) {
+        return NULL;
+    }
+    if (body != NULL && bodyLen > kPostBodyMax) {
         return NULL;
     }
 
@@ -280,6 +300,17 @@ GazetteFetch *GazetteFetchStart(const char *url,
     if (!GazetteURLSplit(url, strlen(url), &f->url)) {
         DisposePtr((Ptr)f);
         return NULL;
+    }
+
+    if (body != NULL) {
+        f->post    = 1;
+        f->bodyLen = bodyLen;
+        memcpy(f->body, body, bodyLen);
+        gz_copy_n(f->contentType, sizeof f->contentType,
+                  contentType ? contentType
+                              : "application/x-www-form-urlencoded",
+                  contentType ? strlen(contentType)
+                              : strlen("application/x-www-form-urlencoded"));
     }
 
     f->sink    = sink;

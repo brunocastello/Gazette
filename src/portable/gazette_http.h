@@ -46,6 +46,13 @@ extern "C" {
  */
 size_t GazetteHTTPBuildGet(const GazetteURL *url, char *out, size_t cap);
 
+/* The same head with a body after it: POST, with the Content-Type given
+   (form-encoded when NULL) and the Content-Length that bodyLen says. Returns
+   0 when head and body together would not fit. */
+size_t GazetteHTTPBuildPost(const GazetteURL *url, const char *contentType,
+                            const char *body, size_t bodyLen,
+                            char *out, size_t cap);
+
 /* ------------------------------------------------------------------ */
 /* Responses                                                           */
 /* ------------------------------------------------------------------ */

@@ -9,6 +9,7 @@
 
 #include "extract/gazette_extract.h"
 #include "core/gazette_core.h"
+#include "feeds/gazette_googlenews.h"
 #include "feeds/gazette_index.h"
 #include "feeds/gazette_photos.h"
 #include "net/gazette_fetch.h"
@@ -110,6 +111,32 @@ static int                 gWantArticle = -1;
 static char                gWantURL[kGazetteArticleLinkLen];
 static char                gFullText[kGazetteExtractMax];
 static char                gFullError[192];
+
+/*
+ * A Google News item links to Google, not to the story, and the story's
+ * address has to be asked for first — see the article-link section of
+ * gazette_googlenews.h. That is two fetches before the article's own, and
+ * this is what they need: the token, the scan of the first page, the body
+ * of the second request and its answer. Taken for the length of the
+ * resolution and let go before the article is fetched.
+ */
+typedef struct {
+    char             token[kGazetteGNewsTokenMax];
+    GazetteGNewsScan scan;
+    char             body[kGazetteGNewsBodyMax];
+    char             answer[4096];
+    size_t           answerLen;
+    char             url[kGazetteArticleLinkLen];
+} GNewsResolve;
+
+enum {
+    kFullStageArticle = 0,      /* the story's own page, into the extractor */
+    kFullStagePage,             /* Google's page, for the two attributes */
+    kFullStageAnswer            /* Google's decoder, for the address */
+};
+
+static GNewsResolve       *gResolve;
+static int                 gFullStage = kFullStageArticle;
 
 /* The pictures the page named, and the page's own address once the
    redirects were followed — what a relative picture resolves against.
@@ -733,6 +760,11 @@ static void ReleaseFullText(void)
         DisposePtr((Ptr)gExtract);
         gExtract = NULL;
     }
+    if (gResolve != NULL) {
+        DisposePtr((Ptr)gResolve);
+        gResolve = NULL;
+    }
+    gFullStage = kFullStageArticle;
 }
 
 void GazetteFeedsFullTextCancel(void)
@@ -827,36 +859,99 @@ static int FullTextSink(const char *data, size_t len, void *context)
     return GazetteExtractFeed(gExtract, data, len);
 }
 
-/*
- * Open the connection for the page already named in gWantArticle / gWantURL.
- * Both entry points below go through here, so starting and resuming are the
- * same act and cannot drift apart.
- */
-static int BeginFullText(void)
+/* The resolver's two sinks: the scan of Google's page, and the answer. */
+static int ResolvePageSink(const char *data, size_t len, void *context)
+{
+    (void)context;
+    if (gResolve == NULL) {
+        return 0;
+    }
+    return GazetteGNewsScanFeed(&gResolve->scan, data, len);
+}
+
+static int ResolveAnswerSink(const char *data, size_t len, void *context)
+{
+    size_t room;
+
+    (void)context;
+    if (gResolve == NULL) {
+        return 0;
+    }
+    room = sizeof gResolve->answer - 1 - gResolve->answerLen;
+    if (len > room) {
+        len = room;
+    }
+    memcpy(gResolve->answer + gResolve->answerLen, data, len);
+    gResolve->answerLen += len;
+    return room > len;              /* full is enough: the address is near the top */
+}
+
+static void FailFullText(const char *why)
+{
+    snprintf(gFullError, sizeof gFullError, "%s", why);
+    ReleaseFullText();
+    gWantArticle = -1;              /* settled: it is not coming */
+    gFullState   = kGazetteRefreshFailed;
+}
+
+/* The story's own page, into the extractor. */
+static int BeginArticleStage(void)
 {
     gExtract = (GazetteExtract *)NewPtrClear((Size)sizeof(GazetteExtract));
     if (gExtract == NULL) {
-        snprintf(gFullError, sizeof gFullError,
-                 "Not enough memory to read the article.");
-        gWantArticle = -1;          /* given up on, not merely postponed */
-        gFullState   = kGazetteRefreshFailed;
+        FailFullText("Not enough memory to read the article.");
         return 0;
     }
     GazetteExtractInit(gExtract);
 
+    gFullStage = kFullStageArticle;
     gFullFetch = GazetteFetchStart(gWantURL, FullTextSink, NULL);
     if (gFullFetch == NULL) {
-        snprintf(gFullError, sizeof gFullError,
-                 "Could not open the article's page.");
-        ReleaseFullText();
-        gWantArticle = -1;
-        gFullState   = kGazetteRefreshFailed;
+        FailFullText("Could not open the article's page.");
         return 0;
     }
+    return 1;
+}
 
+/*
+ * Open the connection for the page already named in gWantArticle / gWantURL.
+ * Both entry points below go through here, so starting and resuming are the
+ * same act and cannot drift apart. A Google News link goes to Google first,
+ * for the story's address; see GNewsResolve.
+ */
+static int BeginFullText(void)
+{
     gPendingFullArticle = gWantArticle;
     gFullState          = kGazetteRefreshRunning;
-    return 1;
+
+    if (gz_contains_ci(gWantURL, strlen(gWantURL), "news.google.com/")) {
+        gResolve = (GNewsResolve *)NewPtrClear((Size)sizeof(GNewsResolve));
+        if (gResolve == NULL) {
+            FailFullText("Not enough memory to read the article.");
+            return 0;
+        }
+        if (!GazetteGNewsArticleToken(gWantURL, gResolve->token,
+                                      sizeof gResolve->token)) {
+            /* On Google, but not a story link: read it as it is. */
+            DisposePtr((Ptr)gResolve);
+            gResolve = NULL;
+            return BeginArticleStage();
+        }
+        GazetteGNewsScanInit(&gResolve->scan);
+
+        /* url[] is scratch until the answer fills it. */
+        snprintf(gResolve->url, sizeof gResolve->url,
+                 "https://news.google.com/rss/articles/%s", gResolve->token);
+        gFullStage = kFullStagePage;
+        gFullFetch = GazetteFetchStart(gResolve->url, ResolvePageSink, NULL);
+        if (gFullFetch == NULL) {
+            FailFullText("Could not ask Google News where the story is.");
+            return 0;
+        }
+        return 1;
+    }
+
+    return BeginArticleStage();
 }
 
 int GazetteFeedsFullTextStart(int articleIndex, const char *url)
@@ -898,15 +993,63 @@ GazetteRefreshState GazetteFeedsFullTextPump(void)
     fetchState = GazetteFetchPump(gFullFetch);
 
     if (fetchState == kGazetteFetchFailed) {
-        snprintf(gFullError, sizeof gFullError, "%s",
-                 GazetteFetchErrorText(gFullFetch));
-        ReleaseFullText();
-        gWantArticle = -1;          /* settled: it is not coming */
-        gFullState   = kGazetteRefreshFailed;
+        FailFullText(GazetteFetchErrorText(gFullFetch));
         return gFullState;
     }
 
     if (fetchState != kGazetteFetchDone) {
+        return gFullState;
+    }
+
+    /*
+     * Google's page is in, or as much of it as the scan needed. If Google
+     * answered with a redirect to the story itself — the older kind of
+     * link — the address is simply where the fetch ended up; otherwise the
+     * two attributes go to the decoder.
+     */
+    if (gFullStage == kFullStagePage) {
+        const char *where = GazetteFetchFinalURL(gFullFetch);
+
+        if (!gz_contains_ci(where, strlen(where), "news.google.com")) {
+            gz_copy_n(gWantURL, sizeof gWantURL, where, strlen(where));
+            GazetteFetchDestroy(gFullFetch);
+            gFullFetch = NULL;
+            (void)BeginArticleStage();
+            return gFullState;
+        }
+        if (!GazetteGNewsScanDone(&gResolve->scan) ||
+            GazetteGNewsBuildBody(gResolve->token, gResolve->scan.ts,
+                                  gResolve->scan.sig, gResolve->body,
+                                  sizeof gResolve->body) == 0) {
+            FailFullText("Google News did not say where the story is.");
+            return gFullState;
+        }
+        GazetteFetchDestroy(gFullFetch);
+        gFullStage          = kFullStageAnswer;
+        gResolve->answerLen = 0;
+        gFullFetch = GazetteFetchStartPost(
+            "https://news.google.com/_/DotsSplashUi/data/batchexecute",
+            "application/x-www-form-urlencoded;charset=UTF-8",
+            gResolve->body, strlen(gResolve->body), ResolveAnswerSink, NULL);
+        if (gFullFetch == NULL) {
+            FailFullText("Could not ask Google News where the story is.");
+        }
+        return gFullState;
+    }
+
+    if (gFullStage == kFullStageAnswer) {
+        if (!GazetteGNewsParseAnswer(gResolve->answer, gResolve->answerLen,
+                                     gResolve->url, sizeof gResolve->url)) {
+            FailFullText("Google News did not say where the story is.");
+            return gFullState;
+        }
+        gz_copy_n(gWantURL, sizeof gWantURL, gResolve->url,
+                  strlen(gResolve->url));
+        GazetteFetchDestroy(gFullFetch);
+        gFullFetch = NULL;
+        DisposePtr((Ptr)gResolve);
+        gResolve = NULL;
+        (void)BeginArticleStage();
         return gFullState;
     }
 
@@ -920,11 +1063,7 @@ GazetteRefreshState GazetteFeedsFullTextPump(void)
          * only works with JavaScript. The feed's own summary is better than
          * any of those, so the failure keeps it on screen.
          */
-        snprintf(gFullError, sizeof gFullError,
-                 "That page had no article text in it.");
-        ReleaseFullText();
-        gWantArticle = -1;          /* settled: the summary is what there is */
-        gFullState   = kGazetteRefreshFailed;
+        FailFullText("That page had no article text in it.");
         return gFullState;
     }
 

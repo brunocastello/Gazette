@@ -1741,6 +1741,88 @@ static void TestDiscovery(void)
 /* Google News                                                         */
 /* ------------------------------------------------------------------ */
 
+/* The article link decoder: NewsProxy's, as bytes. */
+static void TestGoogleNewsLinks(void)
+{
+    char token[kGazetteGNewsTokenMax];
+    char url[1024];
+    static char body[kGazetteGNewsBodyMax];
+    GazetteGNewsScan scan;
+    size_t n;
+
+    CheckTrue("an rss/articles link carries a token",
+              GazetteGNewsArticleToken(
+                  "https://news.google.com/rss/articles/CBMiabc-_123?oc=5",
+                  token, sizeof token));
+    CheckStr("the token, without the query", token, "CBMiabc-_123");
+    CheckTrue("so does a read link",
+              GazetteGNewsArticleToken("https://news.google.com/read/AU_yqLtok",
+                                       token, sizeof token));
+    CheckStr("its token", token, "AU_yqLtok");
+    CheckLong("a story's own link is not one",
+              GazetteGNewsArticleToken("https://9to5mac.com/2026/09/17/x/",
+                                       token, sizeof token), 0);
+    CheckLong("nor is Google's feed",
+              GazetteGNewsArticleToken("https://news.google.com/rss?hl=en",
+                                       token, sizeof token), 0);
+
+    /* The two attributes off the page, however the page is chunked. */
+    {
+        static const char page[] =
+            "<html><body><c-wiz data-p=\"x\" data-n-a-id=\"CBMi\" "
+            "data-n-a-sg=\"AZ_sig-1\" data-n-a-ts=\"1758100000\" "
+            "jsdata=\"y\"><p>Top stories</p></c-wiz></body></html>";
+        size_t chunk, off;
+
+        for (chunk = 1; chunk <= 7; chunk += 3) {
+            int stopped = 0;
+
+            GazetteGNewsScanInit(&scan);
+            for (off = 0; off < sizeof page - 1; off += chunk) {
+                size_t m = sizeof page - 1 - off;
+
+                if (m > chunk) {
+                    m = chunk;
+                }
+                if (!GazetteGNewsScanFeed(&scan, page + off, m)) {
+                    stopped = 1;
+                    break;
+                }
+            }
+            CheckTrue("the scan stops once both are in hand", stopped);
+            CheckTrue("and says so", GazetteGNewsScanDone(&scan));
+            CheckStr("the signature", scan.sig, "AZ_sig-1");
+            CheckStr("the timestamp", scan.ts, "1758100000");
+        }
+        GazetteGNewsScanInit(&scan);
+        CheckTrue("a page without them is read to the end",
+                  GazetteGNewsScanFeed(&scan, "<p>nothing</p>", 14));
+        CheckLong("and is not done", GazetteGNewsScanDone(&scan), 0);
+    }
+
+    /* The form body: the request 68k-news worked out, form-encoded. */
+    n = GazetteGNewsBuildBody("TOK", "1758100000", "SIG", body, sizeof body);
+    CheckTrue("the body is built", n > 0);
+    CheckTrue("it is a form field", strncmp(body, "f.req=%5B%5B%5B%22Fbv4je%22%2C%22%5B%5C%22garturlreq", 52) == 0);
+    CheckTrue("it carries the token", strstr(body, "%5C%22TOK%5C%22%2C1758100000%2C%5C%22SIG%5C%22%5D%22%5D%5D%5D") != NULL);
+    CheckLong("and nothing after it", (long)strlen(body), (long)n);
+
+    /* The answer: JSON inside JSON, read as bytes. */
+    {
+        static const char answer[] =
+            ")]}'\n\n123\n[[\"wrb.fr\",\"Fbv4je\",\"[\\\"garturlres\\\","
+            "\\\"https://www.example.com/story?a\\\\u003d1\\\\u0026b\\\\u003d2\\\","
+            "null,\\\"x\\\"]\",null,null,null,\"generic\"]]";
+
+        CheckTrue("the address is found",
+                  GazetteGNewsParseAnswer(answer, sizeof answer - 1, url, sizeof url));
+        CheckStr("with its escapes undone", url,
+                 "https://www.example.com/story?a=1&b=2");
+        CheckLong("an answer without it yields nothing",
+                  GazetteGNewsParseAnswer("[[\"wrb.fr\",null]]", 17, url, sizeof url), 0);
+    }
+}
+
 static void TestGoogleNews(void)
 {
     char url[1024];
@@ -2946,6 +3028,7 @@ int main(void)
     TestDiscovery();
     TestDiscoveryPaths();
     TestGoogleNews();
+    TestGoogleNewsLinks();
 
     printf("Gazette host tests: %d checks, %d failure%s\n",
            gChecks, gFailures, gFailures == 1 ? "" : "s");

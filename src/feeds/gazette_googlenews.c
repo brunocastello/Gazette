@@ -197,3 +197,291 @@ size_t GazetteGoogleNewsURL(const GazetteCountry *country,
     out[len] = '\0';
     return len;
 }
+
+/* ------------------------------------------------------------------ */
+/* Article links                                                       */
+/* ------------------------------------------------------------------ */
+
+int GazetteGNewsArticleToken(const char *url, char *token, size_t cap)
+{
+    const char *p;
+    const char *start;
+    size_t      n = 0;
+
+    if (url == NULL || token == NULL || cap == 0) {
+        return 0;
+    }
+    token[0] = '\0';
+
+    if (!gz_starts_ci(url, strlen(url), "https://news.google.com/") &&
+        !gz_starts_ci(url, strlen(url), "http://news.google.com/")) {
+        return 0;
+    }
+    p = strstr(url, "/articles/");
+    if (p == NULL) {
+        p = strstr(url, "/read/");
+        if (p == NULL) {
+            return 0;
+        }
+        p += 6;
+    } else {
+        p += 10;
+    }
+
+    /* The token runs to the query string or the end. */
+    start = p;
+    while (*p != '\0' && *p != '?' && *p != '#' && *p != '/') {
+        p++;
+    }
+    n = (size_t)(p - start);
+    if (n == 0 || n + 1 > cap) {
+        return 0;
+    }
+    memcpy(token, start, n);
+    token[n] = '\0';
+    return 1;
+}
+
+static const char kSigAttr[] = "data-n-a-sg=\"";
+static const char kTsAttr[]  = "data-n-a-ts=\"";
+
+void GazetteGNewsScanInit(GazetteGNewsScan *s)
+{
+    if (s != NULL) {
+        memset(s, 0, sizeof *s);
+    }
+}
+
+int GazetteGNewsScanDone(const GazetteGNewsScan *s)
+{
+    return (s != NULL && s->haveSig && s->haveTs) ? 1 : 0;
+}
+
+/*
+ * One attribute's matcher: the name, then the value up to the closing
+ * quote. A failed match starts over from the first character, which for
+ * these two names is all the cleverness the page needs.
+ */
+static void ScanOne(char c, const char *name, size_t *match, int *in,
+                    char *value, size_t cap, size_t *valueLen, int *have)
+{
+    if (*have) {
+        return;
+    }
+    if (*in) {
+        if (c == '"') {
+            value[*valueLen] = '\0';
+            *have = 1;
+            *in   = 0;
+        } else if (*valueLen + 1 < cap) {
+            value[(*valueLen)++] = c;
+        } else {
+            /* Longer than any real value: not the attribute after all. */
+            *in       = 0;
+            *valueLen = 0;
+        }
+        return;
+    }
+    if (c == name[*match]) {
+        (*match)++;
+        if (name[*match] == '\0') {
+            *in       = 1;
+            *match    = 0;
+            *valueLen = 0;
+        }
+    } else {
+        *match = (c == name[0]) ? 1 : 0;
+    }
+}
+
+int GazetteGNewsScanFeed(GazetteGNewsScan *s, const char *data, size_t len)
+{
+    size_t i;
+
+    if (s == NULL || data == NULL) {
+        return 0;
+    }
+    for (i = 0; i < len; i++) {
+        ScanOne(data[i], kSigAttr, &s->matchSig, &s->inSig, s->sig,
+                sizeof s->sig, &s->sigLen, &s->haveSig);
+        ScanOne(data[i], kTsAttr, &s->matchTs, &s->inTs, s->ts,
+                sizeof s->ts, &s->tsLen, &s->haveTs);
+        if (s->haveSig && s->haveTs) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/*
+ * The body, percent-encoded the way a browser posts a form. What is inside
+ * is the request 68k-news worked out: an outer array naming the RPC
+ * ("Fbv4je") and, as one JSON string, the inner request with the token,
+ * the timestamp and the signature. The inner string's quotes are escaped
+ * for the outer JSON, and then the whole thing is escaped for the form.
+ */
+static size_t PutEncoded(char *out, size_t cap, size_t len, const char *s)
+{
+    static const char kHex[] = "0123456789ABCDEF";
+
+    for (; *s != '\0'; s++) {
+        unsigned char c = (unsigned char)*s;
+
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' ||
+            c == '~' || c == '/') {
+            if (len + 1 < cap) {
+                out[len] = (char)c;
+            }
+            len++;
+        } else {
+            if (len + 3 < cap) {
+                out[len]     = '%';
+                out[len + 1] = kHex[c >> 4];
+                out[len + 2] = kHex[c & 15];
+            }
+            len += 3;
+        }
+    }
+    return len;
+}
+
+size_t GazetteGNewsBuildBody(const char *token, const char *ts,
+                             const char *sig, char *out, size_t cap)
+{
+    static const char kHead[] =
+        "f.req=";
+    static const char kOpen[] =
+        "[[[\"Fbv4je\",\"[\\\"garturlreq\\\",[[\\\"X\\\",\\\"X\\\",[\\\"X\\\",\\\"X\\\"],"
+        "null,null,1,1,\\\"US:en\\\",null,1,null,null,null,null,null,0,1],"
+        "\\\"X\\\",\\\"X\\\",1,[1,1,1],1,1,null,0,0,null,0],\\\"";
+    static const char kMid[]   = "\\\",";
+    static const char kMid2[]  = ",\\\"";
+    static const char kClose[] = "\\\"]\"]]]";
+    size_t len = 0;
+
+    if (out == NULL || cap == 0 || token == NULL || ts == NULL ||
+        sig == NULL) {
+        return 0;
+    }
+    memcpy(out, kHead, sizeof kHead - 1);
+    len = sizeof kHead - 1;
+    len = PutEncoded(out, cap, len, kOpen);
+    len = PutEncoded(out, cap, len, token);
+    len = PutEncoded(out, cap, len, kMid);
+    len = PutEncoded(out, cap, len, ts);
+    len = PutEncoded(out, cap, len, kMid2);
+    len = PutEncoded(out, cap, len, sig);
+    len = PutEncoded(out, cap, len, kClose);
+
+    if (len >= cap) {
+        out[0] = '\0';
+        return 0;
+    }
+    out[len] = '\0';
+    return len;
+}
+
+/*
+ * The answer is JSON inside JSON: an outer array whose third element is a
+ * string holding the inner array, whose second element is the address.
+ * Read as bytes rather than parsed: after "garturlres" comes \",\" and
+ * then the address up to the next \" — with the inner string's escapes
+ * doubled by the outer one, so an '=' in it arrives as \\u003d.
+ */
+/* Four hex digits, or -1. */
+static long Hex4(const char *s)
+{
+    long v = 0;
+    int  i;
+
+    for (i = 0; i < 4; i++) {
+        char c = s[i];
+        int  d;
+
+        if (c >= '0' && c <= '9')      d = c - '0';
+        else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+        else return -1;
+        v = v * 16 + d;
+    }
+    return v;
+}
+
+int GazetteGNewsParseAnswer(const char *resp, size_t len,
+                            char *url, size_t cap)
+{
+    static const char kMark[] = "garturlres";
+    size_t i, n = 0;
+
+    if (resp == NULL || url == NULL || cap == 0) {
+        return 0;
+    }
+    url[0] = '\0';
+
+    for (i = 0; i + sizeof kMark - 1 <= len; i++) {
+        if (memcmp(resp + i, kMark, sizeof kMark - 1) == 0) {
+            break;
+        }
+    }
+    if (i + sizeof kMark - 1 > len) {
+        return 0;
+    }
+    i += sizeof kMark - 1;
+
+    /* Past the closing \" of "garturlres" and the opening \" of the
+       address: the next two quote characters, whatever escapes them. */
+    {
+        int quotes = 0;
+
+        while (i < len && quotes < 2) {
+            if (resp[i] == '"') {
+                quotes++;
+            }
+            i++;
+        }
+        if (quotes < 2) {
+            return 0;
+        }
+    }
+
+    while (i < len) {
+        char c = resp[i];
+
+        if (c == '\\') {
+            size_t slashes = 0;
+
+            while (i < len && resp[i] == '\\') {
+                slashes++;
+                i++;
+            }
+            if (i >= len) {
+                break;
+            }
+            c = resp[i];
+            if (c == '"') {
+                break;                  /* the inner string's own end */
+            }
+            if (c == 'u' && i + 4 < len) {
+                long v = Hex4(resp + i + 1);
+
+                if (v >= 0 && v < 128) {
+                    c = (char)v;
+                    i += 4;
+                }
+            }
+            /* "\/" is "/", and anything else keeps its character. */
+        } else if (c == '"') {
+            break;
+        }
+        if (n + 1 >= cap) {
+            url[0] = '\0';
+            return 0;
+        }
+        url[n++] = c;
+        i++;
+    }
+    url[n] = '\0';
+
+    return (n > 8 && gz_starts_ci(url, n, "http")) ? 1 : 0;
+}

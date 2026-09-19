@@ -52,6 +52,17 @@ typedef struct GazetteFetch GazetteFetch;
 GazetteFetch *GazetteFetchStart(const char *url,
                                 GazetteFetchSink sink, void *context);
 
+/*
+ * The same, sending a body: a POST with this Content-Type (form-encoded
+ * when NULL). The body is copied, at most 3 KB of it — enough for the one
+ * form Gazette has to fill in, Google News's link decoder, and no more
+ * than the request buffer can hold beside a URL. Returns NULL when it is
+ * larger than that.
+ */
+GazetteFetch *GazetteFetchStartPost(const char *url, const char *contentType,
+                                    const char *body, size_t bodyLen,
+                                    GazetteFetchSink sink, void *context);
+
 /* One slice. Call from the event loop's idle branch until the state is Done
    or Failed. */
 GazetteFetchState GazetteFetchPump(GazetteFetch *f);

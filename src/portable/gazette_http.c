@@ -27,7 +27,10 @@ static void Append(char *out, size_t cap, size_t *len, const char *src)
     *len += n;
 }
 
-size_t GazetteHTTPBuildGet(const GazetteURL *url, char *out, size_t cap)
+/* The request line and the headers common to both methods, up to and not
+   including the blank line that ends the head. */
+static size_t BuildHead(const GazetteURL *url, const char *method,
+                        char *out, size_t cap)
 {
     size_t len = 0;
 
@@ -39,7 +42,8 @@ size_t GazetteHTTPBuildGet(const GazetteURL *url, char *out, size_t cap)
         return 0;
     }
 
-    Append(out, cap, &len, "GET ");
+    Append(out, cap, &len, method);
+    Append(out, cap, &len, " ");
     Append(out, cap, &len, url->path[0] ? url->path : "/");
     Append(out, cap, &len, " HTTP/1.1\r\nHost: ");
     Append(out, cap, &len, url->host);
@@ -72,12 +76,63 @@ size_t GazetteHTTPBuildGet(const GazetteURL *url, char *out, size_t cap)
     Append(out, cap, &len, "\r\nAccept: application/rss+xml, application/atom+xml, "
                            "application/xml, text/xml, */*");
     Append(out, cap, &len, "\r\nAccept-Encoding: identity");
-    Append(out, cap, &len, "\r\nConnection: close\r\n\r\n");
+    Append(out, cap, &len, "\r\nConnection: close");
+    return len;
+}
+
+size_t GazetteHTTPBuildGet(const GazetteURL *url, char *out, size_t cap)
+{
+    size_t len = BuildHead(url, "GET", out, cap);
+
+    if (len == 0) {
+        return 0;
+    }
+    Append(out, cap, &len, "\r\n\r\n");
 
     if (len >= cap) {
         out[0] = '\0';
         return 0;
     }
+    out[len] = '\0';
+    return len;
+}
+
+size_t GazetteHTTPBuildPost(const GazetteURL *url, const char *contentType,
+                            const char *body, size_t bodyLen,
+                            char *out, size_t cap)
+{
+    size_t len = BuildHead(url, "POST", out, cap);
+    char   digits[16];
+    int    n = 0;
+    size_t v = bodyLen;
+
+    if (len == 0 || body == NULL) {
+        return 0;
+    }
+    Append(out, cap, &len, "\r\nContent-Type: ");
+    Append(out, cap, &len, contentType ? contentType
+                                       : "application/x-www-form-urlencoded");
+    Append(out, cap, &len, "\r\nContent-Length: ");
+    do {
+        digits[n++] = (char)('0' + (v % 10));
+        v /= 10;
+    } while (v != 0 && n < (int)sizeof digits);
+    while (n > 0) {
+        char one[2];
+        one[0] = digits[--n];
+        one[1] = '\0';
+        Append(out, cap, &len, one);
+    }
+    Append(out, cap, &len, "\r\n\r\n");
+
+    /* The body is bytes, not text: copied whole rather than appended as a
+       string, and only when the lot fits. */
+    if (len + bodyLen >= cap) {
+        out[0] = '\0';
+        return 0;
+    }
+    memcpy(out + len, body, bodyLen);
+    len += bodyLen;
     out[len] = '\0';
     return len;
 }
