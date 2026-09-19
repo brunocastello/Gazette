@@ -955,7 +955,8 @@ static void FinishTag(GazetteExtract *e)
     if (!e->closing && (IsSkipTag(name) ||
                         TagIsUnwanted(e->tag, e->tagLen, name) ||
                         (strcmp(name, "a") == 0 &&
-                         (e->outLen == 0 || e->out[e->outLen - 1] == '\n') &&
+                         (e->outLen == 0 || e->out[e->outLen - 1] == '\n' ||
+                          IsParagraphMark(e->out[e->outLen - 1])) &&
                          TagIsAffiliateLink(e->tag, e->tagLen)))) {
         /* "<br/>"-style self-closing: it opens nothing, so there is nothing
            to skip until. */
