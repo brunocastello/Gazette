@@ -15,26 +15,19 @@ system's own.
 - **Feeds**: RSS 2.0 and Atom, with auto-discovery from a site's address.
   Feeds live in groups; drag them to reorder. Today, All Unread and Starred
   are standing views across every feed.
-- **Google News**: Top Stories, a country's news and Google's own sections,
-  as Newsstand offered them. An item's real story is fetched, not Google's
-  redirect page.
 - **The article**: opening a headline fetches the page it links to and
   extracts the story — headline, byline and furniture left out — with
-  headings, emphasis, lists and links kept, and up to three photographs drawn
+  headings, emphasis, lists and links kept, and up to three pictures drawn
   in place. The feed's summary stands in when the page cannot be had.
 - **Offline**: every feed is cached, so the window is readable the moment it
   opens and works with the machine unplugged. Read and starred marks survive
   a refresh.
-- **The window**: sidebar, headlines and article, with draggable dividers;
-  an Outlook Express-style toolbar; contextual menus on feeds, groups and
-  headlines; hide read articles, hide read feeds, hide the sidebar or the
-  toolbar. Its size, position and column widths are remembered.
 
 ## Setting it up
 
 Put Gazette anywhere and open it. It starts with Google News Top Stories;
 **File ▸ New Feed…** (⌘N) adds a feed by address, **Import Feeds…** reads an
-OPML file, **Export Feeds…** writes one.
+OPML file, **Export Feeds…** writes one. You can remove the Google News feed if you wish.
 
 **Edit ▸ Preferences…** (⌘;) sets how often feeds refresh and how many
 articles of each are kept. Everything is also a line in `Gazette
@@ -75,7 +68,7 @@ tools/          the icon generators and the Google News topic table
 
 [Newsstand](https://getnewsstand.com) by Alex Robb is the reader this one
 grew up reading, and [NewsProxy](https://github.com/brunocastello/NewsProxy)
-is where Google News's countries, topics and link decoding were worked out.
+is where how Newsstand feeds and articles parsing were worked out.
 [Certainly](https://github.com/minorbug/certainly) and
 [BearSSL](https://bearssl.org) do the cryptography, by way of
 [Gateway](https://github.com/brunocastello/Gateway).
@@ -84,4 +77,4 @@ modern toolchain.
 
 ## Licence
 
-Copyright © 2026 brunocastello. All rights reserved.
+Copyright © 2026 Bruno Castelló. All rights reserved.
