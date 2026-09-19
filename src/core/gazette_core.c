@@ -343,6 +343,30 @@ void GazetteCoreSetShowPhotos(Boolean on)
     gPrefsDirty       = true;
 }
 
+void GazetteCoreSetRefreshMinutes(long minutes)
+{
+    if (minutes < 0) {
+        minutes = 0;
+    }
+    if (!gInited || gPrefs.refreshMinutes == minutes) {
+        return;
+    }
+    gPrefs.refreshMinutes = minutes;
+    gPrefsDirty           = true;
+}
+
+void GazetteCoreSetMaxArticles(long articles)
+{
+    if (articles < 0) {
+        articles = 0;
+    }
+    if (!gInited || gPrefs.maxArticles == articles) {
+        return;
+    }
+    gPrefs.maxArticles = articles;
+    gPrefsDirty        = true;
+}
+
 /* ------------------------------------------------------------------ */
 /* Where the window was                                                */
 /* ------------------------------------------------------------------ */

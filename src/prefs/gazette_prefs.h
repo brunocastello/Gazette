@@ -127,7 +127,7 @@ typedef struct {
     int  feedCount;
 
     long refreshMinutes;    /* 0 = manual refresh only */
-    long maxArticles;       /* per feed; bounds the cache and the list */
+    long maxArticles;       /* per feed; 0 keeps as many as it offers */
     char country[kGazetteCountryLen];   /* for Google News URLs */
 
     /*

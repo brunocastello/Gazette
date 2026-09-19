@@ -128,6 +128,11 @@ void    GazetteCoreSetHideToolbar(Boolean on);
 Boolean GazetteCoreShowPhotos(void);
 void    GazetteCoreSetShowPhotos(Boolean on);
 
+/* The Preferences window's two numbers. Minutes: 0 is manual refresh only.
+   Articles: how many of a feed are kept, 0 for as many as it offers. */
+void    GazetteCoreSetRefreshMinutes(long minutes);
+void    GazetteCoreSetMaxArticles(long articles);
+
 /*
  * Where the window stood when Gazette last quit — its content rectangle in
  * global coordinates — and how wide its two left-hand columns were. False

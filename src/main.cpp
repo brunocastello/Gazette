@@ -74,7 +74,10 @@ static void    HandleMenuChoice(long menuResult);
 
 static void    HandleAbout(void);
 static void    HandleQuit(void);
-static void    HandleRefresh(void);
+static void    HandleRefreshSelection(void);
+static void    HandleRefreshAll(void);
+static void    HandlePreferences(void);
+static void    ReloadCurrentView(void);
 static void    ShowFeed(int feedIndex);
 static void    ShowArticle(int articleIndex);
 static void    ShowGroup(int groupIndex);
@@ -151,6 +154,15 @@ static int gQueueGroup = -1;       /* -1 when no group refresh is running */
    there is no one feed behind the view — and then asks the question again. */
 static int gQueueSmart = -1;
 
+/* And which feed, when Refresh All was asked for with a feed on screen:
+   the queue fetches the lot and then shows that feed again. */
+static int gQueueFeed = -1;
+
+static Boolean QueueRunning(void)
+{
+    return (Boolean)(gQueueGroup >= 0 || gQueueSmart >= 0 || gQueueFeed >= 0);
+}
+
 /*
  * The feed a discovery attempt is still owed, or -1.
  *
@@ -174,7 +186,6 @@ enum {
     /* The hierarchical menus. Their IDs have to be unique among menus and
        nothing more; none of them sits in the bar. 136 is the toolbar's New
        menu, over in platinum_window.c. */
-    kMenuSortBy  = 134,
 
     /*
      * The contextual menus — one per kind of sidebar row and one for a
@@ -219,28 +230,21 @@ enum {
  */
 enum {
     /* 1 Undo, 2 divider, 3 Cut, 5 Paste, 6 Clear, 7 divider */
-    kEditItemCopy = 4,
-    kEditItemFind = 8
+    kEditItemCopy  = 4,
+    kEditItemFind  = 8,
+    /* 9 is a divider */
+    kEditItemPrefs = 10
 };
 
 /* View menu items. */
 enum {
-    kViewItemSortBy      = 1,
-    /* 2 is a divider */
-    kViewItemGroupByFeed = 3,     /* grey until a later phase */
-    kViewItemHideRead    = 4,
-    kViewItemHideFeeds   = 5,
-    kViewItemShowPhotos  = 6,
-    /* 7 is a divider */
-    kViewItemHideSidebar = 8,
-    /* 9 is a divider */
-    kViewItemHideToolbar = 10
-};
-
-/* Sort Articles By: the two orders, one of them checked. */
-enum {
-    kSortItemNewest = 1,
-    kSortItemOldest = 2
+    kViewItemGroupByFeed = 1,     /* grey until a later phase */
+    kViewItemHideRead    = 2,
+    kViewItemHideFeeds   = 3,
+    kViewItemShowPhotos  = 4,
+    /* 5 is a divider */
+    kViewItemHideSidebar = 6,
+    kViewItemHideToolbar = 7
 };
 
 /*
@@ -257,11 +261,12 @@ enum {
     kFeedsItemStarred   = 3,
     /* 4 is a divider */
     kFeedsItemMarkAll   = 5,
-    /* 6 is a divider */
-    kFeedsItemEdit      = 7,
-    kFeedsItemEnabled   = 8,
-    /* 9 is a divider */
-    kFeedsItemDelete    = 10
+    kFeedsItemSort      = 6,      /* Show Oldest First / Show Newest First */
+    /* 7 is a divider */
+    kFeedsItemEdit      = 8,
+    kFeedsItemEnabled   = 9,
+    /* 10 is a divider */
+    kFeedsItemDelete    = 11
 };
 
 /* The contextual menus' items. Each begins with Refresh, then Mark All as
@@ -282,16 +287,17 @@ enum {
 enum {
     kCtxFeedRefresh  = 1,
     kCtxFeedMarkAll  = 2,
-    /* 3 is a divider */
-    kCtxFeedHome     = 4,
-    /* 5 is a divider */
-    kCtxFeedCopyURL  = 6,
-    kCtxFeedCopyHome = 7,
-    /* 8 is a divider */
-    kCtxFeedEdit     = 9,
-    kCtxFeedEnabled  = 10,
-    /* 11 is a divider */
-    kCtxFeedDelete   = 12
+    kCtxFeedSort     = 3,
+    /* 4 is a divider */
+    kCtxFeedHome     = 5,
+    /* 6 is a divider */
+    kCtxFeedCopyURL  = 7,
+    kCtxFeedCopyHome = 8,
+    /* 9 is a divider */
+    kCtxFeedEdit     = 10,
+    kCtxFeedEnabled  = 11,
+    /* 12 is a divider */
+    kCtxFeedDelete   = 13
 };
 enum {
     kCtxArticleMarkRead  = 1,
@@ -460,7 +466,7 @@ static void SetOptionKey(MenuRef menu, short item)
 
 static Boolean BuildMenuBar(void)
 {
-    MenuRef appleMenu, fileMenu, editMenu, viewMenu, sortMenu;
+    MenuRef appleMenu, fileMenu, editMenu, viewMenu;
     MenuRef feedsMenu, articleMenu;
     MenuRef ctx;
 
@@ -492,7 +498,10 @@ static Boolean BuildMenuBar(void)
        are never enabled, so there is nothing for AdjustMenus to decide. */
     AppendMenu(editMenu,
                "\p(Undo/Z;(-;(Cut/X;Copy/C;(Paste/V;(Clear;(-;"
-               "Find\311/F");
+               "Find\311/F;(-;Preferences\311");
+    /* Command-semicolon, set afterwards: a semicolon in AppendMenu's text
+       is the character that separates items. */
+    SetItemCmd(editMenu, kEditItemPrefs, ';');
     InsertMenu(editMenu, 0);
 
     viewMenu = NewMenu(kMenuView, "\pView");
@@ -500,26 +509,11 @@ static Boolean BuildMenuBar(void)
         return false;
     }
     AppendMenu(viewMenu,
-               "\pSort Articles By;(-;"
-               "(Group by Feed;Hide Read Articles/H;Hide Read Feeds/H;"
+               "\p(Group by Feed;Hide Read Articles/H;Hide Read Feeds/H;"
                "Show Photos;(-;"
-               "Hide Sidebar/S;(-;"
-               "Hide Toolbar/T");
+               "Hide Sidebar/S;Hide Toolbar/T");
     SetShiftKey(viewMenu, kViewItemHideFeeds);
     InsertMenu(viewMenu, 0);
-
-    /*
-     * The two hierarchical menus. A submenu goes in with hierMenu (-1) as its
-     * "before" menu, which is what tells the Menu Manager it hangs off an item
-     * rather than sitting in the bar; the item is then pointed at it by ID.
-     */
-    sortMenu = NewMenu(kMenuSortBy, "\pSort Articles By");
-    if (sortMenu == nil) {
-        return false;
-    }
-    AppendMenu(sortMenu, "\pNewest on Top;Oldest on Top");
-    InsertMenu(sortMenu, hierMenu);
-    SetMenuItemHierarchicalID(viewMenu, kViewItemSortBy, kMenuSortBy);
 
     feedsMenu = NewMenu(kMenuFeeds, "\pFeeds");
     if (feedsMenu == nil) {
@@ -527,9 +521,12 @@ static Boolean BuildMenuBar(void)
     }
     /* No Move: a feed or a group is moved by dragging it, which is the
        one gesture that can say where. */
+    /* The sort order stands after Mark All as Read: what is done to a
+       list, next to what is done to a list. The item names the order it
+       would switch to; AdjustMenus keeps it current. */
     AppendMenu(feedsMenu,
                "\pToday/1;All Unread/2;Starred/3;(-;"
-               "Mark All as Read/K;(-;"
+               "Mark All as Read/K;Show Oldest First;(-;"
                "Edit Feed\311;Turn Off;(-;"
                "Delete Feed");
     InsertMenu(feedsMenu, 0);
@@ -555,7 +552,8 @@ static Boolean BuildMenuBar(void)
     if (ctx == nil) {
         return false;
     }
-    AppendMenu(ctx, "\pRefresh;Mark All as Read;(-;Open Home Page;(-;"
+    AppendMenu(ctx, "\pRefresh;Mark All as Read;Show Oldest First;(-;"
+                    "Open Home Page;(-;"
                     "Copy Feed URL;Copy Home Page URL;(-;"
                     "Edit Feed\311;Turn Off;(-;Delete Feed");
     InsertMenu(ctx, hierMenu);
@@ -888,7 +886,7 @@ static void HandleMenuChoice(long menuResult)
             switch (menuItem) {
                 case kFileItemNewFeed:  HandleNewFeed();    break;
                 case kFileItemNewGroup: HandleNewGroup();   break;
-                case kFileItemRefresh:  HandleRefresh();    break;
+                case kFileItemRefresh:  HandleRefreshAll(); break;
                 case kFileItemImport:   HandleImportOPML(); break;
                 case kFileItemExport:   HandleExportOPML(); break;
                 case kFileItemQuit:     HandleQuit();       break;
@@ -902,6 +900,8 @@ static void HandleMenuChoice(long menuResult)
                TextEdit record and a drag in it selects text. */
             if (menuItem == kEditItemCopy) {
                 GazetteUIReaderCopy();
+            } else if (menuItem == kEditItemPrefs) {
+                HandlePreferences();
             } else if (menuItem == kEditItemFind) {
                 HandleFind();
             }
@@ -918,10 +918,6 @@ static void HandleMenuChoice(long menuResult)
             }
             break;
 
-        case kMenuSortBy:
-            HandleSortOrder((Boolean)(menuItem == kSortItemOldest));
-            break;
-
         case kMenuFeeds:
             switch (menuItem) {
                 case kFeedsItemToday:
@@ -934,6 +930,9 @@ static void HandleMenuChoice(long menuResult)
                     GazetteUISelectSmart(kGazetteSmartStarred);
                     break;
                 case kFeedsItemMarkAll:  HandleMarkAllRead();   break;
+                case kFeedsItemSort:
+                    HandleSortOrder((Boolean)!GazetteCoreOldestFirst());
+                    break;
                 case kFeedsItemEdit:     HandleEdit();          break;
                 case kFeedsItemEnabled:  HandleToggleEnabled(); break;
                 case kFeedsItemDelete:   HandleRemove();        break;
@@ -945,7 +944,7 @@ static void HandleMenuChoice(long menuResult)
            handler and nothing else, for the reason the toolbar's are. */
         case kMenuCtxSmart:
             switch (menuItem) {
-                case kCtxSmartRefresh: HandleRefresh();     break;
+                case kCtxSmartRefresh: HandleRefreshSelection(); break;
                 case kCtxSmartMarkAll: HandleMarkAllRead(); break;
                 default: break;
             }
@@ -953,7 +952,7 @@ static void HandleMenuChoice(long menuResult)
 
         case kMenuCtxGroup:
             switch (menuItem) {
-                case kCtxGroupRefresh: HandleRefresh();         break;
+                case kCtxGroupRefresh: HandleRefreshSelection(); break;
                 case kCtxGroupMarkAll: HandleMarkAllRead();     break;
                 case kCtxGroupEnabled: HandleToggleEnabled();   break;
                 case kCtxGroupEdit:    HandleEditGroup();       break;
@@ -964,8 +963,11 @@ static void HandleMenuChoice(long menuResult)
 
         case kMenuCtxFeed:
             switch (menuItem) {
-                case kCtxFeedRefresh:  HandleRefresh();         break;
+                case kCtxFeedRefresh:  HandleRefreshSelection(); break;
                 case kCtxFeedMarkAll:  HandleMarkAllRead();     break;
+                case kCtxFeedSort:
+                    HandleSortOrder((Boolean)!GazetteCoreOldestFirst());
+                    break;
                 case kCtxFeedHome:     HandleOpenHomePage();    break;
                 case kCtxFeedCopyURL:  HandleCopyFeedURL();     break;
                 case kCtxFeedCopyHome: HandleCopyHomeURL();     break;
@@ -1233,7 +1235,6 @@ static void RememberWindowLayout(void)
 static void AdjustMenus(void)
 {
     MenuRef view    = GetMenuHandle(kMenuView);
-    MenuRef sort    = GetMenuHandle(kMenuSortBy);
     MenuRef feeds   = GetMenuHandle(kMenuFeeds);
     MenuRef article = GetMenuHandle(kMenuArticle);
     int     kind    = 0;
@@ -1252,8 +1253,9 @@ static void AdjustMenus(void)
                          GazetteCoreHideReadArticles() ? true : false);
         MacCheckMenuItem(view, kViewItemHideFeeds,
                          GazetteCoreHideReadFeeds() ? true : false);
-        MacCheckMenuItem(view, kViewItemShowPhotos,
-                         GazetteCoreShowPhotos() ? true : false);
+        SetMenuItemText(view, kViewItemShowPhotos,
+                        GazetteCoreShowPhotos() ? "\pHide Photos"
+                                                : "\pShow Photos");
 
         /* The item says what it would do, so it reads as one command rather
            than as a check box whose label is only true half the time. */
@@ -1268,12 +1270,6 @@ static void AdjustMenus(void)
             SetMenuItemText(view, kViewItemHideToolbar, "\pHide Toolbar");
         }
     }
-    if (sort != nil) {
-        Boolean oldest = GazetteCoreOldestFirst();
-
-        MacCheckMenuItem(sort, kSortItemNewest, (Boolean)!oldest);
-        MacCheckMenuItem(sort, kSortItemOldest, oldest);
-    }
 
     /* ---- Feeds ------------------------------------------------- */
     if (feeds != nil) {
@@ -1287,6 +1283,9 @@ static void AdjustMenus(void)
         SetMenuItemText(feeds, kFeedsItemDelete,
                         groupSelected ? "\pDelete Group" : "\pDelete Feed");
         AdjustMarkAllItem(feeds, kFeedsItemMarkAll);
+        SetMenuItemText(feeds, kFeedsItemSort,
+                        GazetteCoreOldestFirst() ? "\pShow Newest First"
+                                                 : "\pShow Oldest First");
         if (feedSelected || groupSelected) {
             MacEnableMenuItem(feeds, kFeedsItemEdit);
             MacEnableMenuItem(feeds, kFeedsItemDelete);
@@ -1420,6 +1419,9 @@ static void ShowSidebarContextMenu(int kind, int index, Point global)
             }
             AdjustRefreshItem(menu, kCtxFeedRefresh);
             AdjustMarkAllItem(menu, kCtxFeedMarkAll);
+            SetMenuItemText(menu, kCtxFeedSort,
+                            GazetteCoreOldestFirst() ? "\pShow Newest First"
+                                                     : "\pShow Oldest First");
             /* The site is learned from the feed on its first refresh; until
                then there is nothing to open or to copy. */
             if (home) {
@@ -2070,6 +2072,36 @@ static void HandleShowPhotos(void)
     }
 }
 
+/*
+ * The Preferences window. Two numbers: how often the clock refreshes, and
+ * how much of a feed is kept. Saved on OK, and the view shown again with
+ * the new limit; the clock starts over, so a shorter interval is not
+ * already overdue.
+ */
+static void HandlePreferences(void)
+{
+    const GazettePrefs *prefs = GazetteCoreGetPrefs();
+    long minutes, articles;
+
+    if (prefs == nil) {
+        return;
+    }
+    minutes  = prefs->refreshMinutes;
+    articles = prefs->maxArticles;
+
+    if (!GazetteAskPreferences(&minutes, &articles)) {
+        return;
+    }
+    if (minutes == prefs->refreshMinutes && articles == prefs->maxArticles) {
+        return;
+    }
+    GazetteCoreSetRefreshMinutes(minutes);
+    GazetteCoreSetMaxArticles(articles);
+    GazetteCoreSavePrefs();
+    gLastRefreshTicks = TickCount();
+    ReloadCurrentView();
+}
+
 static void HandleHideSidebar(void)
 {
     Boolean wanted = GazetteCoreHideSidebar() ? false : true;
@@ -2127,7 +2159,7 @@ static void ToolbarCommand(int command)
 {
     switch (command) {
         case kGazetteCmdHideSidebar:      HandleHideSidebar();      break;
-        case kGazetteCmdRefresh:          HandleRefresh();          break;
+        case kGazetteCmdRefresh:          HandleRefreshAll();       break;
         case kGazetteCmdMarkAllRead:      HandleMarkAllRead();      break;
         case kGazetteCmdHideReadArticles: HandleHideReadArticles(); break;
         case kGazetteCmdMarkRead:         HandleMarkRead();         break;
@@ -2345,7 +2377,7 @@ static void ShowFeed(int feedIndex)
         return;
     }
 
-    HandleRefresh();
+    HandleRefreshSelection();
 }
 
 /*
@@ -2549,7 +2581,7 @@ static Boolean AdvanceGroupRefresh(void)
 {
     char message[224];
 
-    if (gQueueGroup < 0 && gQueueSmart < 0) {
+    if (!QueueRunning()) {
         return false;
     }
 
@@ -2572,15 +2604,21 @@ static Boolean AdvanceGroupRefresh(void)
     {
         int group = gQueueGroup;
         int smart = gQueueSmart;
+        int feed  = gQueueFeed;
         int count;
 
         gQueueGroup = -1;
         gQueueSmart = -1;
+        gQueueFeed  = -1;
         gQueueCount = 0;
         gQueueAt    = 0;
 
         if (smart >= 0) {
             ShowSmart(smart);
+            return false;
+        }
+        if (feed >= 0) {
+            ShowFeed(feed);
             return false;
         }
 
@@ -2593,7 +2631,71 @@ static Boolean AdvanceGroupRefresh(void)
     return false;
 }
 
-static void HandleRefresh(void)
+/*
+ * Refresh every feed that is switched on, in turn, and then show again
+ * whatever was on screen — the feed, the group or the standing view. This
+ * is what File > Refresh and the toolbar's button do; the contextual menus
+ * refresh the row they were opened on, see HandleRefreshSelection.
+ */
+static void HandleRefreshAll(void)
+{
+    int kind      = 0;
+    int selection = 0;
+    int i;
+
+    if (GazetteFeedsRefreshGetState() == kGazetteRefreshRunning ||
+        QueueRunning()) {
+        return;                     /* one connection, one fetch */
+    }
+    if (!gNetUp) {
+        GazetteUISetStatus("No network - check the TCP/IP control panel.");
+        return;
+    }
+
+    gQueueCount = 0;
+    gQueueAt    = 0;
+    for (i = 0; i < GazetteCoreFeedCount(); i++) {
+        if (GazetteCoreFeedEnabled(i)) {
+            gQueue[gQueueCount++] = i;
+        }
+    }
+    if (gQueueCount == 0) {
+        GazetteUISetStatus("No feeds are switched on.");
+        return;
+    }
+
+    if (GazetteFeedsCurrentSmart() >= 0) {
+        gQueueSmart = GazetteFeedsCurrentSmart();
+    } else if (GazetteUISelection(&kind, &selection) &&
+               kind == kGazetteRowGroup) {
+        gQueueGroup = selection;
+    } else {
+        gQueueFeed = GazetteUISelectedFeed();
+    }
+    (void)AdvanceGroupRefresh();
+}
+
+/* Show again whatever is on screen, from the caches: after the preferences
+   change how much of a feed is kept, or a queue has refreshed the lot. */
+static void ReloadCurrentView(void)
+{
+    int kind      = 0;
+    int selection = 0;
+
+    if (GazetteFeedsCurrentSmart() >= 0) {
+        ShowSmart(GazetteFeedsCurrentSmart());
+    } else if (GazetteUISelection(&kind, &selection) &&
+               kind == kGazetteRowGroup) {
+        ShowGroup(selection);
+    } else {
+        ShowFeed(GazetteUISelectedFeed());
+    }
+}
+
+/* Refresh the row the contextual menu was opened on: a feed, or every feed
+   of a group, or — for a standing view, which has no one feed behind it —
+   the lot. */
+static void HandleRefreshSelection(void)
 {
     char message[224];
     int  kind      = 0;
@@ -2741,7 +2843,7 @@ static void PumpRefresh(void)
 
     /* Whether what just finished was one feed of a queue. Read before the
        pump, because finishing the queue is what clears it. */
-    queued = (Boolean)(gQueueGroup >= 0 || gQueueSmart >= 0);
+    queued = QueueRunning();
 
     switch (GazetteFeedsRefreshPump()) {
         case kGazetteRefreshDone:
@@ -2838,7 +2940,7 @@ static void CheckAutoRefresh(void)
     if (!gNetUp || GazetteFeedsRefreshGetState() == kGazetteRefreshRunning) {
         return;
     }
-    if (gQueueGroup >= 0 || gQueueSmart >= 0) {
+    if (QueueRunning()) {
         return;                     /* a queued refresh is already running */
     }
     /* A merged view is on screen — a group, or one of the standing views.
@@ -2864,7 +2966,7 @@ static void CheckAutoRefresh(void)
     }
 
     gLastRefreshTicks = TickCount();
-    HandleRefresh();
+    HandleRefreshSelection();
 }
 
 /* ------------------------------------------------------------------ */

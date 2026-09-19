@@ -358,7 +358,7 @@ static void TestPrefsModel(void)
     GazettePrefsSetDefaults(&p);
     CheckLong("defaults ship one feed", p.feedCount, 1);
     CheckLong("default refresh", p.refreshMinutes, 30);
-    CheckLong("default max articles", p.maxArticles, 100);
+    CheckLong("no article limit by default", p.maxArticles, 0);
     CheckLong("newest on top by default", p.oldestFirst, 0);
     CheckLong("nothing is hidden by default", p.hideReadArticles, 0);
     CheckLong("nor are read feeds", p.hideReadFeeds, 0);

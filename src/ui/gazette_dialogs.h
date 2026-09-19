@@ -63,6 +63,12 @@ Boolean GazetteAskName(const char *windowTitle, const char *prompt,
 /* A caution alert with Remove and Cancel. Returns true for Remove. */
 Boolean GazetteConfirmRemove(const char *message);
 
+/* The Preferences window: how often to refresh (0 = never) and how many
+   articles of a feed to keep (0 = all). The values go in as the fields'
+   starting contents and come back changed on OK. Returns false on Cancel
+   or the close box. */
+Boolean GazetteAskPreferences(long *refreshMinutes, long *maxArticles);
+
 #ifdef __cplusplus
 }
 #endif

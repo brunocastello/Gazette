@@ -9,6 +9,8 @@
 
 #include "ui/gazette_dialogs.h"
 
+#include "portable/gazette_portable.h"  /* gz_parse_dec */
+
 #include <Controls.h>
 #include <ControlDefinitions.h>
 #include <Dialogs.h>
@@ -17,13 +19,20 @@
 #include <Menus.h>
 #include <TextUtils.h>
 
+#include <stdio.h>
 #include <string.h>
 
 /* Must match the #defines in Resources/Gazette.r. */
 enum {
     kFeedDialogID   = 129,
     kNameDialogID   = 130,
-    kConfirmAlertID = 131
+    kConfirmAlertID = 131,
+    kPrefsDialogID  = 132
+};
+
+enum {
+    kPrefsItemMinutes  = 4,
+    kPrefsItemArticles = 7
 };
 
 /* Item numbers, in the order the DITLs list them. */
@@ -170,6 +179,31 @@ static pascal Boolean GazetteDialogFilter(DialogRef dialog, EventRecord *event,
             gIdle();
         }
         return false;
+    }
+
+    /*
+     * The Preferences window is a document window run modally, and
+     * ModalDialog knows nothing of a close box or of dragging one of
+     * those: a click in the close box is Cancel, and a drag of the title
+     * bar is a drag.
+     */
+    if (event != NULL && event->what == mouseDown && dialog != NULL) {
+        WindowRef hit  = NULL;
+        short     part = FindWindow(event->where, &hit);
+
+        if (hit == GetDialogWindow(dialog)) {
+            if (part == inGoAway) {
+                if (TrackGoAway(hit, event->where)) {
+                    *item = kItemCancel;
+                }
+                return true;
+            }
+            if (part == inDrag) {
+                DragWindow(hit, event->where, NULL);
+                *item = 0;
+                return true;
+            }
+        }
     }
 
     /* A click on the Group popup: ModalDialog tracks only its items, and
@@ -437,6 +471,55 @@ Boolean GazetteAskName(const char *windowTitle, const char *prompt,
         GetItemText(dialog, kNameItemText, name, cap);
         Trim(name);
         ok = (name[0] != '\0');
+    }
+
+    DisposeDialog(dialog);
+    return ok;
+}
+
+/* A number as the field holds it: digits, or nothing, which is zero. */
+static long ItemNumber(DialogRef dialog, short item)
+{
+    char text[32];
+
+    GetItemText(dialog, item, text, sizeof text);
+    Trim(text);
+    return gz_parse_dec(text, strlen(text), 0);
+}
+
+static void SetItemNumber(DialogRef dialog, short item, long value)
+{
+    char text[32];
+
+    snprintf(text, sizeof text, "%ld", value);
+    SetItemText(dialog, item, text);
+}
+
+Boolean GazetteAskPreferences(long *refreshMinutes, long *maxArticles)
+{
+    DialogRef dialog;
+    Boolean   ok;
+
+    if (refreshMinutes == NULL || maxArticles == NULL) {
+        return false;
+    }
+
+    dialog = GetNewDialog(kPrefsDialogID, NULL, (WindowRef)-1L);
+    if (dialog == NULL) {
+        return false;
+    }
+
+    SetItemNumber(dialog, kPrefsItemMinutes, *refreshMinutes);
+    SetItemNumber(dialog, kPrefsItemArticles, *maxArticles);
+    SelectDialogItemText(dialog, kPrefsItemMinutes, 0, 32767);
+
+    ok = RunDialog(dialog);
+    if (ok) {
+        long minutes  = ItemNumber(dialog, kPrefsItemMinutes);
+        long articles = ItemNumber(dialog, kPrefsItemArticles);
+
+        *refreshMinutes = minutes < 0 ? 0 : minutes;
+        *maxArticles    = articles < 0 ? 0 : articles;
     }
 
     DisposeDialog(dialog);

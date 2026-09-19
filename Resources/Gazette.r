@@ -17,6 +17,7 @@
 #define kFeedDialogID    129
 #define kNameDialogID    130
 #define kConfirmAlertID  131
+#define kPrefsDialogID   132
 
 /* ------------------------------------------------------------------ */
 /* SIZE — memory partition                                             */
@@ -157,6 +158,60 @@ resource 'DITL' (kNameDialogID, "Name") {
 
         { 52, 16, 68, 304 },
         EditText { enabled, "" };
+    }
+};
+
+/*
+ * Preferences. A document window with a close box, the way the About
+ * window is, rather than a movable modal: it is a window of the
+ * application's, opened from the Edit menu, and it closes the way windows
+ * close. The dialog code runs it modally all the same and answers the close
+ * box itself.
+ */
+resource 'DLOG' (kPrefsDialogID, "Preferences") {
+    { 0, 0, 132, 400 },
+    noGrowDocProc,
+    invisible,
+    goAway,
+    0x0,
+    kPrefsDialogID,
+    "Preferences",
+    centerMainScreen
+};
+
+resource 'dlgx' (kPrefsDialogID) {
+    versionZero {
+        kDialogFlagsUseThemeBackground | kDialogFlagsUseThemeControls
+    }
+};
+
+/* Two numbers, each with what it means after it. Item 1 is OK, item 2
+   Cancel; 4 and 7 the fields. */
+resource 'DITL' (kPrefsDialogID, "Preferences") {
+    {
+        { 98, 324, 118, 384 },
+        Button { enabled, "OK" };
+
+        { 98, 252, 118, 312 },
+        Button { enabled, "Cancel" };
+
+        { 22, 16, 38, 152 },
+        StaticText { disabled, "Refresh feeds every" };
+
+        { 20, 156, 36, 204 },
+        EditText { enabled, "" };
+
+        { 22, 212, 38, 384 },
+        StaticText { disabled, "minutes. Zero never refreshes." };
+
+        { 54, 16, 70, 152 },
+        StaticText { disabled, "Keep at most" };
+
+        { 52, 156, 68, 204 },
+        EditText { enabled, "" };
+
+        { 54, 212, 70, 384 },
+        StaticText { disabled, "articles per feed. Zero keeps all." };
     }
 };
 

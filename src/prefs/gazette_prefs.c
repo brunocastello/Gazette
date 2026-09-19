@@ -24,7 +24,7 @@ static const char kStarterFeedTitle[] = "Google News - Top Stories";
 
 enum {
     kDefaultRefreshMinutes = 30,
-    kDefaultMaxArticles    = 100
+    kDefaultMaxArticles    = 0      /* as many as the feed offers */
 };
 
 /*
@@ -1061,8 +1061,8 @@ int GazettePrefsParse(const char *text, size_t len, GazettePrefs *p)
     if (p->refreshMinutes < 0) {
         p->refreshMinutes = 0;
     }
-    if (p->maxArticles < 1) {
-        p->maxArticles = 1;
+    if (p->maxArticles < 0) {
+        p->maxArticles = 0;         /* 0: as many as the feed offers */
     }
     if (p->country[0] == '\0') {
         gz_copy_n(p->country, sizeof p->country, "US", 2);
