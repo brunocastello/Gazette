@@ -9,6 +9,8 @@
 
 An RSS and Atom reader for Mac OS 9, in the spirit of Newsstand.
 
+<img width="1179" height="708" alt="Gazette" src="https://github.com/user-attachments/assets/68bce055-8224-4191-8406-175a6c9888ee" />
+
 Gazette is a native Carbon application for PowerPC Macs. It fetches feeds
 over modern TLS itself, reads the whole article rather than the summary, shows
 the pictures in it, and looks modern — the three-pane window, the toolbar, the Platinum controls are all the
