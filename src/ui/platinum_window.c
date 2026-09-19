@@ -1712,19 +1712,22 @@ static void Layout(void)
            is what the hidden sidebar's groove has to be. */
         /* From the rule's row, so the groove cuts through the rule the way
            OE's does rather than starting beneath it. */
-        /* Down to the status strip's rule and not through it: the grooves
-           end on the rule, the way the scroll bars beside them do, and the
-           strip is one piece under all three columns. They used to run on
-           to the window's bottom edge, and cut the rule where they crossed
-           it. */
+        /* And down through the status strip's rule, one row, and no
+           further: the groove crosses the rule at the bottom the way it
+           crosses the toolbar's at the top, and the strip beneath is one
+           piece. They used to run on to the window's bottom edge, which
+           divided the strip; stopped a row short (tried) the two ends of
+           each groove did not match. */
         if (noSidebar) {
             SetRect(&gVDivider, 0, 0, 0, 0);
         } else {
             SetRect(&gVDivider, split, rule,
-                    (short)(split + kVDividerWidth), contentBottom);
+                    (short)(split + kVDividerWidth),
+                    (short)(contentBottom + 1));
         }
         SetRect(&gVDivider2, split2, rule,
-                (short)(split2 + kVDividerWidth), contentBottom);
+                (short)(split2 + kVDividerWidth),
+                (short)(contentBottom + 1));
 
         /*
          * A pane starts one pixel *inside* the header above it, so that its
@@ -4943,6 +4946,9 @@ static void DrawStatusText(void)
                       (short)(right - gStatusRect.left - 2 * kTextInset - 8));
     }
     ForeColor(blackColor);
+
+    /* The rule just drawn ran across the grooves' last row. */
+    DrawDividers();
 }
 
 /* The two grooves, with their grab handles. */
