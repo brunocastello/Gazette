@@ -524,6 +524,21 @@ static void PutChar(GazetteExtract *e, char c)
     e->out[e->outLen++] = c;
 }
 
+/* The marks at the head of a paragraph, and the ones that open a face:
+   neither wants a space after it, and a paragraph mark with nothing after
+   it was a paragraph with nothing in it. */
+static int IsParagraphMark(char c)
+{
+    return c == (char)kGazettePhotoMarker || c == (char)kGazetteMarkHeading ||
+           c == (char)kGazetteMarkListItem || c == (char)kGazetteMarkQuote;
+}
+
+static int IsOpeningMark(char c)
+{
+    return c == (char)kGazetteMarkBoldOn || c == (char)kGazetteMarkItalicOn ||
+           c == (char)kGazetteMarkLinkOn;
+}
+
 /*
  * A run of whitespace in the source is not a paragraph break — HTML is
  * formatted for the person editing it. Every whitespace character becomes a
@@ -534,9 +549,11 @@ static void PutText(GazetteExtract *e, char c)
 {
     if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f') {
         /* Leading space, or a second one: the flattener would drop it, and
-           not writing it leaves room for text instead. */
+           not writing it leaves room for text instead. A space right after
+           a paragraph's mark is a leading space too. */
         if (e->outLen == 0 || e->out[e->outLen - 1] == ' ' ||
-            e->out[e->outLen - 1] == '\n') {
+            e->out[e->outLen - 1] == '\n' ||
+            IsParagraphMark(e->out[e->outLen - 1])) {
             return;
         }
         PutChar(e, ' ');
@@ -560,6 +577,11 @@ static void PutText(GazetteExtract *e, char c)
    very start, and never twice in a row. */
 static void PutBreak(GazetteExtract *e)
 {
+    /* An empty heading, list item or quotation is nothing at all. */
+    while (e->outLen > 0 && IsParagraphMark(e->out[e->outLen - 1]) &&
+           e->out[e->outLen - 1] != (char)kGazettePhotoMarker) {
+        e->outLen--;
+    }
     if (e->outLen == 0 || e->out[e->outLen - 1] == '\n') {
         return;
     }
@@ -731,6 +753,19 @@ static int NoteImage(GazetteExtract *e)
 /* ------------------------------------------------------------------ */
 /* Tags                                                                */
 /* ------------------------------------------------------------------ */
+
+/* The space an inline tag stands for, unless the line or a mark has just
+   begun, or a space is already there. */
+static void InlineSpace(GazetteExtract *e)
+{
+    if (e->outLen > 0 && e->out[e->outLen - 1] != ' ' &&
+        e->out[e->outLen - 1] != '\n' &&
+        !IsParagraphMark(e->out[e->outLen - 1]) &&
+        !IsOpeningMark(e->out[e->outLen - 1])) {
+        PutChar(e, ' ');
+        e->tagSpace = 1;
+    }
+}
 
 static void FinishTag(GazetteExtract *e)
 {
@@ -935,11 +970,68 @@ static void FinishTag(GazetteExtract *e)
 
     if (GazetteHtmlIsBlockTag(name)) {
         PutBreak(e);
-    } else if (e->outLen > 0 && e->out[e->outLen - 1] != ' ' &&
-               e->out[e->outLen - 1] != '\n') {
-        /* An inline tag still separates words: "a<b>b</b>c" is three. */
-        PutChar(e, ' ');
-        e->tagSpace = 1;
+        /* What kind of paragraph opens: a heading, a list item, a
+           quotation — and a paragraph inside a quotation is one too. */
+        if (!e->closing) {
+            if (name[0] == 'h' && name[1] >= '1' && name[1] <= '6' &&
+                name[2] == '\0') {
+                PutChar(e, (char)kGazetteMarkHeading);
+            } else if (strcmp(name, "li") == 0) {
+                PutChar(e, (char)kGazetteMarkListItem);
+            } else if (strcmp(name, "blockquote") == 0) {
+                e->quoteDepth++;
+                PutChar(e, (char)kGazetteMarkQuote);
+            } else if (e->quoteDepth > 0 && strcmp(name, "p") == 0) {
+                PutChar(e, (char)kGazetteMarkQuote);
+            }
+        } else if (strcmp(name, "blockquote") == 0 && e->quoteDepth > 0) {
+            e->quoteDepth--;
+        }
+        return;
+    }
+
+    /*
+     * An inline tag. It still separates words — "a<b>b</b>c" is three —
+     * and the ones the reader can show leave a mark either side of their
+     * text: bold, italic, and a link's underline. A link is only a link
+     * with an address on it.
+     */
+    {
+        char on = 0, off = 0;
+
+        if (strcmp(name, "b") == 0 || strcmp(name, "strong") == 0) {
+            on  = (char)kGazetteMarkBoldOn;
+            off = (char)kGazetteMarkBoldOff;
+        } else if (strcmp(name, "i") == 0 || strcmp(name, "em") == 0) {
+            on  = (char)kGazetteMarkItalicOn;
+            off = (char)kGazetteMarkItalicOff;
+        } else if (strcmp(name, "a") == 0) {
+            const char *href;
+            size_t      hrefLen;
+
+            if (!e->closing) {
+                if (GazetteHtmlAttr(e->tag, e->tagLen, "href", &href,
+                                    &hrefLen) && hrefLen > 0) {
+                    on = (char)kGazetteMarkLinkOn;
+                    e->linkDepth++;
+                }
+            } else if (e->linkDepth > 0) {
+                off = (char)kGazetteMarkLinkOff;
+                e->linkDepth--;
+            }
+        }
+
+        if (!e->closing) {
+            InlineSpace(e);
+            if (on != 0) {
+                PutChar(e, on);
+            }
+        } else {
+            if (off != 0) {
+                PutChar(e, off);
+            }
+            InlineSpace(e);
+        }
     }
 }
 
@@ -1072,14 +1164,23 @@ static size_t DropTrailers(char *s, size_t len)
         while (end < len && s[end] != '\n') {
             end++;
         }
-        for (k = 0; k < sizeof kTrailerStarts / sizeof kTrailerStarts[0]; k++) {
-            if (gz_starts_ci(s + in, end - in, kTrailerStarts[k])) {
-                drop = 1;
-                break;
+        {
+            /* Past the paragraph's own marks, to its words. */
+            size_t at = in;
+
+            while (at < end && GazetteIsMark(s[at])) {
+                at++;
             }
-        }
-        if (!drop && end > in && ParagraphIsPlug(s + in, end - in)) {
-            drop = 1;
+            for (k = 0; k < sizeof kTrailerStarts / sizeof kTrailerStarts[0];
+                 k++) {
+                if (gz_starts_ci(s + at, end - at, kTrailerStarts[k])) {
+                    drop = 1;
+                    break;
+                }
+            }
+            if (!drop && end > at && ParagraphIsPlug(s + at, end - at)) {
+                drop = 1;
+            }
         }
         if (!drop) {
             if (out > 0) {

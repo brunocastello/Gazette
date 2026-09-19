@@ -100,9 +100,32 @@ enum {
      */
     kGazettePhotoMarker = 1,
 
+    /*
+     * The marks that carry what little of the markup the reader can show:
+     * the bytes below a space that no text uses, the way the photo marker
+     * is. Three stand at the head of a paragraph and say what kind it is;
+     * the rest come in pairs and switch a face on and off in the middle of
+     * one. None is whitespace to the flattener, and all pass through the
+     * transliterator, so they reach the reader pane as written — which
+     * takes them out again and styles the text between them.
+     */
+    kGazetteMarkHeading   = 2,      /* the paragraph is a heading: bold */
+    kGazetteMarkListItem  = 3,      /* a list item: a bullet before it */
+    kGazetteMarkQuote     = 4,      /* a quotation: italic */
+    kGazetteMarkBoldOn    = 5,
+    kGazetteMarkBoldOff   = 6,
+    kGazetteMarkItalicOn  = 14,
+    kGazetteMarkItalicOff = 15,
+    kGazetteMarkLinkOn    = 16,     /* underlined */
+    kGazetteMarkLinkOff   = 17,
+
     /* Columns a table's header row is remembered for; see FinishTag. */
     kGazetteTableColumns = 4
 };
+
+/* Whether a byte is one of the marks above, the photo marker included. */
+#define GazetteIsMark(c) ((unsigned char)(c) < 0x20 && (c) != '\n' && \
+                          (c) != '\r' && (c) != '\t')
 
 /* One picture the page carries: where it is, as the page wrote it (resolved
    against the page's own address by whoever fetches it), and what the page
@@ -179,6 +202,9 @@ typedef struct {
     /* The last byte written was a space an inline tag put there, not one
        the page wrote: punctuation that follows closes up to the word. */
     int    tagSpace;
+
+    int    quoteDepth;              /* inside <blockquote>, how deep */
+    int    linkDepth;               /* inside <a href>, how deep */
 
     /* A table being written out; see the table notes in FinishTag. */
     int    inTable;

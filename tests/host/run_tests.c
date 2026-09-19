@@ -2572,7 +2572,7 @@ static void TestExtractTrailers(void)
     CheckStr("but a shop link in a sentence keeps its words",
              Extract(&e, "<body><p>He tested the <a href=\"https://amzn.to/x\">"
                          "Apple Watch</a>'s step counter.</p></body>", 0),
-             "He tested the Apple Watch's step counter.");
+             "He tested the \020Apple Watch\021's step counter.");
     CheckStr("so does the author box, by its class",
              Extract(&e, "<body><article><p>The story.</p>"
                          "<div class=\"author-bio\"><p>Marcus is a podcaster.</p></div>"
@@ -2591,7 +2591,7 @@ static void TestExtractTrailers(void)
                          "<td>6.3-inch</td></tr>"
                          "</table><p>After.</p></body>", 0),
              "Compare:\niPhone 15 Pro (2023): Titanium\niPhone 18 Pro (2026): Aluminum\n"
-             "iPhone 15 Pro (2023): 15 Pro: 6.1-inch / 15 Pro Max: 6.7-inch\n"
+             "iPhone 15 Pro (2023): \00515 Pro\006: 6.1-inch / \00515 Pro Max\006: 6.7-inch\n"
              "iPhone 18 Pro (2026): 6.3-inch\nAfter.");
     CheckStr("a table without one is rows of cells told apart",
              Extract(&e, "<body><p>Compare:</p><table>"
@@ -2613,7 +2613,7 @@ static void TestExtractTrailers(void)
                          "<a href=\"/p.jpg\"><img src=\"/p.jpg\" alt=\"Torcida\">Torcida do Vasco</a>"
                          "</td></tr></table></div> <BR> <BR>O Vasco tera um domingo. <BR> <BR>"
                          "A acao esta prevista.</div></div></body>", 0),
-             "\001\nTorcida do Vasco\nO Vasco tera um domingo.\nA acao esta prevista.");
+             "\020\n\001\nTorcida do Vasco\021\nO Vasco tera um domingo.\nA acao esta prevista.");
     CheckStr("but corporate is not corpo",
              Extract(&e, "<body><p>Intro.</p><div class=\"corporate\"><p>Menu</p></div>"
                          "<p>Text.</p></body>", 0),
@@ -2624,7 +2624,7 @@ static void TestExtractTrailers(void)
     CheckStr("no space before the punctuation after a link",
              Extract(&e, "<body><p>Here's <a href=\"/x\">WABetaInfo</a>: "
                          "follow <a href=\"/y\">this link</a>.</p></body>", 0),
-             "Here's WABetaInfo: follow this link.");
+             "Here's \020WABetaInfo\021: follow \020this link\021.");
 }
 
 static void TestExtract(void)
@@ -2683,7 +2683,21 @@ static void TestExtract(void)
              "One two three");
 
     CheckStr("an inline tag still separates words",
-             Extract(&e, "<p>a<b>b</b>c</p>", 0), "a b c");
+             Extract(&e, "<p>a<b>b</b>c</p>", 0), "a \005b\006 c");
+
+    /* The marks the reader turns into faces: a heading is a paragraph of
+       its own, a list item and a quotation say what they are, and bold,
+       italic and a link's underline come in pairs. */
+    CheckStr("headings, lists, quotes and faces are marked",
+             Extract(&e, "<body><p>Intro.</p><h2>A Heading</h2>"
+                         "<ul><li>One</li><li><em>Two</em></li></ul>"
+                         "<blockquote><p>Said so.</p></blockquote>"
+                         "<p>Plain <strong>bold</strong> text.</p></body>", 0),
+             "Intro.\n\002A Heading\n\003One\n\003\016Two\017\n\004Said so.\n"
+             "Plain \005bold\006 text.");
+    CheckStr("a link without an address is not a link",
+             Extract(&e, "<body><p>See <a name=\"x\">this</a> here.</p></body>", 0),
+             "See this here.");
 
     /* A comment may hold anything at all, '>' included, and pages park whole
        blocks of markup inside one. It joins the text either side of it rather

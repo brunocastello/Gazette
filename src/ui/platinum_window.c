@@ -2262,6 +2262,39 @@ static int PhotoSlotForMarker(int k)
 }
 
 /*
+ * The faces the body wears, as runs over the composed text. The extractor
+ * left marks in the text — see kGazetteMarkHeading and its neighbours —
+ * and AppendBody takes each out as it copies, noting where the face it
+ * switches begins and ends; SetReaderText applies the runs once the text
+ * is in the record. A heading is a bold paragraph, a quotation an italic
+ * one, and the inline marks add to whatever the paragraph is.
+ */
+typedef struct {
+    short start;
+    short end;
+    short face;
+} StyleRun;
+
+enum { kMaxStyleRuns = 400 };
+
+static StyleRun gStyleRuns[kMaxStyleRuns];
+static int      gStyleRunCount;
+
+/* Close the run in progress, if it wore anything, and start the next. */
+static void NoteFace(size_t at, short *runStart, short *runFace, short face)
+{
+    if (*runFace != normal && (size_t)*runStart < at &&
+        gStyleRunCount < kMaxStyleRuns) {
+        gStyleRuns[gStyleRunCount].start = *runStart;
+        gStyleRuns[gStyleRunCount].end   = (short)at;
+        gStyleRuns[gStyleRunCount].face  = *runFace;
+        gStyleRunCount++;
+    }
+    *runStart = (short)at;
+    *runFace  = face;
+}
+
+/*
  * The body arrives with its paragraphs marked by newlines. TextEdit breaks
  * on carriage returns, and a paragraph wants a blank line after it, so each
  * run of newlines becomes exactly two — however many the extractor left.
@@ -2271,16 +2304,29 @@ static int PhotoSlotForMarker(int k)
  * with the blank line that would have separated the paragraphs folded into
  * the run's air; when it does not — not coming, photos off, unreadable —
  * the paragraph is dropped and the text closes over it.
+ *
+ * The style marks come out as the text is copied; see StyleRun. A list
+ * item gets a bullet in front of it, which is the one thing about a list
+ * TextEdit can show.
  */
 static size_t AppendBody(size_t used, const char *body)
 {
-    const char *p       = body;
-    int         marker  = 0;
-    Boolean     first   = true;
+    const char *p        = body;
+    int         marker   = 0;
+    Boolean     first    = true;
     Boolean     afterRun = false;
+    short       inline_  = 0;           /* bold, italic, underline, as set */
+    short       runStart = (short)used;
+    short       runFace  = normal;
+
+    gStyleRunCount = 0;
 
     while (*p != '\0') {
         const char *end = p;
+        const char *q;
+        short       paragraph = normal;
+        Boolean     bullet    = false;
+        Boolean     any       = false;
 
         while (*end != '\0' && *end != '\n') {
             end++;
@@ -2294,18 +2340,72 @@ static size_t AppendBody(size_t used, const char *body)
                 if (!first && !afterRun) {
                     used = AppendChar(used, '\r');   /* ends the paragraph */
                 }
+                NoteFace(used, &runStart, &runFace, normal);
                 used     = AppendPhotoRun(used, slot, h, first ? 0 : 1);
                 first    = false;
                 afterRun = true;
             }
-        } else if (end > p) {
+            p = end;
+            while (*p == '\n') {
+                p++;
+            }
+            continue;
+        }
+
+        /* What kind of paragraph, from the marks at its head; then whether
+           there are any words in it at all. */
+        for (q = p; q < end && GazetteIsMark(*q); q++) {
+            if (*q == (char)kGazetteMarkHeading) {
+                paragraph |= bold;
+            } else if (*q == (char)kGazetteMarkQuote) {
+                paragraph |= italic;
+            } else if (*q == (char)kGazetteMarkListItem) {
+                bullet = true;
+            }
+        }
+        for (q = p; q < end; q++) {
+            if (!GazetteIsMark(*q)) {
+                any = true;
+                break;
+            }
+        }
+
+        if (any) {
             if (!first && !afterRun) {
                 used = AppendChar(used, '\r');
                 used = AppendChar(used, '\r');
             }
-            used     = AppendText(used, p, (size_t)(end - p));
             first    = false;
             afterRun = false;
+            NoteFace(used, &runStart, &runFace, (short)(paragraph | inline_));
+            if (bullet) {
+                used = AppendChar(used, '\245');   /* MacRoman bullet */
+                used = AppendChar(used, ' ');
+            }
+        }
+
+        for (q = p; q < end; q++) {
+            char c = *q;
+
+            if (GazetteIsMark(c)) {
+                short was = inline_;
+
+                switch ((unsigned char)c) {
+                    case kGazetteMarkBoldOn:    inline_ |= bold;       break;
+                    case kGazetteMarkBoldOff:   inline_ &= ~bold;      break;
+                    case kGazetteMarkItalicOn:  inline_ |= italic;     break;
+                    case kGazetteMarkItalicOff: inline_ &= ~italic;    break;
+                    case kGazetteMarkLinkOn:    inline_ |= underline;  break;
+                    case kGazetteMarkLinkOff:   inline_ &= ~underline; break;
+                    default: break;
+                }
+                if (any && inline_ != was) {
+                    NoteFace(used, &runStart, &runFace,
+                             (short)(paragraph | inline_));
+                }
+                continue;
+            }
+            used = AppendChar(used, c);
         }
 
         p = end;
@@ -2313,7 +2413,19 @@ static size_t AppendBody(size_t used, const char *body)
             p++;
         }
     }
+    NoteFace(used, &runStart, &runFace, normal);
     return used;
+}
+
+/* The faces AppendBody noted, over text that is now in the record. */
+static void ApplyStyleRuns(void)
+{
+    int i;
+
+    for (i = 0; i < gStyleRunCount; i++) {
+        ApplyRunStyle(gStyleRuns[i].start, gStyleRuns[i].end,
+                      gStyleRuns[i].face, gReadSize);
+    }
 }
 
 /*
@@ -2490,6 +2602,8 @@ static void SetReaderText(void)
     gArticleByline[0] = '\0';
     gReaderBodyStart  = 0;
 
+    gStyleRunCount = 0;             /* the runs are the body's, composed below */
+
     /* The pictures' places are composed afresh below; the decoded ones are
        kept only while they are still this article's. */
     if (gPhotoArticle != GazettePhotosArticle()) {
@@ -2610,6 +2724,8 @@ static void SetReaderText(void)
                      gLabelSize);
         ApplyRunFont((long)byline, (long)gap, gReadFont, normal,
                      (short)(gReadSize + kReaderRuleAir));
+        /* And what the body's markup asked for, over the body. */
+        ApplyStyleRuns();
     }
 
     TESetSelect(0, 0, gReaderTE);
