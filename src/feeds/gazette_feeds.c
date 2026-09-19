@@ -175,8 +175,15 @@ enum { kMacToUnixEpoch = 2082844800L };
  * property of an article rather than of the file an article happens to be
  * cached in -- an article opened in a group view belongs to a feed whose
  * cache is not the one being written. See gazette_index.h.
+ *
+ * 6: the pipeline changed twice on 2026-09-19 and both changes are in the
+ * file. A body is the feed's rich text now, where it offers one, without the
+ * link-only trailer it ends with; and a linked-list entry's link is the post
+ * on the feed's site, not the page it is about -- which is the key the index
+ * keeps read state under, so an old file would show the old links beside
+ * the new ones.
  */
-static const char kCacheMagic[] = "GAZETTE-CACHE 5";
+static const char kCacheMagic[] = "GAZETTE-CACHE 6";
 
 static void SaveCache(const char *url, long fetchedAt);
 
