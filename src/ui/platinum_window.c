@@ -125,6 +125,7 @@ enum {
      * drawn in it — only its metrics are ever used.
      */
     kReaderRuleAir = 4,
+    kHeadingStep   = 2,         /* a heading is this much larger than the body */
 
     /*
      * A photograph in the article fills the column, the way NetNewsWire's
@@ -2275,6 +2276,7 @@ typedef struct {
     short start;
     short end;
     short face;
+    short size;                 /* the body's, or a heading's step up */
 } ReaderFace;
 
 enum { kMaxStyleRuns = 400 };
@@ -2282,18 +2284,25 @@ enum { kMaxStyleRuns = 400 };
 static ReaderFace gStyleRuns[kMaxStyleRuns];
 static int      gStyleRunCount;
 
-/* Close the run in progress, if it wore anything, and start the next. */
-static void NoteFace(size_t at, short *runStart, short *runFace, short face)
+/* Close the run in progress, if it wore anything, and start the next. A
+   run's size is the paragraph's, so a heading's words are all one size
+   whatever spans they carry. */
+static short gRunSize;
+
+static void NoteFace(size_t at, short *runStart, short *runFace, short face,
+                     short size)
 {
-    if (*runFace != normal && (size_t)*runStart < at &&
-        gStyleRunCount < kMaxStyleRuns) {
+    if ((*runFace != normal || gRunSize != gReadSize) &&
+        (size_t)*runStart < at && gStyleRunCount < kMaxStyleRuns) {
         gStyleRuns[gStyleRunCount].start = *runStart;
         gStyleRuns[gStyleRunCount].end   = (short)at;
         gStyleRuns[gStyleRunCount].face  = *runFace;
+        gStyleRuns[gStyleRunCount].size  = gRunSize;
         gStyleRunCount++;
     }
     *runStart = (short)at;
     *runFace  = face;
+    gRunSize  = size;
 }
 
 /*
@@ -2322,11 +2331,13 @@ static size_t AppendBody(size_t used, const char *body)
     short       runFace  = normal;
 
     gStyleRunCount = 0;
+    gRunSize       = gReadSize;
 
     while (*p != '\0') {
         const char *end = p;
         const char *q;
         short       paragraph = normal;
+        short       size      = gReadSize;
         Boolean     bullet    = false;
         Boolean     any       = false;
 
@@ -2342,7 +2353,7 @@ static size_t AppendBody(size_t used, const char *body)
                 if (!first && !afterRun) {
                     used = AppendChar(used, '\r');   /* ends the paragraph */
                 }
-                NoteFace(used, &runStart, &runFace, normal);
+                NoteFace(used, &runStart, &runFace, normal, gReadSize);
                 used     = AppendPhotoRun(used, slot, h, first ? 0 : 1);
                 first    = false;
                 afterRun = true;
@@ -2365,6 +2376,7 @@ static size_t AppendBody(size_t used, const char *body)
         for (q = p; q < end && GazetteIsMark(*q); q++) {
             if (*q == (char)kGazetteMarkHeading) {
                 paragraph |= bold;
+                size = (short)(gReadSize + kHeadingStep);
             } else if (*q == (char)kGazetteMarkQuote) {
                 paragraph |= italic;
             } else if (*q == (char)kGazetteMarkListItem) {
@@ -2385,7 +2397,8 @@ static size_t AppendBody(size_t used, const char *body)
             }
             first    = false;
             afterRun = false;
-            NoteFace(used, &runStart, &runFace, (short)(paragraph | inline_));
+            NoteFace(used, &runStart, &runFace, (short)(paragraph | inline_),
+                     size);
             if (bullet) {
                 used = AppendChar(used, '\245');   /* MacRoman bullet */
                 used = AppendChar(used, ' ');
@@ -2409,7 +2422,7 @@ static size_t AppendBody(size_t used, const char *body)
                 }
                 if (any && inline_ != was) {
                     NoteFace(used, &runStart, &runFace,
-                             (short)(paragraph | inline_));
+                             (short)(paragraph | inline_), size);
                 }
                 continue;
             }
@@ -2421,7 +2434,7 @@ static size_t AppendBody(size_t used, const char *body)
             p++;
         }
     }
-    NoteFace(used, &runStart, &runFace, normal);
+    NoteFace(used, &runStart, &runFace, normal, gReadSize);
     return used;
 }
 
@@ -2432,7 +2445,7 @@ static void ApplyStyleRuns(void)
 
     for (i = 0; i < gStyleRunCount; i++) {
         ApplyRunStyle(gStyleRuns[i].start, gStyleRuns[i].end,
-                      gStyleRuns[i].face, gReadSize);
+                      gStyleRuns[i].face, gStyleRuns[i].size);
     }
 }
 
