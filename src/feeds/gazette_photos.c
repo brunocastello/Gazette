@@ -41,7 +41,6 @@ static Block               *gBlock;
 static GazetteFetch        *gFetch;
 static Photo                gPhotos[kGazetteMaxPhotos];
 static int                  gCount;
-static int                  gHasLead;
 static int                  gArticle   = -1;
 static int                  gCurrent   = -1;        /* the one being fetched */
 static long                 gUsed;                  /* of the block's data */
@@ -181,7 +180,7 @@ static int Begin(void)
 }
 
 int GazettePhotosStart(int articleIndex, const char *baseURL,
-                       const GazettePhotoRef *refs, int count, int hasLead)
+                       const GazettePhotoRef *refs, int count)
 {
     int i, kept = 0;
 
@@ -223,7 +222,6 @@ int GazettePhotosStart(int articleIndex, const char *baseURL,
     }
 
     gCount   = kept;
-    gHasLead = hasLead ? 1 : 0;
     gArticle = articleIndex;
 
     if (LineIsBusy()) {
@@ -261,7 +259,6 @@ void GazettePhotosCancel(void)
     }
     memset(gPhotos, 0, sizeof gPhotos);
     gCount   = 0;
-    gHasLead = 0;
     gArticle = -1;
     gUsed    = 0;
     gWanted  = 0;
@@ -325,11 +322,6 @@ int GazettePhotosArticle(void)
 int GazettePhotosCount(void)
 {
     return gArticle >= 0 ? gCount : 0;
-}
-
-int GazettePhotosHasLead(void)
-{
-    return gArticle >= 0 ? gHasLead : 0;
 }
 
 int GazettePhotosState(int i)

@@ -2392,19 +2392,18 @@ static void ResumeFullText(void)
 static void StartPhotos(void)
 {
     const GazettePhotoRef *refs;
-    int                    hasLead;
     int                    count;
     int                    article = GazetteFeedsFullTextArticle();
 
     if (!GazetteCoreShowPhotos() || article < 0) {
         return;
     }
-    count = GazetteFeedsFullTextPhotos(&refs, &hasLead);
+    count = GazetteFeedsFullTextPhotos(&refs);
     if (count <= 0) {
         return;
     }
     (void)GazettePhotosStart(article, GazetteFeedsFullTextFinalURL(),
-                             refs, count, hasLead);
+                             refs, count);
 }
 
 static void ResumePhotos(void)

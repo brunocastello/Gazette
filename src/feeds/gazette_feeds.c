@@ -116,7 +116,6 @@ static char                gFullError[192];
    Copied out of the extractor at the finish, since the extractor goes. */
 static GazettePhotoRef     gFullPhotos[kGazetteMaxPhotos];
 static int                 gFullPhotoCount;
-static int                 gFullHasLead;
 static char                gFullFinalURL[kGazetteArticleLinkLen];
 
 /*
@@ -743,7 +742,6 @@ void GazetteFeedsFullTextCancel(void)
     gFullText[0]        = '\0';
     gFullError[0]       = '\0';
     gFullPhotoCount     = 0;
-    gFullHasLead        = 0;
     gFullFinalURL[0]    = '\0';
     gFullArticle        = -1;
     gPendingFullArticle = -1;
@@ -799,13 +797,10 @@ const char *GazetteFeedsFullTextErrorText(void)
     return gFullError;
 }
 
-int GazetteFeedsFullTextPhotos(const GazettePhotoRef **refs, int *hasLead)
+int GazetteFeedsFullTextPhotos(const GazettePhotoRef **refs)
 {
     if (refs != NULL) {
         *refs = gFullPhotos;
-    }
-    if (hasLead != NULL) {
-        *hasLead = gFullHasLead;
     }
     return gFullArticle >= 0 ? gFullPhotoCount : 0;
 }
@@ -942,7 +937,6 @@ GazetteRefreshState GazetteFeedsFullTextPump(void)
         int i;
 
         gFullPhotoCount = GazetteExtractPhotoCount(gExtract);
-        gFullHasLead    = GazetteExtractHasLead(gExtract);
         for (i = 0; i < gFullPhotoCount; i++) {
             gFullPhotos[i] = *GazetteExtractPhoto(gExtract, i);
         }

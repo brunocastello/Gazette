@@ -69,13 +69,13 @@ int GazetteHtmlAttr(const char *tag, size_t len, const char *name,
 
 enum {
     /*
-     * The most text Gazette keeps from one article page. About 1300 words,
+     * The most text Gazette keeps from one article page. About 2600 words,
      * which covers a news story comfortably and truncates a long feature —
      * the right way round, since the alternative is letting a page decide how
      * much of an 8 MB partition it gets. The fetch is abandoned the moment
      * this fills, so a 2 MB page is not downloaded to be thrown away.
      */
-    kGazetteExtractMax = 8192,
+    kGazetteExtractMax = 16384,
 
     /* Below this, the page yielded nothing worth replacing the feed's own
        summary with — a paywall stub, a cookie wall, a redirect notice. */
@@ -93,7 +93,7 @@ enum {
     /*
      * Where a photo stands in the text. A paragraph made of this one byte
      * marks the place an <img> stood in the article: the k-th marker is the
-     * k-th photo after the lead. It is below every printable character and
+     * k-th photo. It is below every printable character and
      * survives the pipeline untouched — the transliterator passes ASCII
      * through and the flattener knows only whitespace — and the reader
      * pane turns it into the space the picture is drawn in.
@@ -153,17 +153,25 @@ typedef struct {
     int    full;
 
     /*
-     * The pictures. photos[0] is the lead when hasLead says so — the page's
-     * og:image, which is the picture its editor chose and which stands
-     * above the body rather than at a marker. The rest are the <img>s met
-     * in the article, in order, each with a marker in the text. A page
-     * that names its article block starts the list over when the block
-     * opens, the way the text starts over: what came before was the page.
+     * The pictures: the <img>s met in the article's body, in order, each
+     * with a marker in the text. A page that names its article block starts
+     * the list over when the block opens, the way the text starts over —
+     * what came before was the page — and the ones met before the body's
+     * first paragraph go with the header they were in; see bodyStart.
      */
     GazettePhotoRef photos[kGazetteMaxPhotos];
     int    photoCount;
-    int    hasLead;
-    int    leadIsFallback;          /* twitter:image; og:image replaces it */
+
+    /*
+     * Where the article's own text begins: the offset of its first <p>. A
+     * news page opens its article block with the headline again, a
+     * category, a byline, the lead picture, and the story starts at the
+     * first paragraph. Everything before that is dropped at Finish, photos
+     * included; a page with no <p> at all keeps the lot.
+     */
+    size_t bodyStart;
+    int    bodyBegun;
+    int    photosBeforeBody;
 } GazetteExtract;
 
 void GazetteExtractInit(GazetteExtract *e);
@@ -184,9 +192,8 @@ size_t GazetteExtractFinish(GazetteExtract *e);
 const char *GazetteExtractText(const GazetteExtract *e);
 
 /* The pictures, once Finish has run — their alt text goes through the same
-   pipeline as the text then. Count includes the lead when there is one. */
+   pipeline as the text then. The k-th marker in the text is the k-th. */
 int                    GazetteExtractPhotoCount(const GazetteExtract *e);
-int                    GazetteExtractHasLead(const GazetteExtract *e);
 const GazettePhotoRef *GazetteExtractPhoto(const GazetteExtract *e, int i);
 
 #ifdef __cplusplus

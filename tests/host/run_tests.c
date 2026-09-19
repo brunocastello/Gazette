@@ -2386,71 +2386,64 @@ static void TestExtractPhotos(void)
     static GazetteExtract e;
     const char *text;
 
-    /* The lead from <head>, which is otherwise skipped whole; the article's
-       own <img> after it, with a paragraph of its own in the text. */
+    /* The <img>s in the article's body, each with a paragraph of its own
+       in the text. The page's og:image is not wanted: it is the picture in
+       the header said again, at another address. */
     text = Extract(&e,
                    "<html><head><title>T</title>"
                    "<meta property=\"og:image\" content=\"https://s.example/lead.jpg\">"
-                   "<meta property=\"og:image:alt\" content=\"The lead &amp; more\">"
                    "</head><body><article>"
                    "<p>First.</p>"
                    "<img src=\"/pics/one.jpg\" alt=\"A caf\xc3\xa9 at dusk\">"
                    "<p>Second.</p></article></body></html>", 0);
     CheckStr("the marker takes a paragraph of its own", text,
              "First.\n\001\nSecond.");
-    CheckLong("two photos", GazetteExtractPhotoCount(&e), 2);
-    CheckTrue("the first is the lead", GazetteExtractHasLead(&e));
-    CheckStr("the lead's address", GazetteExtractPhoto(&e, 0)->url,
-             "https://s.example/lead.jpg");
-    CheckStr("the lead's caption is decoded", GazetteExtractPhoto(&e, 0)->alt,
-             "The lead & more");
+    CheckLong("one photo, and og:image is not it", GazetteExtractPhotoCount(&e), 1);
     CheckStr("the article's photo as the page wrote it",
-             GazetteExtractPhoto(&e, 1)->url, "/pics/one.jpg");
-    CheckStr("its caption is transliterated", GazetteExtractPhoto(&e, 1)->alt,
+             GazetteExtractPhoto(&e, 0)->url, "/pics/one.jpg");
+    CheckStr("its caption is transliterated", GazetteExtractPhoto(&e, 0)->alt,
              "A cafe at dusk");
 
-    /* twitter:image stands in until og:image is met, whichever order. */
-    Extract(&e, "<head><meta name=\"twitter:image\" content=\"https://s/t.jpg\">"
-                "<meta property=\"og:image\" content=\"https://s/og.jpg\"></head>"
-                "<body><p>Enough text to count, one hopes.</p></body>", 0);
-    CheckStr("og:image outranks twitter:image",
-             GazetteExtractPhoto(&e, 0)->url, "https://s/og.jpg");
-    Extract(&e, "<head><meta property=\"og:image\" content=\"https://s/og.jpg\">"
-                "<meta name=\"twitter:image\" content=\"https://s/t.jpg\"></head>"
-                "<body><p>Text.</p></body>", 0);
-    CheckStr("in either order", GazetteExtractPhoto(&e, 0)->url,
-             "https://s/og.jpg");
-    CheckLong("and is one photo, not two", GazetteExtractPhotoCount(&e), 1);
+    /* The hero above the first paragraph is the header's, and goes with it;
+       the one after the first paragraph is the body's. */
+    text = Extract(&e, "<body><article><h1>Headline</h1>"
+                       "<img src=\"https://s/hero.jpg\">"
+                       "<p>First.</p><img src=\"https://s/body.jpg\"><p>Second.</p>"
+                       "</article></body>", 0);
+    CheckLong("the hero in the header is not kept", GazetteExtractPhotoCount(&e), 1);
+    CheckStr("the body's picture is", GazetteExtractPhoto(&e, 0)->url,
+             "https://s/body.jpg");
+    CheckStr("and its marker stands where it stood", text,
+             "First.\n\001\nSecond.");
 
-    /* The furniture: named, sized, inline, vector, or the lead again. */
+    /* The furniture: named, sized, inline, vector, or a repeat. */
     text = Extract(&e,
-                   "<head><meta property=\"og:image\" content=\"https://s/og.jpg\"></head>"
-                   "<body><article>"
+                   "<body><article><p>Text.</p>"
                    "<img src=\"https://s/logo.png\">"
                    "<img class=\"author-avatar\" src=\"https://s/me.jpg\">"
                    "<img src=\"https://s/px.gif\" width=\"1\" height=\"1\">"
                    "<img src=\"data:image/gif;base64,R0lGOD\">"
                    "<img src=\"https://s/chart.svg\">"
-                   "<img src=\"https://s/og.jpg\">"
-                   "<p>Text.</p></article></body>", 0);
-    CheckLong("none of it is a photo", GazetteExtractPhotoCount(&e), 1);
-    CheckStr("and none of it left a marker", text, "Text.");
+                   "<img src=\"https://s/real.jpg\">"
+                   "<img src=\"https://s/real.jpg\">"
+                   "<p>More.</p></article></body>", 0);
+    CheckLong("only the real one is a photo, once", GazetteExtractPhotoCount(&e), 1);
+    CheckStr("and only it left a marker", text, "Text.\n\001\nMore.");
 
     /* Lazy loading: the address is wherever the script would have found it,
        and a srcset's first candidate is the small one. */
-    Extract(&e, "<body><article>"
+    Extract(&e, "<body><article><p>Text.</p>"
                 "<img data-src=\"https://s/lazy.jpg\" src=\"https://s/loading.gif\">"
                 "<img srcset=\"https://s/a-320.jpg 320w, https://s/a-1280.jpg 1280w\">"
-                "<p>Text.</p></article></body>", 0);
+                "<p>More.</p></article></body>", 0);
     CheckLong("both lazy pictures are found", GazetteExtractPhotoCount(&e), 2);
     CheckStr("data-src over a loading gif", GazetteExtractPhoto(&e, 0)->url,
              "https://s/lazy.jpg");
     CheckStr("the small candidate of a srcset", GazetteExtractPhoto(&e, 1)->url,
              "https://s/a-320.jpg");
-    CheckLong("no lead when the page named none", GazetteExtractHasLead(&e), 0);
 
     /* The cap, and the article block starting the list over. */
-    text = Extract(&e, "<body><img src=\"https://s/page.jpg\">"
+    text = Extract(&e, "<body><p>Page.</p><img src=\"https://s/page.jpg\">"
                        "<article><p>One.</p>"
                        "<img src=\"https://s/1.jpg\"><img src=\"https://s/2.jpg\">"
                        "<img src=\"https://s/3.jpg\"><img src=\"https://s/4.jpg\">"
@@ -2464,6 +2457,38 @@ static void TestExtractPhotos(void)
     CheckStr("a rejected image still separates words",
              Extract(&e, "<body><p>a<img src=\"https://s/logo.png\">b</p></body>", 0),
              "a b");
+}
+
+/* What a news page hangs off the end of its article, and how a table
+   comes out. */
+static void TestExtractTrailers(void)
+{
+    static GazetteExtract e;
+
+    CheckStr("the affiliate notice and the plugs go",
+             Extract(&e, "<body><article><p>The story.</p>"
+                         "<p>FTC: We use income earning auto affiliate links.</p>"
+                         "<p>Check out 9to5Mac on YouTube for more Apple news:</p>"
+                         "<p>Related: Something else.</p>"
+                         "</article></body>", 0),
+             "The story.");
+    CheckStr("so does the author box, by its class",
+             Extract(&e, "<body><article><p>The story.</p>"
+                         "<div class=\"author-bio\"><p>Marcus is a podcaster.</p></div>"
+                         "<div class=\"post-byline\">By Marcus</div>"
+                         "<aside class=\"affiliate-links\"><p>AirPods</p></aside>"
+                         "</article></body>", 0),
+             "The story.");
+    CheckStr("a table's cells are told apart",
+             Extract(&e, "<body><p>Compare:</p><table>"
+                         "<tr><th>iPhone 15 Pro</th><th>iPhone 18 Pro</th></tr>"
+                         "<tr><td>6.1-inch</td><td>6.3-inch</td></tr>"
+                         "</table></body>", 0),
+             "Compare:\niPhone 15 Pro | iPhone 18 Pro\n6.1-inch | 6.3-inch");
+    CheckStr("no space before the punctuation after a link",
+             Extract(&e, "<body><p>Here's <a href=\"/x\">WABetaInfo</a>: "
+                         "follow <a href=\"/y\">this link</a>.</p></body>", 0),
+             "Here's WABetaInfo: follow this link.");
 }
 
 static void TestExtract(void)
@@ -2542,9 +2567,20 @@ static void TestExtract(void)
              Extract(&e, "<p>the &zwnj;iPhone 18 Pro&zwnj; is here</p>", 0),
              "the iPhone 18 Pro is here");
 
+    /* The story starts at its first paragraph: the headline the page
+       repeats above it, its category, its byline, all go with the header
+       they are in. The reader pane already has the headline. */
     CheckStr("a headline and its body", Extract(&e,
              "<body><h1>The Headline</h1><p>The body.</p></body>", 0),
-             "The Headline\nThe body.");
+             "The body.");
+    CheckStr("the header block above the first paragraph goes", Extract(&e,
+             "<body><article><div><span>WhatsApp</span></div>"
+             "<h1>The Headline</h1><div>Marcus Mendes | Sep 17 2026</div>"
+             "<p>The body.</p><p>More.</p></article></body>", 0),
+             "The body.\nMore.");
+    CheckStr("a page with no paragraphs keeps everything", Extract(&e,
+             "<body><div>One.</div><div>Two.</div></body>", 0),
+             "One.\nTwo.");
 
     /*
      * The blocks a news page wraps around its article. None of them is a
@@ -2662,7 +2698,7 @@ static void TestExtract(void)
             "<p>First&nbsp;paragraph.</p><p>Second.</p>"
             "<div class=\"commentBlock--9f\"><p>Not this</p></div>"
             "</body></html>";
-        static const char want[] = "Title\nFirst paragraph.\nSecond.";
+        static const char want[] = "First paragraph.\nSecond.";
 
         CheckStr("whole", Extract(&e, page, 0), want);
         CheckStr("one byte at a time", Extract(&e, page, 1), want);
@@ -2906,6 +2942,7 @@ int main(void)
     TestExtractTags();
     TestExtract();
     TestExtractPhotos();
+    TestExtractTrailers();
     TestDiscovery();
     TestDiscoveryPaths();
     TestGoogleNews();

@@ -86,7 +86,24 @@ static const char *const kUnwantedMarkers[] = {
        article's; and "skip to main content" is a link for a screen reader
        and text for nobody, as is anything the page hides from sight. */
     "header", "login", "nav", "rating", "fivestar", "download",
-    "skip", "sr-only", "screen-reader", "visually-hidden", "visuallyhidden"
+    "skip", "sr-only", "screen-reader", "visually-hidden", "visuallyhidden",
+    /* The article's own furniture, inside its block: who wrote it and
+       when, said again in a box at the top or the bottom; the affiliate
+       list; the tag cloud; the third-party recommendation rails. */
+    "byline", "author", "dateline", "timestamp", "affiliate", "disclosure",
+    "tags", "taglist", "outbrain", "taboola", "recommend", "signup"
+};
+
+/*
+ * Paragraphs that are not the article even when they stand inside its
+ * block: the affiliate-links notice, the plug for the site's other outlets,
+ * the "see also" line. Matched at the start of a paragraph, after the
+ * pipeline, so the comparison is against the text a reader would see.
+ */
+static const char *const kTrailerStarts[] = {
+    "FTC:", "Check out 9to5", "Add 9to5", "Follow us on", "Follow 9to5",
+    "Subscribe to our", "Sign up for", "Related:", "Related Articles",
+    "Read more:", "See also:", "Popular Stories", "Top Rated Comments"
 };
 
 /*
@@ -376,11 +393,6 @@ int GazetteExtractPhotoCount(const GazetteExtract *e)
     return (e != NULL) ? e->photoCount : 0;
 }
 
-int GazetteExtractHasLead(const GazetteExtract *e)
-{
-    return (e != NULL && e->hasLead) ? 1 : 0;
-}
-
 const GazettePhotoRef *GazetteExtractPhoto(const GazetteExtract *e, int i)
 {
     if (e == NULL || i < 0 || i >= e->photoCount) {
@@ -420,6 +432,14 @@ static void PutText(GazetteExtract *e, char c)
         PutChar(e, ' ');
         return;
     }
+    /* "the link ." — the space an inline tag put before its punctuation is
+       not one a writer put there. */
+    if ((c == '.' || c == ',' || c == ':' || c == ';' || c == '!' ||
+         c == '?' || c == ')') &&
+        e->outLen >= 2 && e->out[e->outLen - 1] == ' ' &&
+        e->out[e->outLen - 2] != ' ' && e->out[e->outLen - 2] != '\n') {
+        e->outLen--;
+    }
     PutChar(e, c);
 }
 
@@ -453,10 +473,11 @@ static const char *const kFurnitureWords[] = {
     "tracking", "1x1", "spacer", "blank.", "transparent", "lazy.gif"
 };
 
-/* Photos[] from the article's block on: the lead stays, it is the page's. */
+/* Photos[] from the article's block on: what came before was the page's. */
 static void ResetArticlePhotos(GazetteExtract *e)
 {
-    e->photoCount = e->hasLead ? 1 : 0;
+    e->photoCount       = 0;
+    e->photosBeforeBody = 0;
 }
 
 static int PhotoRoom(const GazetteExtract *e)
@@ -484,68 +505,6 @@ static int PhotoURLUsable(const char *value, size_t len)
 static int SamePhotoURL(const char *a, const char *b, size_t bLen)
 {
     return strlen(a) == bLen && memcmp(a, b, bLen) == 0;
-}
-
-/*
- * The page's own choice of picture. og:image is what every news site sets
- * for the link previews, and it is the editor's lead photo; twitter:image
- * is the same thing said the other way, and stands in only until an
- * og:image is met. Both live in <head>, which is otherwise skipped, so this
- * runs before the skip bookkeeping gets a look at the tag.
- */
-static void NoteMeta(GazetteExtract *e)
-{
-    const char *key;
-    size_t      keyLen;
-    const char *value;
-    size_t      valueLen;
-    int         isOg, isTwitter, isAlt;
-
-    if (!GazetteHtmlAttr(e->tag, e->tagLen, "property", &key, &keyLen) &&
-        !GazetteHtmlAttr(e->tag, e->tagLen, "name", &key, &keyLen)) {
-        return;
-    }
-    isOg      = (keyLen == 8  && gz_strnicmp(key, "og:image", 8) == 0);
-    isTwitter = (keyLen == 13 && gz_strnicmp(key, "twitter:image", 13) == 0);
-    isAlt     = (keyLen == 12 && gz_strnicmp(key, "og:image:alt", 12) == 0);
-    if (!isOg && !isTwitter && !isAlt) {
-        return;
-    }
-    if (!GazetteHtmlAttr(e->tag, e->tagLen, "content", &value, &valueLen)) {
-        return;
-    }
-
-    if (isAlt) {
-        if (e->hasLead) {
-            gz_copy_n(e->photos[0].alt, sizeof e->photos[0].alt,
-                      value, valueLen);
-        }
-        return;
-    }
-    if (!PhotoURLUsable(value, valueLen)) {
-        return;
-    }
-    if (e->hasLead && !(isOg && e->leadIsFallback)) {
-        return;                     /* the first og:image is the one */
-    }
-    if (!e->hasLead) {
-        /* Make room at the front. Head comes before body, so in practice
-           the list is empty here; the shuffle is for a page that is not
-           in practice. */
-        int i;
-
-        if (e->photoCount == kGazetteMaxPhotos) {
-            e->photoCount--;
-        }
-        for (i = e->photoCount; i > 0; i--) {
-            e->photos[i] = e->photos[i - 1];
-        }
-        e->photoCount++;
-        e->hasLead = 1;
-        e->photos[0].alt[0] = '\0';
-    }
-    gz_copy_n(e->photos[0].url, sizeof e->photos[0].url, value, valueLen);
-    e->leadIsFallback = isTwitter ? 1 : 0;
 }
 
 /* The first address in a srcset: "a.jpg 320w, b.jpg 640w" names the
@@ -634,7 +593,7 @@ static int NoteImage(GazetteExtract *e)
         }
     }
 
-    /* The lead again, or a picture the page repeats: once is enough. */
+    /* A picture the page repeats: once is enough. */
     for (k = 0; k < e->photoCount; k++) {
         if (SamePhotoURL(e->photos[k].url, value, valueLen)) {
             return 0;
@@ -699,12 +658,6 @@ static void FinishTag(GazetteExtract *e)
            silently treating a script as prose. */
     }
 
-    /* <head> is skipped, and the page's lead picture is named in it. */
-    if (!e->closing && strcmp(name, "meta") == 0) {
-        NoteMeta(e);
-        return;
-    }
-
     if (e->skip[0] != '\0') {
         /* Inside something being dropped: the only tags that matter are the
            ones that open another of it or close this one. */
@@ -747,11 +700,33 @@ static void FinishTag(GazetteExtract *e)
         gz_copy_n(e->focus, sizeof e->focus, name, strlen(name));
         e->focusDepth = 1;
         e->outLen     = 0;
+        e->bodyStart  = 0;
+        e->bodyBegun  = 0;
         ResetArticlePhotos(e);
         return;
     }
 
     if (!e->closing && strcmp(name, "img") == 0 && NoteImage(e)) {
+        return;
+    }
+
+    /* The story starts at its first paragraph; see bodyStart. */
+    if (!e->closing && !e->bodyBegun && strcmp(name, "p") == 0) {
+        PutBreak(e);
+        e->bodyBegun        = 1;
+        e->bodyStart        = e->outLen;
+        e->photosBeforeBody = e->photoCount;
+    }
+
+    /* A table's cells on one line, told apart: "iPhone 15 Pro | iPhone 18
+       Pro" reads; the two run together do not. The row is a block and
+       breaks the line. */
+    if (!e->closing && (strcmp(name, "td") == 0 || strcmp(name, "th") == 0)) {
+        if (e->outLen > 0 && e->out[e->outLen - 1] != '\n') {
+            PutText(e, ' ');
+            PutChar(e, '|');
+            PutChar(e, ' ');
+        }
         return;
     }
 
@@ -888,6 +863,43 @@ int GazetteExtractFeed(GazetteExtract *e, const char *data, size_t len)
     return 1;
 }
 
+/*
+ * Take out the paragraphs that kTrailerStarts names, wherever they stand.
+ * Runs on the finished text, one paragraph at a time, closing each gap as
+ * it goes; a photo marker is a paragraph too and never matches.
+ */
+static size_t DropTrailers(char *s, size_t len)
+{
+    size_t in  = 0;
+    size_t out = 0;
+
+    while (in < len) {
+        size_t end = in;
+        size_t k;
+        int    drop = 0;
+
+        while (end < len && s[end] != '\n') {
+            end++;
+        }
+        for (k = 0; k < sizeof kTrailerStarts / sizeof kTrailerStarts[0]; k++) {
+            if (gz_starts_ci(s + in, end - in, kTrailerStarts[k])) {
+                drop = 1;
+                break;
+            }
+        }
+        if (!drop) {
+            if (out > 0) {
+                s[out++] = '\n';
+            }
+            memmove(s + out, s + in, end - in);
+            out += end - in;
+        }
+        in = (end < len) ? end + 1 : end;
+    }
+    s[out] = '\0';
+    return out;
+}
+
 size_t GazetteExtractFinish(GazetteExtract *e)
 {
     size_t len;
@@ -896,6 +908,24 @@ size_t GazetteExtractFinish(GazetteExtract *e)
         return 0;
     }
 
+    /* The page's header — headline again, byline, lead picture — goes,
+       and the pictures that were in it. */
+    if (e->bodyBegun && e->bodyStart > 0 && e->bodyStart <= e->outLen) {
+        int i, n;
+
+        memmove(e->out, e->out + e->bodyStart, e->outLen - e->bodyStart);
+        e->outLen -= e->bodyStart;
+
+        n = e->photosBeforeBody;
+        if (n > e->photoCount) {
+            n = e->photoCount;
+        }
+        for (i = 0; i + n < e->photoCount; i++) {
+            e->photos[i] = e->photos[i + n];
+        }
+        e->photoCount -= n;
+        e->bodyStart   = 0;
+    }
     e->out[e->outLen] = '\0';
 
     /*
@@ -908,6 +938,7 @@ size_t GazetteExtractFinish(GazetteExtract *e)
     len = GazetteDecodeEntities(e->out, e->outLen);
     len = gz_utf8_to_ascii(e->out, len, e->scratch, sizeof e->scratch);
     len = gz_flatten_lines(e->scratch, len);
+    len = DropTrailers(e->scratch, len);
 
     e->textLen = len;
 

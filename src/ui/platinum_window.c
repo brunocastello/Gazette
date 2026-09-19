@@ -127,13 +127,15 @@ enum {
     kReaderRuleAir = 4,
 
     /*
-     * A photograph in the article: as wide as the column up to this, and
-     * never taller than this, scaled down to fit and never up. 320 is what
-     * a news site serves to a phone, and on a 640-wide window's column it
-     * fills the width without dominating the page.
+     * A photograph in the article fills the column, the way NetNewsWire's
+     * stylesheet has it — max-width 100%, height auto — scaled down to fit
+     * and never up. These two bound the offscreen world it is decoded into
+     * rather than the look: a column wider than this shows the picture at
+     * this size, and three worlds of 480 by 360 at 16 bits are a megabyte,
+     * which is what an 8 MB partition can spare for pictures.
      */
-    kPhotoMaxWidth  = 320,
-    kPhotoMaxHeight = 240,
+    kPhotoMaxWidth  = 480,
+    kPhotoMaxHeight = 360,
     kPhotoFrameGrey = 170,      /* the placeholder's edge */
 
     kMaxTitleLines = 3,         /* a headline wraps, but not without end   */
@@ -2252,13 +2254,10 @@ static size_t AppendPhotoRun(size_t used, int slot, short height,
     return used;
 }
 
-/* Which slot the k-th marker in the text stands for: the markers count from
-   after the lead, which has no marker. */
+/* Which slot the k-th marker in the text stands for. */
 static int PhotoSlotForMarker(int k)
 {
-    int slot = k + (GazettePhotosHasLead() ? 1 : 0);
-
-    return (slot < GazettePhotosCount()) ? slot : -1;
+    return (k >= 0 && k < GazettePhotosCount()) ? k : -1;
 }
 
 /*
@@ -2576,18 +2575,6 @@ static void SetReaderText(void)
         used     = AppendChar(used, '\r');
         gReaderBodyStart = (short)used;
         gap              = used;
-
-        /* The lead photograph, under the rule and above the first line —
-           where a newspaper puts it. Only with the page's own text: the
-           pictures are the page's, and belong over its words. */
-        if (body != NULL && GazettePhotosArticle() == gSelectedArticle &&
-            GazettePhotosHasLead()) {
-            short w, h;
-
-            if (PhotoSize(0, &w, &h)) {
-                used = AppendPhotoRun(used, 0, h, 0);
-            }
-        }
 
         if (body == NULL) {
             static const char kWaiting[] = "Reading the full article\311";

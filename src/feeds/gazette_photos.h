@@ -51,7 +51,7 @@ enum {
  * not forgotten: GazettePhotosResume starts it once the line is free.
  */
 int  GazettePhotosStart(int articleIndex, const char *baseURL,
-                        const GazettePhotoRef *refs, int count, int hasLead);
+                        const GazettePhotoRef *refs, int count);
 
 /* One slice, from the event loop's idle branch. Done once every picture is
    settled one way or the other. */
@@ -73,7 +73,6 @@ void GazettePhotosCancel(void);
 int  GazettePhotosArticle(void);
 
 int         GazettePhotosCount(void);
-int         GazettePhotosHasLead(void);
 int         GazettePhotosState(int i);
 const char *GazettePhotosCaption(int i);
 

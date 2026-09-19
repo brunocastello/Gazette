@@ -359,13 +359,12 @@ const char *GazetteFeedsFullTextErrorText(void);
 
 /*
  * The pictures the page named, once the text is here: the list the
- * extractor built (see kGazettePhotoMarker there), and whether its first
- * entry is the page's lead. Returns how many; 0 while no text is held. The
- * addresses are as the page wrote them, to be resolved against the page's
- * own address — which is FinalURL, the one the text actually came from.
+ * extractor built (see kGazettePhotoMarker there). Returns how many; 0
+ * while no text is held. The addresses are as the page wrote them, to be
+ * resolved against the page's own address — which is FinalURL, the one the
+ * text actually came from.
  */
-int         GazetteFeedsFullTextPhotos(const GazettePhotoRef **refs,
-                                       int *hasLead);
+int         GazetteFeedsFullTextPhotos(const GazettePhotoRef **refs);
 const char *GazetteFeedsFullTextFinalURL(void);
 
 /* Abandon a fetch in flight and drop whatever was held. */
