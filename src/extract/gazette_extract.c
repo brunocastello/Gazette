@@ -455,16 +455,18 @@ static void PutText(GazetteExtract *e, char c)
             return;
         }
         PutChar(e, ' ');
+        e->tagSpace = 0;
         return;
     }
-    /* "the link ." — the space an inline tag put before its punctuation is
-       not one a writer put there. */
-    if ((c == '.' || c == ',' || c == ':' || c == ';' || c == '!' ||
-         c == '?' || c == ')') &&
-        e->outLen >= 2 && e->out[e->outLen - 1] == ' ' &&
-        e->out[e->outLen - 2] != ' ' && e->out[e->outLen - 2] != '\n') {
+    /* "the link ." and "the link 's": the space an inline tag put before
+       its punctuation is not one a writer put there. */
+    if (e->tagSpace &&
+        (c == '.' || c == ',' || c == ':' || c == ';' || c == '!' ||
+         c == '?' || c == ')' || c == '\'') &&
+        e->outLen >= 1 && e->out[e->outLen - 1] == ' ') {
         e->outLen--;
     }
+    e->tagSpace = 0;
     PutChar(e, c);
 }
 
@@ -480,6 +482,7 @@ static void PutBreak(GazetteExtract *e)
         e->outLen--;
     }
     PutChar(e, '\n');
+    e->tagSpace = 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -777,6 +780,7 @@ static void FinishTag(GazetteExtract *e)
                e->out[e->outLen - 1] != '\n') {
         /* An inline tag still separates words: "a<b>b</b>c" is three. */
         PutChar(e, ' ');
+        e->tagSpace = 1;
     }
 }
 

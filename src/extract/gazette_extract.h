@@ -172,6 +172,10 @@ typedef struct {
     size_t bodyStart;
     int    bodyBegun;
     int    photosBeforeBody;
+
+    /* The last byte written was a space an inline tag put there, not one
+       the page wrote: punctuation that follows closes up to the word. */
+    int    tagSpace;
 } GazetteExtract;
 
 void GazetteExtractInit(GazetteExtract *e);

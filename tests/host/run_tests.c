@@ -2579,6 +2579,9 @@ static void TestExtractTrailers(void)
                          "<tr><td>6.1-inch</td><td>6.3-inch</td></tr>"
                          "</table></body>", 0),
              "Compare:\niPhone 15 Pro | iPhone 18 Pro\n6.1-inch | 6.3-inch");
+    CheckStr("a space the page wrote before a quote stays",
+             Extract(&e, "<body><p>the 'best' one, he said.</p></body>", 0),
+             "the 'best' one, he said.");
     CheckStr("no space before the punctuation after a link",
              Extract(&e, "<body><p>Here's <a href=\"/x\">WABetaInfo</a>: "
                          "follow <a href=\"/y\">this link</a>.</p></body>", 0),
