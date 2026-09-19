@@ -767,6 +767,19 @@ static void InlineSpace(GazetteExtract *e)
     }
 }
 
+/* Whether nothing but marks has been written on the current line: where
+   a list item's shop link stands, bold or not. */
+static int AtLineStart(const GazetteExtract *e)
+{
+    size_t i = e->outLen;
+
+    while (i > 0 && (IsParagraphMark(e->out[i - 1]) ||
+                     IsOpeningMark(e->out[i - 1]))) {
+        i--;
+    }
+    return i == 0 || e->out[i - 1] == '\n';
+}
+
 static void FinishTag(GazetteExtract *e)
 {
     char name[24];
@@ -954,9 +967,7 @@ static void FinishTag(GazetteExtract *e)
 
     if (!e->closing && (IsSkipTag(name) ||
                         TagIsUnwanted(e->tag, e->tagLen, name) ||
-                        (strcmp(name, "a") == 0 &&
-                         (e->outLen == 0 || e->out[e->outLen - 1] == '\n' ||
-                          IsParagraphMark(e->out[e->outLen - 1])) &&
+                        (strcmp(name, "a") == 0 && AtLineStart(e) &&
                          TagIsAffiliateLink(e->tag, e->tagLen)))) {
         /* "<br/>"-style self-closing: it opens nothing, so there is nothing
            to skip until. */
