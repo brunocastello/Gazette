@@ -260,8 +260,8 @@ enum {
     kFeedsItemAllUnread = 2,
     kFeedsItemStarred   = 3,
     /* 4 is a divider */
-    kFeedsItemMarkAll   = 5,
-    kFeedsItemSort      = 6,      /* Show Oldest First / Show Newest First */
+    kFeedsItemSort      = 5,      /* Show Oldest First / Show Newest First */
+    kFeedsItemMarkAll   = 6,
     /* 7 is a divider */
     kFeedsItemEdit      = 8,
     kFeedsItemEnabled   = 9,
@@ -523,12 +523,12 @@ static Boolean BuildMenuBar(void)
     }
     /* No Move: a feed or a group is moved by dragging it, which is the
        one gesture that can say where. */
-    /* The sort order stands after Mark All as Read: what is done to a
-       list, next to what is done to a list. The item names the order it
-       would switch to; AdjustMenus keeps it current. */
+    /* The sort order stands before Mark All as Read, as it does after
+       Refresh in the contextual menus. The item names the order it would
+       switch to; AdjustMenus keeps it current. */
     AppendMenu(feedsMenu,
                "\pToday/1;All Unread/2;Starred/3;(-;"
-               "Mark All as Read/K;Show Oldest First;(-;"
+               "Show Oldest First;Mark All as Read/K;(-;"
                "Edit Feed\311;Turn Off;(-;"
                "Delete Feed");
     InsertMenu(feedsMenu, 0);
