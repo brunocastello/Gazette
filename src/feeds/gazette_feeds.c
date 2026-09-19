@@ -1069,6 +1069,27 @@ GazetteRefreshState GazetteFeedsFullTextPump(void)
         return gFullState;
     }
 
+    /*
+     * Not a page at all. A feed's link may go to a PDF — a press release,
+     * a paper — or to a picture, and read as HTML a PDF comes out as
+     * "%PDF-1.7 %???? 14 0 obj" in the reader pane. The type is the
+     * server's word; a server that says nothing is read as a page.
+     */
+    {
+        const char *type = GazetteFetchContentType(gFullFetch);
+
+        if (type[0] != '\0' && !gz_starts_ci(type, strlen(type), "text/") &&
+            !gz_contains_ci(type, strlen(type), "html") &&
+            !gz_contains_ci(type, strlen(type), "xml")) {
+            char why[96];
+
+            snprintf(why, sizeof why, "That link is a %s, not a page.",
+                     type);
+            FailFullText(why);
+            return gFullState;
+        }
+    }
+
     /* Done also means the extractor filled up and stopped the fetch, which is
        a success: what it has is as much as it keeps. */
     (void)GazetteExtractFinish(gExtract);

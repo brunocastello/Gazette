@@ -67,6 +67,10 @@ typedef struct {
     int    connectionClose;
     int    hasLocation;
     char   location[kGazetteMaxPath];
+
+    /* The media type alone — "text/html" out of "text/html; charset=utf-8",
+       lowercased — or "" when the server did not say. */
+    char   contentType[48];
 } GazetteHTTPResponse;
 
 /*

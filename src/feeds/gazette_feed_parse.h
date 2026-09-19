@@ -129,6 +129,7 @@ typedef struct {
     int  sawFeedLink;
 
     GazetteArticle article;
+    char related[kGazetteArticleLinkLen];   /* the entry's rel="related" */
     char feedTitle[kGazetteFeedTitleLen];
     char feedLink[kGazetteArticleLinkLen];  /* the site the feed is for */
 

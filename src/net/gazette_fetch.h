@@ -72,6 +72,10 @@ GazetteFetchState GazetteFetchGetState(const GazetteFetch *f);
 /* The final response's status code, or 0 before the head has been read. */
 int  GazetteFetchStatus(const GazetteFetch *f);
 
+/* Its media type, lowercased and without parameters — "text/html",
+   "application/pdf" — or "" when the server did not say. */
+const char *GazetteFetchContentType(const GazetteFetch *f);
+
 /* Body bytes handed to the sink so far. */
 long GazetteFetchBytesRead(const GazetteFetch *f);
 

@@ -959,6 +959,24 @@ static void TestHTTPResponse(void)
         CheckLong("chunked wins over Content-Length", r.chunked, 1);
         CheckLong("and the length is discarded", r.hasContentLength, 0);
     }
+    {
+        GazetteHTTPResponse r;
+        static const char pdf[] =
+            "HTTP/1.1 200 OK\r\nContent-Type: Application/PDF\r\n"
+            "Content-Length: 5\r\n\r\n%PDF-";
+        static const char html[] =
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n"
+            "\r\n";
+        static const char none[] = "HTTP/1.1 200 OK\r\n\r\n";
+
+        GazetteHTTPParseResponse(pdf, sizeof pdf - 1, &r);
+        CheckStr("the media type, lowercased", r.contentType,
+                 "application/pdf");
+        GazetteHTTPParseResponse(html, sizeof html - 1, &r);
+        CheckStr("without its parameters", r.contentType, "text/html");
+        GazetteHTTPParseResponse(none, sizeof none - 1, &r);
+        CheckStr("empty when not given", r.contentType, "");
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1545,6 +1563,33 @@ static void TestFeedParsing(void)
                  gCollected[0].body, "The story, in full.");
         CheckStr("media:description stands in for a missing summary",
                  gCollected[1].body, "What the video is about.");
+    }
+
+    {
+        /* A linked-list blog: the alternate is the subject, the related is
+           the post, and the post is the article. */
+        static const char linked[] =
+            "<feed><title>DF</title>"
+            "<link rel=\"alternate\" type=\"text/html\" href=\"https://df.net/\"/>"
+            "<entry><title>Buffett Retires</title>"
+            "<link rel=\"alternate\" href=\"https://www.berkshire.com/x.pdf\"/>"
+            "<link rel=\"shorturl\" href=\"http://df4.us/xkl\"/>"
+            "<link rel=\"related\" href=\"https://df.net/linked/2026/buffett\"/>"
+            "</entry>"
+            "<entry><title>On-site</title>"
+            "<link rel=\"alternate\" href=\"https://df.net/2026/essay\"/>"
+            "<link rel=\"related\" href=\"https://df.net/2026/earlier\"/>"
+            "</entry></feed>";
+        GazetteFeedParser q;
+
+        gCollectedCount = 0;
+        GazetteFeedParserInit(&q, Collect, NULL);
+        GazetteFeedParserFeed(&q, linked, sizeof linked - 1);
+        GazetteFeedParserFinish(&q);
+        CheckStr("an off-site alternate yields to the post on the site",
+                 gCollected[0].link, "https://df.net/linked/2026/buffett");
+        CheckStr("an on-site alternate keeps its see-also as a see-also",
+                 gCollected[1].link, "https://df.net/2026/essay");
     }
 
     {

@@ -202,6 +202,18 @@ int GazetteHTTPParseResponse(const char *buf, size_t len,
         res->hasLocation = 1;
     }
 
+    v = gz_header_find(buf, headLen, "Content-Type", &vLen);
+    if (v != NULL) {
+        size_t n = 0;
+
+        while (n < vLen && v[n] != ';' && v[n] != ' ' && v[n] != '\t' &&
+               n + 1 < sizeof res->contentType) {
+            res->contentType[n] = (char)gz_lower((unsigned char)v[n]);
+            n++;
+        }
+        res->contentType[n] = '\0';
+    }
+
     /*
      * Transfer-Encoding wins over Content-Length when both are present
      * (RFC 9112 6.3). A response carrying both is either a broken server or a

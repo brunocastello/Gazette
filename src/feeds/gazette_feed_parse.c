@@ -9,6 +9,7 @@
 
 #include "extract/gazette_extract.h"
 #include "portable/gazette_portable.h"
+#include "portable/gazette_url.h"
 
 #include <string.h>
 
@@ -928,12 +929,51 @@ static int TagAttr(const char *tag, size_t len, const char *name,
 /* Element handling                                                   */
 /* ------------------------------------------------------------------ */
 
+/* The host of an absolute URL, or "" when it has none. */
+static void HostOf(const char *url, char *out, size_t cap)
+{
+    GazetteURL u;
+
+    if (GazetteURLSplit(url, strlen(url), &u)) {
+        gz_copy_n(out, cap, u.host, strlen(u.host));
+    } else if (cap > 0) {
+        out[0] = '\0';
+    }
+}
+
 static void EmitArticle(GazetteFeedParser *p)
 {
     /* An entry with neither a title nor a link is not an article; feeds do
        carry such things, usually as an artefact of a template. */
     if (p->article.title[0] == '\0' && p->article.link[0] == '\0') {
         return;
+    }
+
+    /*
+     * A linked-list blog — Daring Fireball is the pattern — points an
+     * entry's alternate link at the thing it is writing about, and offers
+     * its own post as rel="related". The entry's page is the post: what is
+     * read here is the writer's, and what it links to is the writer's
+     * subject, and the link the reader follows from the title. So when the
+     * alternate leaves the feed's site and the related stays on it, the
+     * related is the article. Both conditions: a related link on the same
+     * site under an on-site alternate is a "see also", and stays one.
+     */
+    if (p->related[0] != '\0' && p->article.link[0] != '\0' &&
+        p->feedLink[0] != '\0') {
+        char feedHost[kGazetteMaxHost];
+        char linkHost[kGazetteMaxHost];
+        char relatedHost[kGazetteMaxHost];
+
+        HostOf(p->feedLink, feedHost, sizeof feedHost);
+        HostOf(p->article.link, linkHost, sizeof linkHost);
+        HostOf(p->related, relatedHost, sizeof relatedHost);
+        if (feedHost[0] != '\0' &&
+            gz_stricmp(linkHost, feedHost) != 0 &&
+            gz_stricmp(relatedHost, feedHost) == 0) {
+            gz_copy_n(p->article.link, sizeof p->article.link,
+                      p->related, strlen(p->related));
+        }
     }
 
     p->articleCount++;
@@ -975,6 +1015,7 @@ static void StartElement(GazetteFeedParser *p, const char *tag, size_t len,
     if (!p->inItem) {
         if (strcmp(name, "item") == 0 || strcmp(name, "entry") == 0) {
             memset(&p->article, 0, sizeof p->article);
+            p->related[0] = '\0';
             p->inItem = 1;
             return;
         }
@@ -1029,6 +1070,9 @@ static void StartElement(GazetteFeedParser *p, const char *tag, size_t len,
                     gz_copy_n(p->article.link, sizeof p->article.link,
                               attr, strlen(attr));
                 }
+            } else if (gz_stricmp(rel, "related") == 0 && p->inItem &&
+                       p->related[0] == '\0' && attr[0] != '\0') {
+                gz_copy_n(p->related, sizeof p->related, attr, strlen(attr));
             }
         } else if (!selfClosing) {
             CaptureBegin(p, kFieldLink);

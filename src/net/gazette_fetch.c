@@ -535,6 +535,11 @@ int GazetteFetchStatus(const GazetteFetch *f)
     return (f == NULL) ? 0 : f->res.status;
 }
 
+const char *GazetteFetchContentType(const GazetteFetch *f)
+{
+    return (f == NULL) ? "" : f->res.contentType;
+}
+
 long GazetteFetchBytesRead(const GazetteFetch *f)
 {
     return (f == NULL) ? 0 : f->bytesRead;
