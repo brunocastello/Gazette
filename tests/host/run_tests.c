@@ -2554,6 +2554,18 @@ static void TestExtractTrailers(void)
                          "<p>Related: Something else.</p>"
                          "</article></body>", 0),
              "The story.");
+    CheckStr("the affiliate box: a heading and a list of shop links",
+             Extract(&e, "<body><article><p>The story.</p>"
+                         "<h4>Worth checking out on Amazon</h4><ul>"
+                         "<li><a href=\"https://amzn.to/4rkQzN0\">Apple Watch</a></li>"
+                         "<li><strong><a href=\"https://www.amazon.com/dp/B0F?tag=x-20\">"
+                         "AirPods Pro 3</a></strong></li></ul>"
+                         "</article></body>", 0),
+             "The story.");
+    CheckStr("but a shop link in a sentence keeps its words",
+             Extract(&e, "<body><p>He tested the <a href=\"https://amzn.to/x\">"
+                         "Apple Watch</a>'s step counter.</p></body>", 0),
+             "He tested the Apple Watch's step counter.");
     CheckStr("so does the author box, by its class",
              Extract(&e, "<body><article><p>The story.</p>"
                          "<div class=\"author-bio\"><p>Marcus is a podcaster.</p></div>"

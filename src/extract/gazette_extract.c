@@ -101,6 +101,7 @@ static const char *const kUnwantedMarkers[] = {
  * pipeline, so the comparison is against the text a reader would see.
  */
 static const char *const kTrailerStarts[] = {
+    "Worth checking out", "Shop ", "Buy now", "Best deals",
     "FTC:", "Check out 9to5", "Add 9to5", "Follow us on", "Follow 9to5",
     "Subscribe to our", "Sign up for", "Related:", "Related Articles",
     "Read more:", "See also:", "Popular Stories", "Top Rated Comments"
@@ -288,6 +289,30 @@ static int ValueHasAny(const char *value, size_t len,
                 return 1;
             }
         }
+    }
+    return 0;
+}
+
+/*
+ * A link that is a shop's, with the site's cut in its address. On its own
+ * in a list item it is the affiliate box a story ends with, and goes; in a
+ * sentence it is the product's name, and stays — the caller looks at where
+ * it stands.
+ */
+static int TagIsAffiliateLink(const char *tag, size_t len)
+{
+    const char *href;
+    size_t      hrefLen;
+
+    if (!GazetteHtmlAttr(tag, len, "href", &href, &hrefLen)) {
+        return 0;
+    }
+    if (gz_contains_ci(href, hrefLen, "amzn.to/")) {
+        return 1;
+    }
+    if (gz_contains_ci(href, hrefLen, "amazon.") &&
+        gz_contains_ci(href, hrefLen, "tag=")) {
+        return 1;
     }
     return 0;
 }
@@ -731,7 +756,10 @@ static void FinishTag(GazetteExtract *e)
     }
 
     if (!e->closing && (IsSkipTag(name) ||
-                        TagIsUnwanted(e->tag, e->tagLen, name))) {
+                        TagIsUnwanted(e->tag, e->tagLen, name) ||
+                        (strcmp(name, "a") == 0 &&
+                         (e->outLen == 0 || e->out[e->outLen - 1] == '\n') &&
+                         TagIsAffiliateLink(e->tag, e->tagLen)))) {
         /* "<br/>"-style self-closing: it opens nothing, so there is nothing
            to skip until. */
         if (e->tagLen > 0 && e->tag[e->tagLen - 1] == '/') {
