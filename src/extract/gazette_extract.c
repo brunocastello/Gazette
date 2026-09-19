@@ -138,26 +138,6 @@ static const char *const kPlugOutlets[] = {
     "app store", "google news", "preferred source", "rss", "discord"
 };
 
-static int ParagraphIsPlug(const char *s, size_t len)
-{
-    size_t v;
-    int    verb = 0;
-
-    for (v = 0; v < sizeof kPlugVerbs / sizeof kPlugVerbs[0]; v++) {
-        if (gz_starts_ci(s, len, kPlugVerbs[v])) {
-            verb = 1;
-            break;
-        }
-    }
-    if (!verb || len > 200) {
-        return 0;                   /* a plug is a line, not a paragraph */
-    }
-    if (s[len - 1] == ':') {
-        return 1;
-    }
-    return ValueHasAny(s, len, kPlugOutlets,
-                       sizeof kPlugOutlets / sizeof kPlugOutlets[0]);
-}
 
 /*
  * The blocks a page puts its article *in*, when it says. <article> and
@@ -396,6 +376,27 @@ static int ValueHasWord(const char *value, size_t len,
         }
     }
     return 0;
+}
+
+static int ParagraphIsPlug(const char *s, size_t len)
+{
+    size_t v;
+    int    verb = 0;
+
+    for (v = 0; v < sizeof kPlugVerbs / sizeof kPlugVerbs[0]; v++) {
+        if (gz_starts_ci(s, len, kPlugVerbs[v])) {
+            verb = 1;
+            break;
+        }
+    }
+    if (!verb || len > 200) {
+        return 0;                   /* a plug is a line, not a paragraph */
+    }
+    if (s[len - 1] == ':') {
+        return 1;
+    }
+    return ValueHasAny(s, len, kPlugOutlets,
+                       sizeof kPlugOutlets / sizeof kPlugOutlets[0]);
 }
 
 /* Whether this tag opens one of the blocks a page wraps around its article. */
