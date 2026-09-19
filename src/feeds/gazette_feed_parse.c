@@ -197,12 +197,34 @@ size_t GazetteDecodeEntities(char *s, size_t len)
     return out;
 }
 
+/*
+ * A paragraph that is nothing but a link, and short: "Read full article",
+ * "Comments", "Continue reading", "Read more" — the trailer a feed's body
+ * ends with, pointing back at the page. Never prose, and the reader has the
+ * page's address already. Ended at the block tag that closes it, so it is
+ * judged when it is complete.
+ */
+enum { kLinkLineMax = 48 };
+
+static size_t DropLinkLine(char *s, size_t out, size_t paraStart,
+                           int plainText)
+{
+    if (!plainText && out > paraStart && out - paraStart <= kLinkLineMax) {
+        return paraStart;
+    }
+    return out;
+}
+
 size_t GazetteStripMarkup(char *s, size_t len)
 {
     size_t in    = 0;
     size_t out   = 0;
     size_t start = 0;        /* where the current tag's text begins */
     int    depth = 0;
+
+    size_t paraStart = 0;    /* where the current paragraph's text begins */
+    int    linkDepth = 0;    /* inside <a>, how deep */
+    int    plainText = 0;    /* the paragraph has words outside a link */
 
     if (s == NULL) {
         return 0;
@@ -221,9 +243,20 @@ size_t GazetteStripMarkup(char *s, size_t len)
                 depth--;
                 if (depth == 0) {
                     char name[24];
+                    int  closing = (start < in - 1 && s[start] == '/');
 
                     GazetteHtmlTagName(s + start, in - 1 - start,
                                        name, sizeof name);
+
+                    if (strcmp(name, "a") == 0) {
+                        if (closing) {
+                            if (linkDepth > 0) {
+                                linkDepth--;
+                            }
+                        } else if (s[in - 2] != '/') {
+                            linkDepth++;
+                        }
+                    }
 
                     /* A tag becomes whitespace, not nothing: "a<br>b" is two
                        words, and two paragraphs when the tag says so. */
@@ -232,8 +265,13 @@ size_t GazetteStripMarkup(char *s, size_t len)
                             if (out > 0 && s[out - 1] == ' ') {
                                 out--;      /* the break replaces the space */
                             }
-                            s[out++] = '\n';
+                            out = DropLinkLine(s, out, paraStart, plainText);
+                            if (out > 0 && s[out - 1] != '\n') {
+                                s[out++] = '\n';
+                            }
                         }
+                        paraStart = out;
+                        plainText = 0;
                     } else if (out > 0 && s[out - 1] != ' ' &&
                                s[out - 1] != '\n') {
                         s[out++] = ' ';
@@ -243,9 +281,17 @@ size_t GazetteStripMarkup(char *s, size_t len)
                 s[out++] = c;
             }
         } else if (depth == 0) {
+            if (linkDepth == 0 && c != ' ' && c != '\t' && c != '\r' &&
+                c != '\n') {
+                plainText = 1;
+            }
             s[out++] = c;
         }
     }
+
+    /* The last paragraph, which no block tag closes; the whitespace it
+       ends in is left for the flattener, as it always was. */
+    out = DropLinkLine(s, out, paraStart, plainText);
 
     s[out] = '\0';
     return out;

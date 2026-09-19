@@ -1193,6 +1193,26 @@ static void TestEntities(void)
         GazetteStripMarkup(buf, strlen(buf));
         CheckStr("a stray '>' outside a tag survives", buf, "5 > 3 and 2 ");
 
+        /* The trailer a feed's body ends with: paragraphs that are nothing
+           but a link back to the page. Ars Technica's "Read full article"
+           and "Comments"; a paragraph with words of its own stays, link
+           and all, and so does a long link-only one, which is a title. */
+        strcpy(buf, "<p>The story.</p><p><a href=\"/x\">Read full article</a>"
+                    "</p><p><a href=\"/c\">Comments</a></p>");
+        GazetteStripMarkup(buf, strlen(buf));
+        CheckStr("link-only paragraphs at the end go", buf, "The story.\n");
+        strcpy(buf, "<p><a href=\"/x\">Via</a> a <a href=\"/y\">source</a>."
+                    "</p><p>More.</p>");
+        GazetteStripMarkup(buf, strlen(buf));
+        CheckStr("a paragraph with its own words stays", buf,
+                 "Via  a source .\nMore.");
+        strcpy(buf, "<p>Text.</p><p><a href=\"/l\">A linked line that runs on"
+                    " long enough to be a sentence of its own, not a button"
+                    "</a></p>");
+        GazetteStripMarkup(buf, strlen(buf));
+        CheckTrue("a long link-only paragraph is not a trailer",
+                  strstr(buf, "A linked line") != NULL);
+
         strcpy(buf, "no markup here");
         GazetteStripMarkup(buf, strlen(buf));
         CheckStr("plain text is untouched", buf, "no markup here");
