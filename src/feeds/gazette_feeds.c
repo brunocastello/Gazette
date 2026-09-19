@@ -1053,19 +1053,37 @@ GazetteRefreshState GazetteFeedsFullTextPump(void)
         return gFullState;
     }
 
+    /*
+     * The site said no. A 403 from a bot wall, a 405 from a WAF, a 404, a
+     * 500: what came with it is a notice, not the story, and reading it
+     * as the story is how "verify that you're not a robot" ends up in the
+     * reader pane. The feed's own summary is what NewsProxy shows for these
+     * and it is what Gazette shows too; the status line says why.
+     */
+    if (GazetteFetchStatus(gFullFetch) >= 400) {
+        char why[64];
+
+        snprintf(why, sizeof why, "The site would not serve the page (%d).",
+                 GazetteFetchStatus(gFullFetch));
+        FailFullText(why);
+        return gFullState;
+    }
+
     /* Done also means the extractor filled up and stopped the fetch, which is
        a success: what it has is as much as it keeps. */
-    len = GazetteExtractFinish(gExtract);
+    (void)GazetteExtractFinish(gExtract);
 
-    if (len < kGazetteExtractMin) {
+    if (!GazetteExtractUsable(gExtract)) {
         /*
          * A paywall stub, a cookie wall, a consent page, or a redirector that
-         * only works with JavaScript. The feed's own summary is better than
-         * any of those, so the failure keeps it on screen.
+         * only works with JavaScript — and no description in its head to
+         * stand in. The feed's own summary is better than any of those, so
+         * the failure keeps it on screen.
          */
         FailFullText("That page had no article text in it.");
         return gFullState;
     }
+    len = strlen(GazetteExtractText(gExtract));
 
     gz_copy_n(gFullText, sizeof gFullText, GazetteExtractText(gExtract), len);
     gFullArticle = gPendingFullArticle;

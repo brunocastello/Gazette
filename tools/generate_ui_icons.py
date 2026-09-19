@@ -659,31 +659,36 @@ def main():
     ap.add_argument("--ascii", action="store_true")
     args = ap.parse_args()
 
+    # From 256: the Finder icon family is 128, and the desktop database reads
+    # the application's small icon by that ID out of the same resource fork
+    # -- a 'Today' sun numbered 128 was what the Apple menu showed for
+    # Gazette. The toolbar's IDs are the application's own business and can
+    # be anything; the Finder's cannot.
     icons = [
-        (128, "Today", draw_today()),
+        (256, "Today", draw_today()),
         # All Unread wears the same picture as Next Unread: they are the same
         # idea, the not-yet-read, and one is the view of it and the other the
         # step to it.
-        (129, "All Unread", draw_next_unread()),
-        (130, "Starred", draw_star()),
-        (131, "Starred Article", draw_star_small()),
+        (257, "All Unread", draw_next_unread()),
+        (258, "Starred", draw_star()),
+        (259, "Starred Article", draw_star_small()),
 
         # The toolbar. The three pairs are the buttons that toggle: each
         # wears the picture for what it would do next, the way its menu item
         # wears the words for it. Mark All as Unread is the unread sheet,
         # Show Read Articles the plain one, Mark as Unread a red button.
-        (132, "Sidebar", draw_sidebar()),
-        (133, "Refresh", draw_refresh()),
-        (134, "Mark All as Read", draw_mark_all_read()),
-        (135, "Mark All as Unread", draw_next_unread()),
-        (136, "Hide Read Articles", draw_hide_read()),
-        (137, "Show Read Articles", NEWSPAPER),
-        (138, "Mark as Read", draw_mark_read()),
-        (139, "Mark as Unread", draw_mark_unread()),
-        (140, "Next Unread", draw_next_unread()),
-        (141, "Open in Browser", draw_browser()),
-        (142, "New", draw_new()),
-        (143, "Find", draw_find()),
+        (260, "Sidebar", draw_sidebar()),
+        (261, "Refresh", draw_refresh()),
+        (262, "Mark All as Read", draw_mark_all_read()),
+        (263, "Mark All as Unread", draw_next_unread()),
+        (264, "Hide Read Articles", draw_hide_read()),
+        (265, "Show Read Articles", NEWSPAPER),
+        (266, "Mark as Read", draw_mark_read()),
+        (267, "Mark as Unread", draw_mark_unread()),
+        (268, "Next Unread", draw_next_unread()),
+        (269, "Open in Browser", draw_browser()),
+        (270, "New", draw_new()),
+        (271, "Find", draw_find()),
     ]
 
     if args.ascii:

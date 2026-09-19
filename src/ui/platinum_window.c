@@ -2984,33 +2984,36 @@ static RowIcon gSmartIcon[kGazetteSmartCount];
 static RowIcon gStarIcon;       /* the mark on a starred headline */
 static RowIcon gFindIcon;       /* the glass beside the toolbar's search field */
 
-/* Resource IDs, and they have to agree with tools/generate_ui_icons.py. */
+/* Resource IDs, and they have to agree with tools/generate_ui_icons.py.
+   From 256, clear of the Finder icon family at 128: the desktop database
+   reads the application's small icon by that ID out of this same resource
+   fork, and a 'Today' sun numbered 128 was what the Apple menu showed. */
 enum {
-    kIconToday        = 128,
-    kIconAllUnread    = 129,
-    kIconStarred      = 130,
-    kIconStarredSmall = 131,
+    kIconToday        = 256,
+    kIconAllUnread    = 257,
+    kIconStarred      = 258,
+    kIconStarredSmall = 259,
 
     /* The toolbar's. The three pairs are the buttons that toggle. For now
        both halves of a pair carry the same picture — the second state's has
        not been drawn — and the generator emits it twice so that the two IDs
        stay distinct for the day it is. */
-    kIconSidebar       = 132,
-    kIconRefresh       = 133,
-    kIconMarkAllRead   = 134,
-    kIconMarkAllUnread = 135,
-    kIconHideRead      = 136,
-    kIconShowRead      = 137,
-    kIconMarkRead      = 138,
-    kIconMarkUnread    = 139,
-    kIconNextUnread    = 140,
-    kIconBrowser       = 141,
+    kIconSidebar       = 260,
+    kIconRefresh       = 261,
+    kIconMarkAllRead   = 262,
+    kIconMarkAllUnread = 263,
+    kIconHideRead      = 264,
+    kIconShowRead      = 265,
+    kIconMarkRead      = 266,
+    kIconMarkUnread    = 267,
+    kIconNextUnread    = 268,
+    kIconBrowser       = 269,
 
     /* Drawn and approved, and waiting on the toolbar that will wear them:
        a New button at the head of the row, and a Find beside the search
        field. */
-    kIconNew           = 142,
-    kIconFind          = 143
+    kIconNew           = 270,
+    kIconFind          = 271
 };
 
 static void SystemIcon(RowIcon *out, OSType which)

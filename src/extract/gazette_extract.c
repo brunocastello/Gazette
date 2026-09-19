@@ -39,10 +39,16 @@ static const char *const kBlockTags[] = {
  * script and style are the ones that matter most: without them the reader
  * pane fills with JavaScript. The rest is page furniture, and losing a little
  * of it that was worth reading costs less than keeping all of it.
+ *
+ * noscript is not here on purpose. It is what a page shows a reader without
+ * JavaScript, and Gazette is that reader: a page built by script puts its
+ * text there, and a lazy loader puts the real <img> there. The "please
+ * enable JavaScript" notice it sometimes holds is a line, and a line is
+ * cheap next to a page that would otherwise be empty.
  */
 static const char *const kSkipTags[] = {
     "head", "nav", "header", "footer", "aside",
-    "form", "noscript", "iframe", "svg", "canvas", "video", "audio",
+    "form", "iframe", "svg", "canvas", "video", "audio",
     "select", "button", "template", "object", "map"
 };
 
@@ -434,8 +440,23 @@ static int IsRawTextTag(const char *name)
                   sizeof kRawTextTags / sizeof kRawTextTags[0]);
 }
 
-/* Whether this tag opens the block the page says its article is in. */
-static int TagIsContent(const char *tag, size_t len, const char *name)
+/*
+ * Whether this tag opens the block the page says its article is in, and how
+ * surely. kContentStrong is a signal a page gives once: <main>, role=main,
+ * itemprop=articleBody, a CMS's own class for the body. kContentWeak is one
+ * it may give many times — <article> is any self-contained thing, and a
+ * teaser in a rail is one; "story" and "body" name a block on some pages and
+ * a card in a list on others. Both open the article's block when nothing
+ * else has; only the strong one is trusted to do so from inside furniture,
+ * where a weak one is more likely the furniture's own.
+ */
+enum {
+    kContentNone = 0,
+    kContentWeak,
+    kContentStrong
+};
+
+static int ContentSignal(const char *tag, size_t len, const char *name)
 {
     static const char *const kNamed[] = { "class", "id" };
     static const char *const kMain[]  = { "main" };
@@ -443,33 +464,76 @@ static int TagIsContent(const char *tag, size_t len, const char *name)
     const char *value;
     size_t      valueLen;
     size_t      i;
+    int         found = kContentNone;
 
-    if (strcmp(name, "article") == 0 || strcmp(name, "main") == 0) {
-        return 1;
+    if (strcmp(name, "main") == 0) {
+        return kContentStrong;
+    }
+    if (strcmp(name, "article") == 0) {
+        return kContentWeak;
     }
     if (!IsContainerTag(name)) {
-        return 0;
+        return kContentNone;
     }
     if (GazetteHtmlAttr(tag, len, "role", &value, &valueLen) &&
         ValueHasAny(value, valueLen, kMain, 1)) {
-        return 1;
+        return kContentStrong;
     }
     if (GazetteHtmlAttr(tag, len, "itemprop", &value, &valueLen) &&
         ValueHasAny(value, valueLen, kBody, 1)) {
-        return 1;
+        return kContentStrong;
     }
     for (i = 0; i < sizeof kNamed / sizeof kNamed[0]; i++) {
-        if (GazetteHtmlAttr(tag, len, kNamed[i], &value, &valueLen) &&
-            (ValueHasAny(value, valueLen, kContentMarkers,
-                         sizeof kContentMarkers /
-                         sizeof kContentMarkers[0]) ||
-             ValueHasWord(value, valueLen, kContentWords,
-                          sizeof kContentWords /
-                          sizeof kContentWords[0]))) {
-            return 1;
+        if (!GazetteHtmlAttr(tag, len, kNamed[i], &value, &valueLen)) {
+            continue;
+        }
+        if (ValueHasAny(value, valueLen, kContentMarkers,
+                        sizeof kContentMarkers / sizeof kContentMarkers[0])) {
+            return kContentStrong;
+        }
+        if (ValueHasWord(value, valueLen, kContentWords,
+                         sizeof kContentWords / sizeof kContentWords[0])) {
+            found = kContentWeak;
         }
     }
-    return 0;
+    return found;
+}
+
+static int TagIsContent(const char *tag, size_t len, const char *name)
+{
+    return ContentSignal(tag, len, name) != kContentNone;
+}
+
+/*
+ * The page's description of itself, out of its head: og:description, or
+ * the plain one. Read while the head is being skipped, since that is where
+ * it is. The longer of the two is kept; see GazetteExtractUsable for what
+ * it is for.
+ */
+static void NoteDescription(GazetteExtract *e)
+{
+    const char *what;
+    size_t      whatLen;
+    const char *value;
+    size_t      valueLen;
+
+    if (!GazetteHtmlAttr(e->tag, e->tagLen, "property", &what, &whatLen) &&
+        !GazetteHtmlAttr(e->tag, e->tagLen, "name", &what, &whatLen)) {
+        return;
+    }
+    if (!((whatLen == 14 && gz_strnicmp(what, "og:description", 14) == 0) ||
+          (whatLen == 11 && gz_strnicmp(what, "description", 11) == 0))) {
+        return;
+    }
+    if (!GazetteHtmlAttr(e->tag, e->tagLen, "content", &value, &valueLen)) {
+        return;
+    }
+    if (valueLen >= sizeof e->description) {
+        valueLen = sizeof e->description - 1;
+    }
+    if (valueLen > strlen(e->description)) {
+        gz_copy_n(e->description, sizeof e->description, value, valueLen);
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -501,6 +565,50 @@ const char *GazetteExtractText(const GazetteExtract *e)
 int GazetteExtractPhotoCount(const GazetteExtract *e)
 {
     return (e != NULL) ? e->photoCount : 0;
+}
+
+/*
+ * See gazette_extract.h. The swap is done here rather than in Finish so a
+ * caller that only wants the page's own text is never handed something
+ * else; only the one that asks "is this worth showing" gets the answer.
+ * The description goes through the pipeline the text did, in out[] —
+ * which Finish is done with — and replaces the text only if it wins.
+ */
+int GazetteExtractUsable(GazetteExtract *e)
+{
+    char  *raw;
+    char  *ascii;
+    size_t len;
+
+    if (e == NULL) {
+        return 0;
+    }
+    if (e->textLen >= kGazetteExtractMin) {
+        return 1;
+    }
+    if (e->fellBack) {
+        return 1;                   /* asked twice: same answer */
+    }
+
+    len = strlen(e->description);
+    if (len == 0) {
+        return 0;
+    }
+    raw   = e->out;
+    ascii = e->out + kGazetteDescriptionMax;
+    memcpy(raw, e->description, len);
+    len = GazetteDecodeEntities(raw, len);
+    len = gz_utf8_to_ascii(raw, len, ascii, kGazetteDescriptionMax);
+    len = gz_flatten_ws(ascii, len);
+    if (len < kGazetteDescriptionMin || len <= e->textLen) {
+        return 0;
+    }
+
+    gz_copy_n(e->scratch, sizeof e->scratch, ascii, len);
+    e->textLen    = len;
+    e->fellBack   = 1;
+    e->photoCount = 0;              /* their markers went with the text */
+    return 1;
 }
 
 const GazettePhotoRef *GazetteExtractPhoto(const GazetteExtract *e, int i)
@@ -792,6 +900,7 @@ static int AtLineStart(const GazetteExtract *e)
 static void FinishTag(GazetteExtract *e)
 {
     char name[24];
+    int  fromSkip = 0;              /* this tag ended a skip; see below */
 
     /*
      * A tag too long for the buffer is one with a great many attributes, and
@@ -828,9 +937,59 @@ static void FinishTag(GazetteExtract *e)
            silently treating a script as prose. */
     }
 
+    if (!e->closing && strcmp(name, "meta") == 0) {
+        NoteDescription(e);
+    }
+
     if (e->skip[0] != '\0') {
-        /* Inside something being dropped: the only tags that matter are the
-           ones that open another of it or close this one. */
+        /*
+         * Inside something being dropped. What the page names as its
+         * article outranks what it names as furniture around it: a
+         * <main> inside a "footer-wrap", a "post-body" inside a "widget",
+         * an "entry-content" inside a "Shared…" — every one a layout
+         * wrapper named for what it holds, and the article inside it. So
+         * a block skipped for its class (not one skipped for being <nav>
+         * or <footer>, which are never wrappers) ends the moment the
+         * article's block opens inside it. Only while there is next to
+         * nothing read yet, though: once the article is in hand, a block
+         * called "content" inside a comment thread is the thread's.
+         */
+        if (e->skipSoft && !e->closing && e->outLen < kGazetteHeaderMax &&
+            !(e->tagLen > 0 && e->tag[e->tagLen - 1] == '/')) {
+            int signal = ContentSignal(e->tag, e->tagLen, name);
+
+            /* A weak one that is also named as furniture — a comment
+               thread's <article class="comment-body"> — is the furniture's,
+               and does not end the skip. */
+            if (signal == kContentWeak &&
+                TagIsUnwanted(e->tag, e->tagLen, name)) {
+                signal = kContentNone;
+            }
+            if (signal != kContentNone) {
+                e->skip[0]   = '\0';
+                e->skipDepth = 0;
+                e->skipSoft  = 0;
+                if (e->focus[0] == '\0' && signal == kContentStrong) {
+                    gz_copy_n(e->focus, sizeof e->focus, name, strlen(name));
+                    e->focusDepth = 1;
+                    e->outLen     = 0;
+                    e->bodyStart  = 0;
+                    e->bodyBegun  = 0;
+                    ResetArticlePhotos(e);
+                    return;
+                }
+                PutBreak(e);
+                /* Read on as if the skip had never begun: the tag is the
+                   article's, and is handled below like any other — except
+                   that a weak signal does not open the article's block
+                   from here, for the reason above. */
+                fromSkip = 1;
+                goto not_skipped;
+            }
+        }
+
+        /* The only tags that matter are the ones that open another of it
+           or close this one. */
         if (strcmp(name, e->skip) == 0) {
             if (e->closing) {
                 e->skipDepth--;
@@ -848,6 +1007,7 @@ static void FinishTag(GazetteExtract *e)
         return;
     }
 
+not_skipped:
     /*
      * The article's own block, opening or closing. Opening, once: the page
      * so far was the page, so it goes, and the text starts here. Closing,
@@ -864,7 +1024,7 @@ static void FinishTag(GazetteExtract *e)
         } else if (e->tagLen == 0 || e->tag[e->tagLen - 1] != '/') {
             e->focusDepth++;
         }
-    } else if (!e->closing && e->focus[0] == '\0' &&
+    } else if (!e->closing && e->focus[0] == '\0' && !fromSkip &&
                TagIsContent(e->tag, e->tagLen, name) &&
                !(e->tagLen > 0 && e->tag[e->tagLen - 1] == '/')) {
         gz_copy_n(e->focus, sizeof e->focus, name, strlen(name));
@@ -974,8 +1134,15 @@ static void FinishTag(GazetteExtract *e)
         return;
     }
 
+    /*
+     * Furniture, by element or by name. Not when the same tag names itself
+     * the article: <article class="newsletter-post"> is a post, and the
+     * word that says what it is outranks the word that says what it is
+     * about.
+     */
     if (!e->closing && (IsSkipTag(name) ||
-                        TagIsUnwanted(e->tag, e->tagLen, name) ||
+                        (TagIsUnwanted(e->tag, e->tagLen, name) &&
+                         !TagIsContent(e->tag, e->tagLen, name)) ||
                         (strcmp(name, "a") == 0 && AtLineStart(e) &&
                          TagIsAffiliateLink(e->tag, e->tagLen)))) {
         /* "<br/>"-style self-closing: it opens nothing, so there is nothing
@@ -985,6 +1152,7 @@ static void FinishTag(GazetteExtract *e)
         }
         gz_copy_n(e->skip, sizeof e->skip, name, strlen(name));
         e->skipDepth = 1;
+        e->skipSoft  = !IsSkipTag(name);
         PutBreak(e);
         return;
     }
@@ -1225,8 +1393,11 @@ size_t GazetteExtractFinish(GazetteExtract *e)
     }
 
     /* The page's header — headline again, byline, lead picture — goes,
-       and the pictures that were in it. */
-    if (e->bodyBegun && e->bodyStart > 0 && e->bodyStart <= e->outLen) {
+       and the pictures that were in it. Unless it is too long to be one:
+       an abstract, a description, an article written in <div>s with a
+       paragraph only at the end, which would lose the lot. */
+    if (e->bodyBegun && e->bodyStart > 0 && e->bodyStart <= e->outLen &&
+        e->bodyStart <= kGazetteHeaderMax) {
         int i, n;
 
         memmove(e->out, e->out + e->bodyStart, e->outLen - e->bodyStart);

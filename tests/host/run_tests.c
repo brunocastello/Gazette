@@ -2627,6 +2627,146 @@ static void TestExtractTrailers(void)
              "Here's \020WABetaInfo\021: follow \020this link\021.");
 }
 
+/*
+ * The wrappers. A modern page's layout is <div>s named for what they hold
+ * — "ContainerWithSidebarWrapper", "flex-wrap-footer", "skipToContent",
+ * "widget-area" — and the article is inside them. Read from Hacker News
+ * links and the BBC on 2026-09-19, where each of these ate the whole page.
+ */
+static void TestExtractWrappers(void)
+{
+    static GazetteExtract e;
+    static char           page[4096];
+    static char           want[2048];
+    size_t                i, n;
+
+    CheckStr("main inside a div named for the footer",
+             Extract(&e, "<body><div class=\"flex-wrap-footer\">"
+                         "<header>Site</header><main><p>The story.</p></main>"
+                         "<footer>(c)</footer></div></body>", 0),
+             "The story.");
+    CheckStr("main inside a div named for the sidebar",
+             Extract(&e, "<body><div class=\"ContainerWithSidebarWrapper\">"
+                         "<main><article><p>The story.</p></article></main>"
+                         "<div class=\"sidebar\">Rail</div></div></body>", 0),
+             "The story.");
+    CheckStr("a CMS's body class inside a skipped wrapper, article already"
+             " open",
+             Extract(&e, "<body><main><div class=\"SharedPageLayout-content\">"
+                         "<div>File list</div>"
+                         "<article class=\"markdown-body entry-content\">"
+                         "<p>The readme.</p></article></div></main></body>", 0),
+             "The readme.");
+    CheckStr("a body block inside a widget is read, and the page goes on",
+             Extract(&e, "<body><div class=\"widget post\">"
+                         "<div class=\"body\"><p>The story.</p></div></div>"
+                         "<div class=\"widget\"><p>Other story</p></div></body>", 0),
+             "The story.");
+    CheckStr("but a weak signal does not take the article's block from"
+             " inside furniture",
+             Extract(&e, "<body><div class=\"related\"><article><p>Teaser.</p>"
+                         "</article></div><article><p>The story.</p></article>"
+                         "</body>", 0),
+             "The story.");
+    CheckStr("a comment thread's own articles do not end its skip",
+             Extract(&e, "<body><p>The story.</p><div id=\"comments\">"
+                         "<article class=\"comment-body\"><p>First!</p>"
+                         "</article></div></body>", 0),
+             "The story.");
+    CheckStr("an element skipped for what it is stays skipped",
+             Extract(&e, "<body><nav><main><p>Nope</p></main></nav>"
+                         "<p>The story.</p></body>", 0),
+             "The story.");
+    CheckStr("the article's own element is never furniture",
+             Extract(&e, "<body><div role=\"main\">"
+                         "<article class=\"typography newsletter-post post\">"
+                         "<p>The story.</p></article></div></body>", 0),
+             "The story.");
+
+    /* Once the article is in hand, "content" inside the comment thread is
+       the thread's. Eight hundred characters of story first. */
+    n = 0;
+    n += (size_t)snprintf(page + n, sizeof page - n, "<body><article>");
+    want[0] = '\0';
+    for (i = 0; i < 12; i++) {
+        n += (size_t)snprintf(page + n, sizeof page - n,
+                              "<p>Paragraph %02d of the story, long enough to"
+                              " count towards the body's size.</p>", (int)i);
+        snprintf(want + strlen(want), sizeof want - strlen(want),
+                 "%sParagraph %02d of the story, long enough to count"
+                 " towards the body's size.", i ? "\n" : "", (int)i);
+    }
+    n += (size_t)snprintf(page + n, sizeof page - n,
+                          "<div class=\"comments\"><div class=\"article-content\">"
+                          "<p>First post!</p></div></div></article></body>");
+    CheckStr("a content block inside the comments, after the story, is not"
+             " the story", Extract(&e, page, 0), want);
+    CheckStr("and the same page seven bytes at a time",
+             Extract(&e, page, 7), want);
+
+    /* What a page shows a reader without JavaScript is what this reader
+       is shown. */
+    CheckStr("noscript is read",
+             Extract(&e, "<body><noscript><p>The story.</p></noscript>"
+                         "<div id=\"app\"></div></body>", 0),
+             "The story.");
+
+    /* The header cut has a size: above it, what came before the first
+       paragraph was not a header. */
+    n = 0;
+    n += (size_t)snprintf(page + n, sizeof page - n, "<body><main>");
+    for (i = 0; i < 20; i++) {
+        n += (size_t)snprintf(page + n, sizeof page - n,
+                              "<div>Line %02d of an abstract written in divs,"
+                              " forty-odd characters.</div>", (int)i);
+    }
+    n += (size_t)snprintf(page + n, sizeof page - n,
+                          "<p>A paragraph at the end.</p></main></body>");
+    CheckTrue("an abstract before the first paragraph is kept",
+              strncmp(Extract(&e, page, 0), "Line 00 of an abstract", 22) == 0);
+    CheckStr("while a header's worth still goes",
+             Extract(&e, "<body><main><div>Category</div><h1>Headline</h1>"
+                         "<div>By Someone | Today</div><p>The story.</p>"
+                         "</main></body>", 0),
+             "The story.");
+
+    /* The page's own description, when its body says nothing. */
+    Extract(&e, "<html><head><meta content=\"A post that is the whole of"
+                " the article, written in the head because the body is built"
+                " by script.\" property=\"og:description\"></head>"
+                "<body><div id=\"app\"></div></body></html>", 0);
+    CheckLong("an empty body is not usable on its own",
+              (long)strlen(GazetteExtractText(&e)), 0);
+    CheckTrue("but its description is", GazetteExtractUsable(&e));
+    CheckStr("and becomes the text", GazetteExtractText(&e),
+             "A post that is the whole of the article, written in the head"
+             " because the body is built by script.");
+    CheckTrue("asked again, the same answer", GazetteExtractUsable(&e));
+
+    Extract(&e, "<html><head><meta name=\"description\" content=\"Short.\">"
+                "</head><body></body></html>", 0);
+    CheckLong("a description a few words long is not an article",
+              GazetteExtractUsable(&e), 0);
+    CheckStr("and the text is left alone", GazetteExtractText(&e), "");
+
+    n = 0;
+    n += (size_t)snprintf(page + n, sizeof page - n,
+                          "<html><head><meta name=\"description\" content=\"A"
+                          " summary the page wrote for search engines, and"
+                          " not the article, which is below in full.\">"
+                          "</head><body><article>");
+    for (i = 0; i < 10; i++) {
+        n += (size_t)snprintf(page + n, sizeof page - n,
+                              "<p>Paragraph %d of the story itself.</p>",
+                              (int)i);
+    }
+    n += (size_t)snprintf(page + n, sizeof page - n, "</article></body>");
+    Extract(&e, page, 0);
+    CheckTrue("a page with its text is usable", GazetteExtractUsable(&e));
+    CheckTrue("and keeps its text over its description",
+              strncmp(GazetteExtractText(&e), "Paragraph 0", 11) == 0);
+}
+
 static void TestExtract(void)
 {
     static GazetteExtract e;   /* 16 KB: too big for this stack, as in the app */
@@ -3093,6 +3233,7 @@ int main(void)
     TestExtract();
     TestExtractPhotos();
     TestExtractTrailers();
+    TestExtractWrappers();
     TestDiscovery();
     TestDiscoveryPaths();
     TestGoogleNews();

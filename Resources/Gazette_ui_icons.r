@@ -18,14 +18,14 @@
  * IDs are the kIcon* constants in src/ui/platinum_window.c.
  */
 
-data 'ics#' (128, "Today", purgeable) {
+data 'ics#' (256, "Today", purgeable) {
 	$"01 80 02 40 1A 58 26 64 26 64 18 18 78 1E 80 01"
 	$"80 01 78 1E 18 18 26 64 26 64 1A 58 02 40 01 80"
 	$"01 80 03 C0 1B D8 3F FC 3F FC 1F F8 7F FE FF FF"
 	$"FF FF 7F FE 1F F8 3F FC 3F FC 1B D8 03 C0 01 80"
 };
 
-data 'ics8' (128, "Today", purgeable) {
+data 'ics8' (256, "Today", purgeable) {
 	$"00 00 00 00 00 00 00 FF FF 00 00 00 00 00 00 00"
 	$"00 00 00 00 00 00 FF 11 11 FF 00 00 00 00 00 00"
 	$"00 00 00 FF FF 00 FF 11 11 FF 00 FF FF 00 00 00"
@@ -44,14 +44,14 @@ data 'ics8' (128, "Today", purgeable) {
 	$"00 00 00 00 00 00 00 FF FF 00 00 00 00 00 00 00"
 };
 
-data 'ics#' (129, "All Unread", purgeable) {
+data 'ics#' (257, "All Unread", purgeable) {
 	$"00 1C 7F EE 40 3E 47 FE 47 FE 40 02 40 72 40 72"
 	$"40 72 40 02 40 02 40 02 40 02 40 02 7F FE 00 00"
 	$"00 1C 7F FE 7F FE 7F FE 7F FE 7F FE 7F FE 7F FE"
 	$"7F FE 7F FE 7F FE 7F FE 7F FE 7F FE 7F FE 00 00"
 };
 
-data 'ics8' (129, "All Unread", purgeable) {
+data 'ics8' (257, "All Unread", purgeable) {
 	$"00 00 00 00 00 00 00 00 00 00 00 FF FF FF 00 00"
 	$"00 FA FA FA FA FA FA FA FA FA FF 0E 23 23 FF 00"
 	$"00 FA F5 56 00 00 00 00 00 00 FF 23 23 23 FF 00"
@@ -70,14 +70,14 @@ data 'ics8' (129, "All Unread", purgeable) {
 	$"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
 };
 
-data 'ics#' (130, "Starred", purgeable) {
+data 'ics#' (258, "Starred", purgeable) {
 	$"01 00 02 80 02 80 04 40 04 40 FC 7E 40 04 20 08"
 	$"10 10 10 10 21 08 23 88 44 44 58 34 60 0C 00 00"
 	$"01 00 03 80 03 80 07 C0 07 C0 FF FE 7F FC 3F F8"
 	$"1F F0 1F F0 3F F8 3F F8 7C 7C 78 3C 60 0C 00 00"
 };
 
-data 'ics8' (130, "Starred", purgeable) {
+data 'ics8' (258, "Starred", purgeable) {
 	$"00 00 00 00 00 00 00 FF 00 00 00 00 00 00 00 00"
 	$"00 00 00 00 00 00 FF 02 FF 00 00 00 00 00 00 00"
 	$"00 00 00 00 00 00 FF 02 FF 00 00 00 00 00 00 00"
@@ -96,14 +96,14 @@ data 'ics8' (130, "Starred", purgeable) {
 	$"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
 };
 
-data 'ics#' (131, "Starred Article", purgeable) {
+data 'ics#' (259, "Starred Article", purgeable) {
 	$"00 00 00 00 01 00 02 80 02 80 3E F8 10 10 08 20"
 	$"08 20 13 90 16 D0 18 30 00 00 00 00 00 00 00 00"
 	$"00 00 00 00 01 00 03 80 03 80 3F F8 1F F0 0F E0"
 	$"0F E0 1F F0 1E F0 18 30 00 00 00 00 00 00 00 00"
 };
 
-data 'ics8' (131, "Starred Article", purgeable) {
+data 'ics8' (259, "Starred Article", purgeable) {
 	$"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
 	$"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
 	$"00 00 00 00 00 00 00 FF 00 00 00 00 00 00 00 00"
@@ -122,14 +122,14 @@ data 'ics8' (131, "Starred Article", purgeable) {
 	$"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
 };
 
-data 'ics#' (132, "Sidebar", purgeable) {
+data 'ics#' (260, "Sidebar", purgeable) {
 	$"00 00 7F FC 40 02 40 02 7F FE 41 02 41 02 41 02"
 	$"41 02 41 02 41 02 41 02 41 02 40 02 7F FE 00 00"
 	$"00 00 7F FC 7F FE 7F FE 7F FE 7F FE 7F FE 7F FE"
 	$"7F FE 7F FE 7F FE 7F FE 7F FE 7F FE 7F FE 00 00"
 };
 
-data 'ics8' (132, "Sidebar", purgeable) {
+data 'ics8' (260, "Sidebar", purgeable) {
 	$"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
 	$"00 FA FA FA FA FA FA FA FA FA FA FA FA FA 00 00"
 	$"00 FA 2B 2B 2B 2B 2B 2B 2B 2B 2B 2B 2B 2B FF 00"
@@ -148,14 +148,14 @@ data 'ics8' (132, "Sidebar", purgeable) {
 	$"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
 };
 
-data 'ics#' (133, "Refresh", purgeable) {
+data 'ics#' (261, "Refresh", purgeable) {
 	$"00 40 00 E0 07 F0 0F F8 1C 7C 33 F8 64 F0 68 E0"
 	$"68 40 78 10 78 38 7C 7C 3F F8 1F F0 0F E0 07 C0"
 	$"00 40 00 E0 07 F0 0F F8 1F FC 3F F8 7C F0 78 E0"
 	$"78 40 78 10 78 38 7C 7C 3F F8 1F F0 0F E0 07 C0"
 };
 
-data 'ics8' (133, "Refresh", purgeable) {
+data 'ics8' (261, "Refresh", purgeable) {
 	$"00 00 00 00 00 00 00 00 00 FF 00 00 00 00 00 00"
 	$"00 00 00 00 00 00 00 00 FF 7F FF 00 00 00 00 00"
 	$"00 00 00 00 00 FF FF FF FF 7F 7F FF 00 00 00 00"
@@ -174,14 +174,14 @@ data 'ics8' (133, "Refresh", purgeable) {
 	$"00 00 00 00 00 FF FF FF FF FF 00 00 00 00 00 00"
 };
 
-data 'ics#' (134, "Mark All as Read", purgeable) {
+data 'ics#' (262, "Mark All as Read", purgeable) {
 	$"00 00 7F FC 40 02 47 F2 47 F2 40 02 40 72 40 72"
 	$"40 73 40 07 40 CF 40 EE 40 FE 40 7E 7F FE 00 10"
 	$"00 00 7F FC 7F FE 7F FE 7F FE 7F FE 7F FE 7F FE"
 	$"7F FF 7F FF 7F FF 7F FE 7F FE 7F FE 7F FE 00 10"
 };
 
-data 'ics8' (134, "Mark All as Read", purgeable) {
+data 'ics8' (262, "Mark All as Read", purgeable) {
 	$"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
 	$"00 FA FA FA FA FA FA FA FA FA FA FA FA FA 00 00"
 	$"00 FA F5 56 00 00 00 00 00 00 00 00 00 2B FF 00"
@@ -200,14 +200,14 @@ data 'ics8' (134, "Mark All as Read", purgeable) {
 	$"00 00 00 00 00 00 00 00 00 00 00 FF 00 00 00 00"
 };
 
-data 'ics#' (135, "Mark All as Unread", purgeable) {
+data 'ics#' (263, "Mark All as Unread", purgeable) {
 	$"00 1C 7F EE 40 3E 47 FE 47 FE 40 02 40 72 40 72"
 	$"40 72 40 02 40 02 40 02 40 02 40 02 7F FE 00 00"
 	$"00 1C 7F FE 7F FE 7F FE 7F FE 7F FE 7F FE 7F FE"
 	$"7F FE 7F FE 7F FE 7F FE 7F FE 7F FE 7F FE 00 00"
 };
 
-data 'ics8' (135, "Mark All as Unread", purgeable) {
+data 'ics8' (263, "Mark All as Unread", purgeable) {
 	$"00 00 00 00 00 00 00 00 00 00 00 FF FF FF 00 00"
 	$"00 FA FA FA FA FA FA FA FA FA FF 0E 23 23 FF 00"
 	$"00 FA F5 56 00 00 00 00 00 00 FF 23 23 23 FF 00"
@@ -226,14 +226,14 @@ data 'ics8' (135, "Mark All as Unread", purgeable) {
 	$"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
 };
 
-data 'ics#' (136, "Hide Read Articles", purgeable) {
+data 'ics#' (264, "Hide Read Articles", purgeable) {
 	$"00 00 7F FC 40 02 40 02 40 02 40 02 40 02 40 02"
 	$"40 C3 40 E7 40 7E 40 3E 40 3E 40 7E 7F FF 00 C3"
 	$"00 00 7F FC 7F FE 7F FE 7F FE 7F FE 7F FE 7F FE"
 	$"7F FF 7F FF 7F FE 7F FE 7F FE 7F FE 7F FF 00 C3"
 };
 
-data 'ics8' (136, "Hide Read Articles", purgeable) {
+data 'ics8' (264, "Hide Read Articles", purgeable) {
 	$"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
 	$"00 FA FA FA FA FA FA FA FA FA FA FA FA FA 00 00"
 	$"00 FA F5 2B 00 00 00 00 00 00 00 00 00 2B FF 00"
@@ -252,14 +252,14 @@ data 'ics8' (136, "Hide Read Articles", purgeable) {
 	$"00 00 00 00 00 00 00 00 FF FF 00 00 00 00 FF FF"
 };
 
-data 'ics#' (137, "Show Read Articles", purgeable) {
+data 'ics#' (265, "Show Read Articles", purgeable) {
 	$"00 00 7F FC 40 02 47 F2 47 F2 40 02 40 72 40 72"
 	$"40 72 40 02 40 02 40 02 40 02 40 02 7F FE 00 00"
 	$"00 00 7F FC 7F FE 7F FE 7F FE 7F FE 7F FE 7F FE"
 	$"7F FE 7F FE 7F FE 7F FE 7F FE 7F FE 7F FE 00 00"
 };
 
-data 'ics8' (137, "Show Read Articles", purgeable) {
+data 'ics8' (265, "Show Read Articles", purgeable) {
 	$"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
 	$"00 FA FA FA FA FA FA FA FA FA FA FA FA FA 00 00"
 	$"00 FA F5 56 00 00 00 00 00 00 00 00 00 2B FF 00"
@@ -278,14 +278,14 @@ data 'ics8' (137, "Show Read Articles", purgeable) {
 	$"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
 };
 
-data 'ics#' (138, "Mark as Read", purgeable) {
+data 'ics#' (266, "Mark as Read", purgeable) {
 	$"07 C0 18 30 27 F8 4F FC 5F FC BF CE BF 9E BF 3E"
 	$"A6 7E B0 FE 59 FC 7F FC 3F F8 1F F0 07 C0 00 00"
 	$"07 C0 1F F0 3F F8 7F FC 7F FC FF FE FF FE FF FE"
 	$"FF FE FF FE 7F FC 7F FC 3F F8 1F F0 07 C0 00 00"
 };
 
-data 'ics8' (138, "Mark as Read", purgeable) {
+data 'ics8' (266, "Mark as Read", purgeable) {
 	$"00 00 00 00 00 FF FF FF FF FF 00 00 00 00 00 00"
 	$"00 00 00 FF FF 6F 6F 6F 6F 6F FF FF 00 00 00 00"
 	$"00 00 FF 6F 6F BF BF BF BF BF BF BF FF 00 00 00"
@@ -304,14 +304,14 @@ data 'ics8' (138, "Mark as Read", purgeable) {
 	$"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
 };
 
-data 'ics#' (139, "Mark as Unread", purgeable) {
+data 'ics#' (267, "Mark as Unread", purgeable) {
 	$"07 C0 18 30 27 F8 4F FC 5E 7C BC 7E BE 7E BE 7E"
 	$"BE 7E BE 7E 58 1C 7F FC 3F F8 1F F0 07 C0 00 00"
 	$"07 C0 1F F0 3F F8 7F FC 7F FC FF FE FF FE FF FE"
 	$"FF FE FF FE 7F FC 7F FC 3F F8 1F F0 07 C0 00 00"
 };
 
-data 'ics8' (139, "Mark as Unread", purgeable) {
+data 'ics8' (267, "Mark as Unread", purgeable) {
 	$"00 00 00 00 00 FF FF FF FF FF 00 00 00 00 00 00"
 	$"00 00 00 FF FF 0E 0E 0E 0E 0E FF FF 00 00 00 00"
 	$"00 00 FF 0E 0E 23 23 23 23 23 23 23 FF 00 00 00"
@@ -330,14 +330,14 @@ data 'ics8' (139, "Mark as Unread", purgeable) {
 	$"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
 };
 
-data 'ics#' (140, "Next Unread", purgeable) {
+data 'ics#' (268, "Next Unread", purgeable) {
 	$"00 1C 7F EE 40 3E 47 FE 47 FE 40 02 40 72 40 72"
 	$"40 72 40 02 40 02 40 02 40 02 40 02 7F FE 00 00"
 	$"00 1C 7F FE 7F FE 7F FE 7F FE 7F FE 7F FE 7F FE"
 	$"7F FE 7F FE 7F FE 7F FE 7F FE 7F FE 7F FE 00 00"
 };
 
-data 'ics8' (140, "Next Unread", purgeable) {
+data 'ics8' (268, "Next Unread", purgeable) {
 	$"00 00 00 00 00 00 00 00 00 00 00 FF FF FF 00 00"
 	$"00 FA FA FA FA FA FA FA FA FA FF 0E 23 23 FF 00"
 	$"00 FA F5 56 00 00 00 00 00 00 FF 23 23 23 FF 00"
@@ -356,14 +356,14 @@ data 'ics8' (140, "Next Unread", purgeable) {
 	$"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
 };
 
-data 'ics#' (141, "Open in Browser", purgeable) {
+data 'ics#' (269, "Open in Browser", purgeable) {
 	$"07 C0 18 30 20 08 40 04 40 0C 80 06 81 86 82 46"
 	$"84 26 48 1C 4E 74 22 48 1E 70 02 40 02 40 03 C0"
 	$"07 C0 1F F0 3F F8 7F FC 7F FC FF FE FF FE FF FE"
 	$"FF FE 7F FC 7F FC 3F F8 1F F0 03 C0 03 C0 03 C0"
 };
 
-data 'ics8' (141, "Open in Browser", purgeable) {
+data 'ics8' (269, "Open in Browser", purgeable) {
 	$"00 00 00 00 00 FF FF FF FF FF 00 00 00 00 00 00"
 	$"00 00 00 FF FF 4E 4E 4E 9C 9C FF FF 00 00 00 00"
 	$"00 00 FF 4E 4E 4E 9C 6F 6F 9C 9C 9C FF 00 00 00"
@@ -382,14 +382,14 @@ data 'ics8' (141, "Open in Browser", purgeable) {
 	$"00 00 00 00 00 00 FF FF FF FF 00 00 00 00 00 00"
 };
 
-data 'ics#' (142, "New", purgeable) {
+data 'ics#' (270, "New", purgeable) {
 	$"00 00 7F FC 40 02 47 F2 47 F2 40 02 40 72 40 72"
 	$"40 7E 40 2E 40 EF 40 8F 40 FF 40 FF 7F FE 00 3C"
 	$"00 00 7F FC 7F FE 7F FE 7F FE 7F FE 7F FE 7F FE"
 	$"7F FE 7F FE 7F FF 7F FF 7F FF 7F FF 7F FE 00 3C"
 };
 
-data 'ics8' (142, "New", purgeable) {
+data 'ics8' (270, "New", purgeable) {
 	$"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
 	$"00 FA FA FA FA FA FA FA FA FA FA FA FA FA 00 00"
 	$"00 FA F5 56 00 00 00 00 00 00 00 00 00 2B FF 00"
@@ -408,14 +408,14 @@ data 'ics8' (142, "New", purgeable) {
 	$"00 00 00 00 00 00 00 00 00 00 FF FF FF FF 00 00"
 };
 
-data 'ics#' (143, "Find", purgeable) {
+data 'ics#' (271, "Find", purgeable) {
 	$"01 F0 06 0C 08 06 08 06 10 03 10 03 10 03 08 06"
 	$"0A 0E 07 FC 13 F8 26 00 4C 00 98 00 B0 00 E0 00"
 	$"01 F0 07 FC 0F FE 0F FE 1F FF 1F FF 1F FF 0F FE"
 	$"0F FE 07 FC 1F F8 3E 00 7C 00 F8 00 F0 00 E0 00"
 };
 
-data 'ics8' (143, "Find", purgeable) {
+data 'ics8' (271, "Find", purgeable) {
 	$"00 00 00 00 00 00 00 FF FF FF FF FF 00 00 00 00"
 	$"00 00 00 00 00 FF FF 56 56 56 56 56 FF FF 00 00"
 	$"00 00 00 00 FF 56 56 24 24 24 24 24 56 81 FF 00"

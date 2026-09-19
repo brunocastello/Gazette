@@ -82,6 +82,27 @@ enum {
     kGazetteExtractMin = 200,
 
     /*
+     * What a page says about itself, for when its body says nothing: the
+     * description in its head. A page built by JavaScript ships an empty
+     * body and a full description — a Mastodon post is the whole post,
+     * a docs site a summary — and that is the article for a reader with
+     * no JavaScript. Kept at less than the text, and asked for less: a
+     * description is a paragraph, and one a sentence long is still it.
+     */
+    kGazetteDescriptionMax = 1024,
+    kGazetteDescriptionMin = 80,
+
+    /*
+     * How much a page's header can come to. The text before the article's
+     * first paragraph — the headline said again, a category, a byline, a
+     * caption — is dropped as the header it is; but a page whose article is
+     * not written in paragraphs would lose the article that way, so above
+     * this it is not a header and stays. Measured: news headers run to
+     * about 300, and the pages that write in <div>s start at about 3000.
+     */
+    kGazetteHeaderMax = 800,
+
+    /*
      * The photos. Three is a news story's worth — the lead picture and a
      * couple more — and it is also what a modem and an 8 MB partition can
      * be asked to carry for an article somebody may only glance at.
@@ -142,16 +163,22 @@ typedef struct {
     /*
      * The tag as read, attributes and all — not just its name, because which
      * block a <div> opens is written in its class and its id and nowhere
-     * else. 512 covers the tags that carry a marker; a marker further into
-     * one than that is missed, which costs an unwanted block and nothing
-     * worse.
+     * else. 1 KB covers the tags that carry a marker, and a <meta> whose
+     * content is a whole description; a marker further into one than that
+     * is missed, which costs an unwanted block and nothing worse.
      */
-    char   tag[512];
+    char   tag[1024];
     size_t tagLen;
     int    tagOverflow;             /* a tag longer than tag[] can hold */
 
     char   skip[24];                /* element being skipped, "" when none */
     int    skipDepth;
+    int    skipSoft;                /* skipped for its class, not its name */
+
+    /* The page's description of itself, as its head wrote it; see
+       GazetteExtractUsable. */
+    char   description[kGazetteDescriptionMax];
+    int    fellBack;                /* the text is the description */
 
     /* The element the page says its article is in, once one has opened:
        what came before it is thrown away, and its close ends the text. */
@@ -233,6 +260,15 @@ size_t GazetteExtractFinish(GazetteExtract *e);
 
 /* The finished text. "" before Finish. */
 const char *GazetteExtractText(const GazetteExtract *e);
+
+/*
+ * Whether what Finish produced is worth putting in place of the feed's own
+ * summary: kGazetteExtractMin of the page's text, or — when the page's
+ * body came to less than that — the page's description of itself, if it
+ * has one worth reading. A paywall stub, a cookie wall or a redirect notice
+ * fails both, and the summary stands.
+ */
+int GazetteExtractUsable(GazetteExtract *e);
 
 /* The pictures, once Finish has run — their alt text goes through the same
    pipeline as the text then. The k-th marker in the text is the k-th. */

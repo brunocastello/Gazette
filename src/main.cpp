@@ -2385,6 +2385,12 @@ static void ShowFeed(int feedIndex)
         GazetteUIArticlesChanged();
     }
 
+    if (!GazetteCoreFeedEnabled(feedIndex)) {
+        /* Off means off: a feed that is switched off is not fetched by being
+           looked at, any more than by the clock or by Refresh. */
+        GazetteUISetStatus("Nothing cached - this feed is switched off.");
+        return;
+    }
     if (!gNetUp) {
         GazetteUISetStatus("Nothing cached, and no network - "
                            "check the TCP/IP control panel.");
@@ -2769,6 +2775,14 @@ static void HandleRefreshSelection(void)
         return;
     }
 
+    /* A feed switched off is not fetched, not even when asked by name:
+       Turn Off is the promise that nothing goes over the wire for it until
+       it is turned on again. Its cache stays readable. */
+    if (!GazetteCoreFeedEnabled(feedIndex)) {
+        GazetteUISetStatus("This feed is switched off.");
+        return;
+    }
+
     if (!GazetteFeedsRefreshStart(feedIndex, GazetteCoreFeedURL(feedIndex),
                                   PrefsMaxArticles(),
                                   (feedIndex == gDiscoverFeed) ? 1 : 0)) {
@@ -2964,8 +2978,8 @@ static void CheckAutoRefresh(void)
     if (GazetteFeedsCurrentGroup() >= 0 || GazetteFeedsCurrentSmart() >= 0) {
         return;
     }
-    /* A feed switched off is skipped by the clock, not by the user: asking
-       for it explicitly with Refresh still fetches it. */
+    /* A feed switched off is never fetched; the clock is one more thing
+       that leaves it alone. */
     if (!GazetteCoreFeedEnabled(GazetteUISelectedFeed())) {
         return;
     }
