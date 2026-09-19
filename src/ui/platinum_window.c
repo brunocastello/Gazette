@@ -545,6 +545,7 @@ static void DrawArticlePane(void);
 static void DrawReader(void);
 static void DrawStatus(void);
 static void DrawStatusText(void);
+static void DrawDividers(void);
 static void DrawHeaderTitle(const Rect *r, const char *text,
                             const char *count);
 static void DrawReaderRule(void);
@@ -1711,14 +1712,17 @@ static void Layout(void)
            is what the hidden sidebar's groove has to be. */
         /* From the rule's row, so the groove cuts through the rule the way
            OE's does rather than starting beneath it. */
+        /* And through the status strip to the window's bottom edge, so the
+           grooves run the whole height the way they start at the toolbar's
+           rule: the strip is divided the way the panes above it are. */
         if (noSidebar) {
             SetRect(&gVDivider, 0, 0, 0, 0);
         } else {
             SetRect(&gVDivider, split, rule,
-                    (short)(split + kVDividerWidth), contentBottom);
+                    (short)(split + kVDividerWidth), bounds.bottom);
         }
         SetRect(&gVDivider2, split2, rule,
-                (short)(split2 + kVDividerWidth), contentBottom);
+                (short)(split2 + kVDividerWidth), bounds.bottom);
 
         /*
          * A pane starts one pixel *inside* the header above it, so that its
@@ -4907,15 +4911,39 @@ static void DrawStatusText(void)
     MoveTo(gStatusRect.left, gStatusRect.top);
     LineTo((short)(gStatusRect.right - 1), gStatusRect.top);
 
-    UseViewFont();
-    TextSize(gStatusSize);
-    SetThemeTextColor(kThemeTextColorDialogActive, 8, true);
-    MoveTo((short)(gStatusRect.left + kTextInset + 4),
-           (short)(gStatusRect.top + gStatusBase));
-    DrawTruncated(gStatus,
-                  (short)(gStatusRect.right - gStatusRect.left -
-                          2 * kTextInset - 8));
+    /* The text has the strip up to the first groove: the grooves run
+       through the strip, and the words stop short of them. */
+    {
+        short right = gStatusRect.right;
+
+        if (gVDivider.right > gVDivider.left) {
+            right = gVDivider.left;
+        } else if (gVDivider2.right > gVDivider2.left) {
+            right = gVDivider2.left;
+        }
+        UseViewFont();
+        TextSize(gStatusSize);
+        SetThemeTextColor(kThemeTextColorDialogActive, 8, true);
+        MoveTo((short)(gStatusRect.left + kTextInset + 4),
+               (short)(gStatusRect.top + gStatusBase));
+        DrawTruncated(gStatus,
+                      (short)(right - gStatusRect.left - 2 * kTextInset - 8));
+    }
     ForeColor(blackColor);
+
+    /* The erase above took the grooves' lower ends with it. */
+    DrawDividers();
+}
+
+/* The two grooves, with their grab handles. */
+static void DrawDividers(void)
+{
+    if (!GazetteCoreHideSidebar()) {
+        DrawVDivider(&gVDivider);
+        DrawGrabHandle(&gVDivider, true);
+    }
+    DrawVDivider(&gVDivider2);
+    DrawGrabHandle(&gVDivider2, true);
 }
 
 /* For when only the status line has changed. */
@@ -4976,12 +5004,7 @@ void GazetteUIUpdate(void)
        track the theme rather than being two hard-coded greys, and the
        horizontal one carries the row of dots Outlook Express puts in a
        splitter to say that it can be dragged. */
-    if (!GazetteCoreHideSidebar()) {
-        DrawVDivider(&gVDivider);
-        DrawGrabHandle(&gVDivider, true);
-    }
-    DrawVDivider(&gVDivider2);
-    DrawGrabHandle(&gVDivider2, true);
+    DrawDividers();
 
     /* The state first, so the bar is drawn in the state it should be in
        rather than the one it was left in; and before DrawControls, so the
