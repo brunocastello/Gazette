@@ -4,8 +4,7 @@ An RSS and Atom reader for Mac OS 9, in the spirit of Newsstand.
 
 Gazette is a native Carbon application for PowerPC Macs. It fetches feeds
 over modern TLS itself, reads the whole article rather than the summary, shows
-the photographs in it, and looks like it belongs next to Outlook Express 5 —
-the three-pane window, the toolbar, the Platinum controls are all the
+the pictures in it, and looks modern — the three-pane window, the toolbar, the Platinum controls are all the
 system's own.
 
 > A hobby project pointed at a 27-year-old operating system with no memory
