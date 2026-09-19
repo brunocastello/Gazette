@@ -533,12 +533,12 @@ static void TestPrefsParse(void)
 
     /* Nonsense values must not produce a configuration that cannot refresh. */
     {
-        static const char bad[] = "refresh-minutes = -5\rmax-articles = 0\r";
+        static const char bad[] = "refresh-minutes = -5\rmax-articles = -3\r";
         GazettePrefs q;
 
         GazettePrefsParse(bad, sizeof bad - 1, &q);
         CheckLong("a negative refresh clamps to manual-only", q.refreshMinutes, 0);
-        CheckLong("max-articles clamps to at least one", q.maxArticles, 1);
+        CheckLong("a negative max-articles clamps to all", q.maxArticles, 0);
     }
 }
 
