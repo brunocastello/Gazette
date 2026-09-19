@@ -117,10 +117,47 @@ static const char *const kTrailerStarts[] = {
     "Tag:", "Tags:", "Topics:", "Filed under", "Related Roundup",
     "Related Forum", "Buyer's Guide:",
     "Worth checking out", "Shop ", "Buy now", "Best deals",
-    "FTC:", "Check out 9to5", "Add 9to5", "Follow us on", "Follow 9to5",
-    "Subscribe to our", "Sign up for", "Related:", "Related Articles",
-    "Read more:", "See also:", "Popular Stories", "Top Rated Comments"
+    "FTC:", "Related:", "Related Articles", "Read more:", "See also:",
+    "Popular Stories", "Top Rated Comments"
 };
+
+/*
+ * And the plug: "Check out <site> on YouTube for more news:", "Follow us
+ * on Threads", "Sign up for our newsletter". Not the site's name, which
+ * would be a rule per site, but its shape — an imperative, and either an
+ * outlet named in it or a colon it ends with, leading the reader
+ * somewhere else.
+ */
+static const char *const kPlugVerbs[] = {
+    "Check out ", "Follow ", "Subscribe ", "Sign up ", "Join ", "Add ",
+    "Download ", "Get the ", "Listen to ", "Watch "
+};
+static const char *const kPlugOutlets[] = {
+    "youtube", "twitter", "facebook", "instagram", "threads", "bluesky",
+    "mastodon", "telegram", "whatsapp", "tiktok", "newsletter", "podcast",
+    "app store", "google news", "preferred source", "rss", "discord"
+};
+
+static int ParagraphIsPlug(const char *s, size_t len)
+{
+    size_t v;
+    int    verb = 0;
+
+    for (v = 0; v < sizeof kPlugVerbs / sizeof kPlugVerbs[0]; v++) {
+        if (gz_starts_ci(s, len, kPlugVerbs[v])) {
+            verb = 1;
+            break;
+        }
+    }
+    if (!verb || len > 200) {
+        return 0;                   /* a plug is a line, not a paragraph */
+    }
+    if (s[len - 1] == ':') {
+        return 1;
+    }
+    return ValueHasAny(s, len, kPlugOutlets,
+                       sizeof kPlugOutlets / sizeof kPlugOutlets[0]);
+}
 
 /*
  * The blocks a page puts its article *in*, when it says. <article> and
@@ -1039,6 +1076,9 @@ static size_t DropTrailers(char *s, size_t len)
                 drop = 1;
                 break;
             }
+        }
+        if (!drop && end > in && ParagraphIsPlug(s + in, end - in)) {
+            drop = 1;
         }
         if (!drop) {
             if (out > 0) {

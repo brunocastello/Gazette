@@ -2551,9 +2551,16 @@ static void TestExtractTrailers(void)
              Extract(&e, "<body><article><p>The story.</p>"
                          "<p>FTC: We use income earning auto affiliate links.</p>"
                          "<p>Check out 9to5Mac on YouTube for more Apple news:</p>"
+                         "<p>Follow us on Threads and Bluesky.</p>"
+                         "<p>Sign up for the newsletter</p>"
                          "<p>Related: Something else.</p>"
                          "</article></body>", 0),
              "The story.");
+    CheckStr("a sentence that starts like a plug but is not one stays",
+             Extract(&e, "<body><p>Check out the new sensor, which ter Horst "
+                         "tested against a chest strap over three runs.</p></body>", 0),
+             "Check out the new sensor, which ter Horst tested against a chest "
+             "strap over three runs.");
     CheckStr("the affiliate box: a heading and a list of shop links",
              Extract(&e, "<body><article><p>The story.</p>"
                          "<h4>Worth checking out on Amazon</h4><ul>"
