@@ -1069,9 +1069,11 @@ static void StartElement(GazetteFeedParser *p, const char *tag, size_t len,
      * The summary. A feed may carry several of these and they are not equal:
      * <content> and <content:encoded> hold the full text where a feed offers
      * it, while <description> and <summary> hold an extract. The prefix is
-     * already stripped, so content:encoded arrives here as "content".
+     * already stripped, so content:encoded arrives here as "encoded" — not
+     * "content", as this comment once said, which is why no RSS feed's full
+     * text was ever read until 2026-09-19.
      */
-    if (strcmp(name, "content") == 0) {
+    if (strcmp(name, "content") == 0 || strcmp(name, "encoded") == 0) {
         CaptureBegin(p, kFieldBodyRich);
         return;
     }
