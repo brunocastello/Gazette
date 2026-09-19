@@ -2613,7 +2613,7 @@ static void TestExtractTrailers(void)
                          "<a href=\"/p.jpg\"><img src=\"/p.jpg\" alt=\"Torcida\">Torcida do Vasco</a>"
                          "</td></tr></table></div> <BR> <BR>O Vasco tera um domingo. <BR> <BR>"
                          "A acao esta prevista.</div></div></body>", 0),
-             "\020\n\001\nTorcida do Vasco\021\nO Vasco tera um domingo.\nA acao esta prevista.");
+             "\001\nTorcida do Vasco\021\nO Vasco tera um domingo.\nA acao esta prevista.");
     CheckStr("but corporate is not corpo",
              Extract(&e, "<body><p>Intro.</p><div class=\"corporate\"><p>Menu</p></div>"
                          "<p>Text.</p></body>", 0),

@@ -577,10 +577,19 @@ static void PutText(GazetteExtract *e, char c)
    very start, and never twice in a row. */
 static void PutBreak(GazetteExtract *e)
 {
-    /* An empty heading, list item or quotation is nothing at all. */
-    while (e->outLen > 0 && IsParagraphMark(e->out[e->outLen - 1]) &&
-           e->out[e->outLen - 1] != (char)kGazettePhotoMarker) {
-        e->outLen--;
+    /* A line of nothing but marks — an empty heading, a list item whose
+       only content was turned away, a face opened and closed on nothing —
+       is no line at all. The photo marker is the one mark that is. */
+    {
+        size_t i = e->outLen;
+
+        while (i > 0 && GazetteIsMark(e->out[i - 1]) &&
+               e->out[i - 1] != (char)kGazettePhotoMarker) {
+            i--;
+        }
+        if (i < e->outLen && (i == 0 || e->out[i - 1] == '\n')) {
+            e->outLen = i;
+        }
     }
     if (e->outLen == 0 || e->out[e->outLen - 1] == '\n') {
         return;

@@ -2352,6 +2352,12 @@ static size_t AppendBody(size_t used, const char *body)
             continue;
         }
 
+        /* A face does not run past its paragraph: the extractor closes
+           what it opens within one, and a mark that got away — a link
+           wrapped round a picture and its caption — would otherwise
+           underline everything after it. */
+        inline_ = 0;
+
         /* What kind of paragraph, from the marks at its head; then whether
            there are any words in it at all. */
         for (q = p; q < end && GazetteIsMark(*q); q++) {
