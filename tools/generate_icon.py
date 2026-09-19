@@ -6,11 +6,13 @@ Classic Mac icons are hand-placed pixels, not scaled art: at 32x32 every pixel
 carries weight, so the shapes are drawn here in code rather than exported from
 a drawing program and resampled.
 
-The design is a folded newspaper seen face on, with a second sheet showing
-behind it: a black masthead band across the top, a rule under it, a photo
-block and columns of text. Platinum greys and newsprint white put it next to
-the Mac OS 9 system icons rather than against them, and the two sheets are
-what stop it reading as a generic document at 16x16.
+The design is a newspaper standing at the isometric angle the classic
+system icons share — two pixels along for one up — with the stack of its
+pages showing as a thickness on the right: a black masthead band across the
+top, a rule under it, a lead picture and bars of text. Newsprint white,
+black and Platinum greys put it next to the Mac OS 9 system icons rather
+than against them; the thickness is what stops it reading as a flat
+document at 16x16.
 
     python3 tools/generate_icon.py --out Resources/Gazette_icon.r [--ascii]
 
@@ -79,37 +81,104 @@ def hline(px, x0, x1, y, colour):
         px[y][x] = colour
 
 
+# --- Isometric helpers -----------------------------------------------------
+#
+# The paper stands at the classic pixel-art isometric angle: two pixels along
+# for one up, which is the one slope that draws clean at 32 pixels. A face is
+# described by its left edge (x = left, running down to `bottom`), its width
+# and its height; a point on it is (u, v), u along the slope from the left
+# edge and v up from the bottom edge, and lands on screen at
+#     x = left + u,  y = bottom - u // 2 - v.
+
+def iso_y(left, bottom, u, v):
+    return bottom - u // 2 - v
+
+
+def iso_point(px, left, bottom, u, v, colour):
+    y = iso_y(left, bottom, u, v)
+    x = left + u
+    if 0 <= x < len(px) and 0 <= y < len(px):
+        px[y][x] = colour
+
+
+def iso_hline(px, left, bottom, u0, u1, v, colour):
+    """A line along the slope, at height v."""
+    for u in range(u0, u1 + 1):
+        iso_point(px, left, bottom, u, v, colour)
+
+
+def iso_fill(px, left, bottom, u0, u1, v0, v1, colour):
+    """A parallelogram on the face: u0..u1 along, v0..v1 up, inclusive."""
+    for u in range(u0, u1 + 1):
+        for v in range(v0, v1 + 1):
+            iso_point(px, left, bottom, u, v, colour)
+
+
+def iso_frame(px, left, bottom, u0, u1, v0, v1, colour):
+    iso_hline(px, left, bottom, u0, u1, v0, colour)
+    iso_hline(px, left, bottom, u0, u1, v1, colour)
+    for v in range(v0, v1 + 1):
+        iso_point(px, left, bottom, u0, v, colour)
+        iso_point(px, left, bottom, u1, v, colour)
+
+
+def put(px, x, y, colour):
+    if 0 <= x < len(px) and 0 <= y < len(px):
+        px[y][x] = colour
+
+
+def side_face(px, left, bottom, width, height, depth, colour, edge, dark):
+    """The page edges to the right of the front face: `depth` columns going
+    down the other slope, the stack of sheets drawn as lines in it."""
+    right = left + width - 1
+    top_y = iso_y(left, bottom, width - 1, height - 1)
+    bot_y = iso_y(left, bottom, width - 1, 0)
+    for d in range(1, depth + 1):
+        x = right + d
+        drop = (d + 1) // 2
+        for y in range(top_y + drop, bot_y + drop + 1):
+            put(px, x, y, colour)
+        # the outline of the slab, top and bottom
+        put(px, x, top_y + drop, edge)
+        put(px, x, bot_y + drop, edge)
+    # the far edge, and a sheet showing in the stack
+    x = right + depth
+    for y in range(top_y + (depth + 1) // 2, bot_y + (depth + 1) // 2 + 1):
+        put(px, x, y, edge)
+    x = right + 2
+    for y in range(top_y + 2, bot_y + 1):
+        put(px, x, y, dark)
+
+
 def draw32():
     px = [[CLEAR] * 32 for _ in range(32)]
 
-    # The sheet behind, offset up and to the right. It is what makes this a
-    # folded newspaper rather than a single page, and it survives the 16x16
-    # reduction better than any fold line or perspective skew does.
-    fill(px, 8, 2, 29, 26, BACK)
-    frame(px, 8, 2, 29, 26, BLACK)
-    hline(px, 9, 28, 25, BACK_D)
+    # The sheet: left edge at x=3 from y=10 down to y=30, twenty columns
+    # along the slope, twenty-one rows tall, with four columns of page edge
+    # to the right of it. The outermost row and column of the face are its
+    # outline.
+    L, B, W, H, D = 3, 30, 20, 21, 4
 
-    # The front sheet.
-    fill(px, 2, 5, 25, 29, PAPER)
-    frame(px, 2, 5, 25, 29, BLACK)
+    side_face(px, L, B, W, H, D, BACK, BLACK, BACK_D)
+    iso_fill(px, L, B, 0, W - 1, 0, H - 1, PAPER)
+    iso_frame(px, L, B, 0, W - 1, 0, H - 1, BLACK)
 
-    # Masthead: a solid band, the way a nameplate reads once the letters are
-    # too small to draw. Ruled off from the page below it.
-    fill(px, 4, 7, 23, 11, BLACK)
-    hline(px, 4, 23, 13, RULE)
+    # Masthead: a solid band across the top, ruled off from the page. The
+    # letters are too small to draw; the band is what a nameplate reads as.
+    # Everything on the page is two pixels thick along the slope: one pixel
+    # thick, two parallel lines interleave into a checkerboard.
+    iso_fill(px, L, B, 2, W - 3, 16, 18, BLACK)
+    iso_fill(px, L, B, 2, W - 3, 13, 13, RULE)
 
-    # Lead picture, left column.
-    fill(px, 4, 16, 12, 23, PHOTO)
-    frame(px, 4, 16, 12, 23, BLACK)
-    fill(px, 5, 17, 8, 19, PHOTO_L)
+    # Lead picture, left column, framed, with a little light in it.
+    iso_fill(px, L, B, 2, 8, 3, 10, PHOTO)
+    iso_frame(px, L, B, 2, 8, 3, 10, BLACK)
+    iso_fill(px, L, B, 3, 5, 8, 9, PHOTO_L)
 
-    # Right-hand column of text beside the picture.
-    for y in range(16, 24, 2):
-        hline(px, 14, 23, y, TEXT)
-
-    # Two lines running the full width under both.
-    hline(px, 4, 23, 25, TEXT)
-    hline(px, 4, 19, 27, TEXT)
+    # Text beside it: two bars, and one running the width beneath both.
+    iso_fill(px, L, B, 10, W - 3, 9, 10, TEXT)
+    iso_fill(px, L, B, 10, W - 3, 5, 6, TEXT)
+    iso_fill(px, L, B, 2, 13, 1, 1, TEXT)
 
     return px
 
@@ -117,21 +186,17 @@ def draw32():
 def draw16():
     px = [[CLEAR] * 16 for _ in range(16)]
 
-    # Everything halves, and anything that will not survive halving goes. The
-    # picture block is the first casualty: at 16x16 a 3x4 grey square beside
-    # three text lines reads as a smudge, so the small icon is the two sheets,
-    # the masthead and the text, and nothing else.
-    fill(px, 5, 1, 14, 11, BACK)
-    frame(px, 5, 1, 14, 11, BLACK)
+    # Everything halves, and anything that will not survive halving goes: the
+    # small icon is the slab, the masthead and two bars of text.
+    L, B, W, H, D = 1, 15, 11, 11, 2
 
-    fill(px, 1, 4, 11, 14, PAPER)
-    frame(px, 1, 4, 11, 14, BLACK)
+    side_face(px, L, B, W, H, D, BACK, BLACK, BACK_D)
+    iso_fill(px, L, B, 0, W - 1, 0, H - 1, PAPER)
+    iso_frame(px, L, B, 0, W - 1, 0, H - 1, BLACK)
 
-    fill(px, 2, 6, 10, 7, BLACK)
-
-    hline(px, 2, 10, 9, TEXT)
-    hline(px, 2, 10, 11, TEXT)
-    hline(px, 2, 7, 13, TEXT)
+    iso_fill(px, L, B, 1, W - 2, 7, 8, BLACK)
+    iso_fill(px, L, B, 1, W - 2, 4, 4, TEXT)
+    iso_fill(px, L, B, 1, W - 2, 2, 2, TEXT)
 
     return px
 
@@ -183,8 +248,9 @@ def emit(px32, px16):
  * DO NOT EDIT. Regenerate with:
  *   python3 tools/generate_icon.py --out Resources/Gazette_icon.r
  *
- * A folded newspaper: a masthead band, a lead picture and columns of text,
- * with a second sheet showing behind. Written as raw data blocks rather than
+ * A newspaper standing at the isometric angle, its pages showing as a
+ * thickness on the right: a masthead band, a lead picture and bars of text.
+ * Written as raw data blocks rather than
  * Rez icon templates because Rez runs against whichever RIncludes the
  * toolchain has linked, and a resource file with no includes does not care
  * which -- the same reasoning Gateway's icon file records.
