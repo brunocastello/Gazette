@@ -125,7 +125,8 @@ enum {
      * drawn in it — only its metrics are ever used.
      */
     kReaderRuleAir = 4,
-    kHeadingStep   = 2,         /* a heading is this much larger than the body */
+    kHeadingStep   = 0,         /* a heading is bold and the body's size:
+                                   larger was tried and not wanted */
 
     /*
      * A photograph in the article fills the column, the way NetNewsWire's
