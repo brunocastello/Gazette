@@ -4016,6 +4016,9 @@ static void DrawArticlePane(void)
            (short)(view.top + gHeadRowBaseline + 1));
     if (GazetteFeedsFilter()[0] != '\0') {
         DrawString("\pNothing here matches - Edit menu, Show All.");
+    } else if (GazetteFeedsCurrentSmart() == kGazetteSmartStarred) {
+        /* Nothing to fetch: stars are given, not found. */
+        DrawString("\pNo headlines yet. Star an article to see it here.");
     } else {
         DrawString("\pNo headlines yet - press Command-R.");
     }

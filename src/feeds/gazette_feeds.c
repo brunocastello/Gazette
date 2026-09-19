@@ -146,6 +146,102 @@ static int                 gFullPhotoCount;
 static char                gFullFinalURL[kGazetteArticleLinkLen];
 
 /*
+ * The pages read lately, so that going back to an article does not fetch
+ * it again. Keyed by the article's link as the feed gave it — the one the
+ * reader pane asks by — which is not the address the page came from when
+ * Google News stood between. A ring of a few: each is the text, the
+ * pictures' addresses and the page's own, about 20 KB, taken one at a time
+ * as pages are read and never all at once, so a partition with no room
+ * for another simply reads that page again next time. A refresh empties
+ * it: what was read then is what the user asked to read again.
+ */
+typedef struct {
+    char            key[kGazetteArticleLinkLen];
+    char            text[kGazetteExtractMax];
+    GazettePhotoRef photos[kGazetteMaxPhotos];
+    int             photoCount;
+    char            finalURL[kGazetteArticleLinkLen];
+} ReadPage;
+
+enum { kReadPages = 6 };
+
+static ReadPage *gReadPages[kReadPages];
+static int       gReadNext;                 /* the slot the next page takes */
+static char      gWantKey[kGazetteArticleLinkLen];  /* the link being read */
+
+static ReadPage *FindReadPage(const char *key)
+{
+    int i;
+
+    for (i = 0; i < kReadPages; i++) {
+        if (gReadPages[i] != NULL && strcmp(gReadPages[i]->key, key) == 0) {
+            return gReadPages[i];
+        }
+    }
+    return NULL;
+}
+
+static void ForgetReadPages(void)
+{
+    int i;
+
+    for (i = 0; i < kReadPages; i++) {
+        if (gReadPages[i] != NULL) {
+            gReadPages[i]->key[0] = '\0';
+        }
+    }
+}
+
+/* Keep what has just been read, under the link it was asked by. */
+static void RememberReadPage(void)
+{
+    ReadPage *page;
+    int       i;
+
+    if (gWantKey[0] == '\0') {
+        return;
+    }
+    page = FindReadPage(gWantKey);
+    if (page == NULL) {
+        if (gReadPages[gReadNext] == NULL) {
+            gReadPages[gReadNext] =
+                (ReadPage *)NewPtrClear((Size)sizeof(ReadPage));
+            if (gReadPages[gReadNext] == NULL) {
+                return;             /* no room: read it again next time */
+            }
+        }
+        page      = gReadPages[gReadNext];
+        gReadNext = (gReadNext + 1) % kReadPages;
+    }
+    gz_copy_n(page->key, sizeof page->key, gWantKey, strlen(gWantKey));
+    gz_copy_n(page->text, sizeof page->text, gFullText, strlen(gFullText));
+    page->photoCount = gFullPhotoCount;
+    for (i = 0; i < gFullPhotoCount; i++) {
+        page->photos[i] = gFullPhotos[i];
+    }
+    gz_copy_n(page->finalURL, sizeof page->finalURL, gFullFinalURL,
+              strlen(gFullFinalURL));
+}
+
+/* Put a remembered page where a fetched one would go. */
+static void RecallReadPage(const ReadPage *page, int articleIndex)
+{
+    int i;
+
+    GazetteFeedsFullTextCancel();
+    gz_copy_n(gFullText, sizeof gFullText, page->text, strlen(page->text));
+    gFullPhotoCount = page->photoCount;
+    for (i = 0; i < gFullPhotoCount; i++) {
+        gFullPhotos[i] = page->photos[i];
+    }
+    gz_copy_n(gFullFinalURL, sizeof gFullFinalURL, page->finalURL,
+              strlen(page->finalURL));
+    gFullArticle = articleIndex;
+    gWantArticle = -1;              /* settled: it is here */
+    gFullState   = kGazetteRefreshDone;
+}
+
+/*
  * Seconds between the Macintosh epoch (1904) and the Unix one (1970).
  * GetDateTime counts from the former; every date in the store counts from the
  * latter, because that is what feeds date their articles in.
@@ -615,6 +711,7 @@ int GazetteFeedsRefreshStart(int feedIndex, const char *url, long maxArticles,
        are postponed the same way. */
     PauseFullText();
     GazettePhotosPause();
+    ForgetReadPages();
 
     ReleaseRefresh();
     gError[0] = '\0';
@@ -961,6 +1058,22 @@ static int BeginFullText(void)
     return BeginArticleStage();
 }
 
+int GazetteFeedsFullTextRecall(int articleIndex, const char *url)
+{
+    const ReadPage *page;
+
+    if (url == NULL || url[0] == '\0' ||
+        articleIndex < 0 || articleIndex >= GazetteFeedsArticleCount()) {
+        return 0;
+    }
+    page = FindReadPage(url);
+    if (page == NULL) {
+        return 0;
+    }
+    RecallReadPage(page, articleIndex);
+    return 1;
+}
+
 int GazetteFeedsFullTextStart(int articleIndex, const char *url)
 {
     if (url == NULL || url[0] == '\0') {
@@ -976,6 +1089,7 @@ int GazetteFeedsFullTextStart(int articleIndex, const char *url)
 
     gWantArticle = articleIndex;
     gz_copy_n(gWantURL, sizeof gWantURL, url, strlen(url));
+    gz_copy_n(gWantKey, sizeof gWantKey, url, strlen(url));
 
     /*
      * The refresh has the connection. Answered 1 all the same, because the
@@ -1133,6 +1247,7 @@ GazetteRefreshState GazetteFeedsFullTextPump(void)
     ReleaseFullText();
     gWantArticle = -1;              /* settled: it is here */
     gFullState   = kGazetteRefreshDone;
+    RememberReadPage();
     return gFullState;
 }
 

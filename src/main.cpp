@@ -94,6 +94,7 @@ static void    HandleEditGroup(void);
 static void    HandleEdit(void);
 static void    HandleRemove(void);
 static void    HandleToggleEnabled(void);
+static void    StartPhotos(void);
 static void    HandleOpenHomePage(void);
 static void    HandleCopyFeedURL(void);
 static void    HandleCopyHomeURL(void);
@@ -2415,6 +2416,16 @@ static void ShowArticle(int articleIndex)
     article = GazetteFeedsArticleAt(articleIndex);
     if (article == nil || article->link[0] == '\0') {
         return;                     /* nothing to fetch: no address */
+    }
+
+    /* Read lately and still held: nothing to wait for, and nothing needed
+       from the network. The same three steps the pump takes when a page
+       lands. */
+    if (GazetteFeedsFullTextRecall(articleIndex, article->link)) {
+        StartPhotos();
+        GazetteUIArticleTextChanged();
+        GazetteUISetStatus("Full article.");
+        return;
     }
     if (!gNetUp) {
         return;                     /* nothing to fetch it with */

@@ -327,6 +327,14 @@ void GazetteFeedsForgetCache(const char *url);
 int GazetteFeedsFullTextStart(int articleIndex, const char *url);
 
 /*
+ * The same article's page, if it was read lately and is still held: puts it
+ * where a fetched one goes and answers 1 with the state Done, and nothing
+ * goes over the wire — so it works with the machine unplugged. Asked before
+ * Start. A refresh is what forgets what was read.
+ */
+int GazetteFeedsFullTextRecall(int articleIndex, const char *url);
+
+/*
  * Whether this article's own page is still to come — a fetch running for it,
  * or one held back because the refresh has the connection.
  *
