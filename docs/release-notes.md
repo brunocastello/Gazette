@@ -3,15 +3,15 @@
      downloading, not a changelog. Paragraphs stay on one line, because
      GitHub renders release bodies with newline-to-break. -->
 
-Gazette is an RSS and Atom reader for Mac OS 9 on PowerPC, in the spirit of Newsstand: a native Carbon application that fetches feeds over modern TLS itself, reads the whole article with its photographs, and looks like it belongs next to Outlook Express 5.
+Gazette is an RSS and Atom reader for Mac OS 9 on PowerPC: a native Carbon application that fetches feeds over modern TLS itself and reads the whole article, pictures included.
 
 ## What's in 0.1.0
 
-The first release. Feeds in groups, dragged into order; Google News Top Stories, countries and sections; Today, All Unread and Starred across every feed; import and export as OPML.
+The first release. Feeds in groups, dragged into order; Today, All Unread and Starred across every feed; import and export as OPML. It starts with Google News Top Stories, which can be removed like any feed.
 
-**The article, not the summary.** Opening a headline fetches the page it links to and extracts the story — the page's own header and footer left out — with headings, emphasis, lists and links kept and up to three photographs drawn in place. A Google News item's real story is found behind Google's redirect.
+**The article, not the summary.** Opening a headline fetches the page it links to and extracts the story — the page's own header and footer left out — with headings, emphasis, lists and links kept and up to three pictures drawn in place.
 
-**A window of the system's own controls.** Sidebar, headlines and article with draggable dividers, an Outlook Express-style toolbar, contextual menus, and a Preferences window for how often to refresh and how much to keep. Its size, position and columns are remembered.
+**A window of the system's own controls.** Sidebar, headlines and article with draggable dividers, a toolbar, contextual menus, and a Preferences window for how often to refresh and how much to keep. Its size, position and columns are remembered.
 
 Everything is cached, so the window opens readable and works with the machine unplugged.
 
