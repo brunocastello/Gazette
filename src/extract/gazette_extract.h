@@ -224,6 +224,7 @@ typedef struct {
      */
     size_t bodyStart;
     int    bodyBegun;
+    int    bodyMarked;              /* set by a body block's name, not a <p> */
     int    photosBeforeBody;
 
     /* The last byte written was a space an inline tag put there, not one

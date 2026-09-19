@@ -809,7 +809,14 @@ static void CaptureFinish(GazetteFeedParser *p, char *out, size_t cap,
 /* The element name in tag[], with any namespace prefix dropped, lowercased
    into out. Namespaces are ignored on purpose: <atom:link> and <link> mean
    the same thing to this parser, and resolving prefixes properly would buy
-   nothing a feed reader can use. */
+   nothing a feed reader can use.
+
+   One prefix is kept: "media". Media RSS names its elements after the
+   text's — <media:content>, <media:title>, <media:description> — and they
+   are about the picture, not the story. Ars Technica's items carry a
+   <media:content> after the content:encoded, with the picture's credit
+   inside it, and stripped to "content" it replaced the article with the
+   credit. Kept as "media:content" it matches nothing, which is right. */
 static void TagName(const char *tag, size_t len, char *out, size_t cap)
 {
     size_t start = 0;
@@ -831,6 +838,9 @@ static void TagName(const char *tag, size_t len, char *out, size_t cap)
         if (tag[i] == ':') {
             colon = i + 1;
         }
+    }
+    if (colon == start + 6 && gz_strnicmp(tag + start, "media:", 6) == 0) {
+        colon = start;
     }
 
     len = end - colon;
@@ -1065,7 +1075,9 @@ static void StartElement(GazetteFeedParser *p, const char *tag, size_t len,
         CaptureBegin(p, kFieldBodyRich);
         return;
     }
-    if (strcmp(name, "description") == 0 || strcmp(name, "summary") == 0) {
+    /* media:description is a video's, and YouTube's feeds have no other. */
+    if (strcmp(name, "description") == 0 || strcmp(name, "summary") == 0 ||
+        strcmp(name, "media:description") == 0) {
         if (p->article.body[0] == '\0') {
             CaptureBegin(p, kFieldBody);
         }

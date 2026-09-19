@@ -104,6 +104,21 @@ static const char *const kUnwantedMarkers[] = {
 };
 
 /*
+ * The words that mark furniture only as a whole token of the name — split
+ * at a space, a dash, an underscore or a change of case — because as
+ * substrings they are inside every other word: "ad" is in "read", "head",
+ * "load". A page's advertising slot is "ad top-wrapper", "place-ad",
+ * "duet--ad--native-ad-rail", and "ad" is a token of each.
+ *
+ * "hidden" is not here, though it looks as if it should be: on a page
+ * built with Tailwind, "hidden lg:flex" means hidden on a phone and shown
+ * on a desktop, and half a page went with it when it was tried.
+ */
+static const char *const kUnwantedTokens[] = {
+    "ad", "ads"
+};
+
+/*
  * Class names that say "the article's text" only when they are the whole
  * name, because as substrings they are inside too many other words:
  * "corpo" is NETVASCO's body and also "corporate"; "texto" is Portuguese
@@ -141,7 +156,20 @@ static const char *const kPlugVerbs[] = {
 static const char *const kPlugOutlets[] = {
     "youtube", "twitter", "facebook", "instagram", "threads", "bluesky",
     "mastodon", "telegram", "whatsapp", "tiktok", "newsletter", "podcast",
-    "app store", "google news", "preferred source", "rss", "discord"
+    "app store", "google news", "preferred source", "rss", "discord",
+    "email", "feed"
+};
+
+/*
+ * Notices to the reader about the page, which no article contains: enable
+ * JavaScript, verify your access, log in, subscribe, an advertising slot's
+ * label. A line, like a plug — an article that mentions JavaScript or
+ * subscribers does so in a paragraph, and a paragraph is longer than this.
+ */
+static const char *const kNoticeWords[] = {
+    "javascript", "subscriber", "subscribe", "log in", "sign in",
+    "verify access", "verifying access", "checking your access",
+    "ad blocker", "advertisement"
 };
 
 
@@ -384,6 +412,51 @@ static int ValueHasWord(const char *value, size_t len,
     return 0;
 }
 
+/* 1 when any of the words is a whole token of the value, tokens being
+   what is between spaces, dashes, underscores and changes of case. */
+static int ValueHasToken(const char *value, size_t len,
+                         const char *const *words, size_t count)
+{
+    size_t i = 0;
+
+    while (i < len) {
+        size_t start, w;
+
+        while (i < len && (value[i] == ' ' || value[i] == '-' ||
+                           value[i] == '_')) {
+            i++;
+        }
+        start = i;
+        while (i < len && value[i] != ' ' && value[i] != '-' &&
+               value[i] != '_') {
+            /* "nativeAd": the capital starts a token of its own. */
+            if (i > start && value[i] >= 'A' && value[i] <= 'Z' &&
+                value[i - 1] >= 'a' && value[i - 1] <= 'z') {
+                break;
+            }
+            i++;
+        }
+        for (w = 0; w < count; w++) {
+            size_t wordLen = strlen(words[w]);
+
+            if (i - start == wordLen &&
+                gz_strnicmp(value + start, words[w], wordLen) == 0) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+static int ParagraphIsNotice(const char *s, size_t len)
+{
+    if (len > 200) {
+        return 0;
+    }
+    return ValueHasAny(s, len, kNoticeWords,
+                       sizeof kNoticeWords / sizeof kNoticeWords[0]);
+}
+
 static int ParagraphIsPlug(const char *s, size_t len)
 {
     size_t v;
@@ -419,9 +492,12 @@ static int TagIsUnwanted(const char *tag, size_t len, const char *name)
 
     for (i = 0; i < sizeof kNamed / sizeof kNamed[0]; i++) {
         if (GazetteHtmlAttr(tag, len, kNamed[i], &value, &valueLen) &&
-            ValueHasAny(value, valueLen, kUnwantedMarkers,
-                        sizeof kUnwantedMarkers /
-                        sizeof kUnwantedMarkers[0])) {
+            (ValueHasAny(value, valueLen, kUnwantedMarkers,
+                         sizeof kUnwantedMarkers /
+                         sizeof kUnwantedMarkers[0]) ||
+             ValueHasToken(value, valueLen, kUnwantedTokens,
+                           sizeof kUnwantedTokens /
+                           sizeof kUnwantedTokens[0]))) {
             return 1;
         }
     }
@@ -456,15 +532,44 @@ enum {
     kContentStrong
 };
 
-static int ContentSignal(const char *tag, size_t len, const char *name)
+/*
+ * The block named as the article's *body* — itemprop=articleBody, or a
+ * CMS's class for it — as distinct from <main> and role=main, which name
+ * the page's whole content column, header and all. Where a body block
+ * opens inside the column, the story starts there; see FinishTag.
+ */
+static int TagIsBody(const char *tag, size_t len, const char *name)
 {
     static const char *const kNamed[] = { "class", "id" };
-    static const char *const kMain[]  = { "main" };
     static const char *const kBody[]  = { "articlebody" };
     const char *value;
     size_t      valueLen;
     size_t      i;
-    int         found = kContentNone;
+
+    if (!IsContainerTag(name)) {
+        return 0;
+    }
+    if (GazetteHtmlAttr(tag, len, "itemprop", &value, &valueLen) &&
+        ValueHasAny(value, valueLen, kBody, 1)) {
+        return 1;
+    }
+    for (i = 0; i < sizeof kNamed / sizeof kNamed[0]; i++) {
+        if (GazetteHtmlAttr(tag, len, kNamed[i], &value, &valueLen) &&
+            ValueHasAny(value, valueLen, kContentMarkers,
+                        sizeof kContentMarkers / sizeof kContentMarkers[0])) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int ContentSignal(const char *tag, size_t len, const char *name)
+{
+    static const char *const kNamed[] = { "class", "id" };
+    static const char *const kMain[]  = { "main" };
+    const char *value;
+    size_t      valueLen;
+    size_t      i;
 
     if (strcmp(name, "main") == 0) {
         return kContentStrong;
@@ -479,24 +584,17 @@ static int ContentSignal(const char *tag, size_t len, const char *name)
         ValueHasAny(value, valueLen, kMain, 1)) {
         return kContentStrong;
     }
-    if (GazetteHtmlAttr(tag, len, "itemprop", &value, &valueLen) &&
-        ValueHasAny(value, valueLen, kBody, 1)) {
+    if (TagIsBody(tag, len, name)) {
         return kContentStrong;
     }
     for (i = 0; i < sizeof kNamed / sizeof kNamed[0]; i++) {
-        if (!GazetteHtmlAttr(tag, len, kNamed[i], &value, &valueLen)) {
-            continue;
-        }
-        if (ValueHasAny(value, valueLen, kContentMarkers,
-                        sizeof kContentMarkers / sizeof kContentMarkers[0])) {
-            return kContentStrong;
-        }
-        if (ValueHasWord(value, valueLen, kContentWords,
+        if (GazetteHtmlAttr(tag, len, kNamed[i], &value, &valueLen) &&
+            ValueHasWord(value, valueLen, kContentWords,
                          sizeof kContentWords / sizeof kContentWords[0])) {
-            found = kContentWeak;
+            return kContentWeak;
         }
     }
-    return found;
+    return kContentNone;
 }
 
 static int TagIsContent(const char *tag, size_t len, const char *name)
@@ -975,6 +1073,7 @@ static void FinishTag(GazetteExtract *e)
                     e->outLen     = 0;
                     e->bodyStart  = 0;
                     e->bodyBegun  = 0;
+                    e->bodyMarked = 0;
                     ResetArticlePhotos(e);
                     return;
                 }
@@ -1032,6 +1131,7 @@ not_skipped:
         e->outLen     = 0;
         e->bodyStart  = 0;
         e->bodyBegun  = 0;
+        e->bodyMarked = 0;
         ResetArticlePhotos(e);
         return;
     }
@@ -1040,7 +1140,26 @@ not_skipped:
         return;
     }
 
-    /* The story starts at its first paragraph; see bodyStart. */
+    /*
+     * The story starts at its first paragraph; see bodyStart. Or, better,
+     * where the page names its body: a column that opened with <main> has
+     * the dek, the picture's credit, the author's bio and a "part of" box
+     * before the block called "article-body", and the dek is a paragraph.
+     * The name outranks the first <p>, once — a page that wraps every
+     * paragraph in its own body block (The Verge does) must not keep
+     * moving the start along. And only while what is above is a header's
+     * worth: below that, the story has begun without saying so.
+     */
+    if (!e->closing && !e->bodyMarked && e->focus[0] != '\0' &&
+        e->outLen < kGazetteHeaderMax &&
+        !(e->tagLen > 0 && e->tag[e->tagLen - 1] == '/') &&
+        TagIsBody(e->tag, e->tagLen, name)) {
+        PutBreak(e);
+        e->bodyMarked       = 1;
+        e->bodyBegun        = 1;
+        e->bodyStart        = e->outLen;
+        e->photosBeforeBody = e->photoCount;
+    }
     if (!e->closing && !e->bodyBegun && strcmp(name, "p") == 0) {
         PutBreak(e);
         e->bodyBegun        = 1;
@@ -1367,7 +1486,8 @@ static size_t DropTrailers(char *s, size_t len)
                     break;
                 }
             }
-            if (!drop && end > at && ParagraphIsPlug(s + at, end - at)) {
+            if (!drop && end > at && (ParagraphIsPlug(s + at, end - at) ||
+                                      ParagraphIsNotice(s + at, end - at))) {
                 drop = 1;
             }
         }

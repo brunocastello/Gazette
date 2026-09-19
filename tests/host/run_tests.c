@@ -1517,6 +1517,37 @@ static void TestFeedParsing(void)
     }
 
     {
+        /* Media RSS names its elements after the text's. Ars Technica puts a
+           <media:content> after the content:encoded, with the picture's
+           credit inside it; stripped to "content" it took the article's
+           place. And YouTube's entries say what a video is about in a
+           <media:description> and nowhere else. */
+        static const char media[] =
+            "<rss><channel><item><title>T</title><link>https://e/1</link>"
+            "<description>One line.</description>"
+            "<content:encoded><![CDATA[<p>The story, in full.</p>]]>"
+            "</content:encoded>"
+            "<media:content url=\"https://e/p.jpg\"><media:credit>Getty"
+            "</media:credit><media:text>A caption.</media:text>"
+            "</media:content></item>"
+            "<item><title>V</title><link>https://e/v</link>"
+            "<media:group><media:title>V</media:title>"
+            "<media:description>What the video is about.</media:description>"
+            "</media:group></item></channel></rss>";
+        GazetteFeedParser q;
+
+        gCollectedCount = 0;
+        GazetteFeedParserInit(&q, Collect, NULL);
+        GazetteFeedParserFeed(&q, media, sizeof media - 1);
+        GazetteFeedParserFinish(&q);
+        CheckLong("both items are out", (long)gCollectedCount, 2);
+        CheckStr("media:content does not replace content:encoded",
+                 gCollected[0].body, "The story, in full.");
+        CheckStr("media:description stands in for a missing summary",
+                 gCollected[1].body, "What the video is about.");
+    }
+
+    {
         /* An item with neither title nor link is a template artefact, not an
            article. */
         static const char empty[] =
@@ -2703,6 +2734,64 @@ static void TestExtractWrappers(void)
              " the story", Extract(&e, page, 0), want);
     CheckStr("and the same page seven bytes at a time",
              Extract(&e, page, 7), want);
+
+    /*
+     * The column and the body. <main> is the whole column: the dek (a
+     * paragraph, so the first-<p> rule stops at it), the picture's credit,
+     * a "part of" box, the author's bio, and then the block the page
+     * calls the body. The story starts where the body is named — once,
+     * because The Verge wraps every paragraph in its own body block.
+     */
+    CheckStr("the body's name outranks the first paragraph",
+             Extract(&e, "<body><main><h1>Headline</h1>"
+                         "<p class=\"dek\">The dek, said again.</p>"
+                         "<cite>Image: Someone / Getty</cite>"
+                         "<div><a href=\"/x\"><div>Part Of</div>"
+                         "<div>All the updates</div></a></div>"
+                         "<span>is a senior reporter at The Site.</span>"
+                         "<div class=\"duet--article--article-body-component\">"
+                         "<p>Para one.</p></div>"
+                         "<div class=\"duet--article--article-body-component\">"
+                         "<p>Para two.</p></div></main></body>", 0),
+             "Para one.\nPara two.");
+
+    /* An advertising slot, by the one word it is always called — as a
+       token of the name, since "ad" is inside "read" and "head". */
+    CheckStr("an ad slot goes",
+             Extract(&e, "<body><div class=\"ad top-wrapper\"><p>Advertisement"
+                         "</p></div><p>The story.</p>"
+                         "<div class=\"duet--ad--native-ad-rail\">"
+                         "<p>Advertiser Content From</p></div></body>", 0),
+             "The story.");
+    CheckStr("but ad inside a word is not the word",
+             Extract(&e, "<body><div class=\"readable loaded\"><p>The story.</p>"
+                         "</div></body>", 0),
+             "The story.");
+
+    /* Notices to the reader about the page: a line, never a paragraph. */
+    CheckStr("access notices and the plug for the feed go",
+             Extract(&e, "<body><article><p>Advertisement</p>"
+                         "<p><a href=\"#x\">SKIP ADVERTISEMENT</a></p>"
+                         "<p>You have a preview view of this article while we"
+                         " are checking your access.</p>"
+                         "<p>The story.</p>"
+                         "<p>Please enable JavaScript in your browser"
+                         " settings.</p>"
+                         "<p>Already a subscriber? <a href=\"/l\">Log in</a>.</p>"
+                         "<p><strong>Follow topics and authors</strong> from"
+                         " this story to see more like this in your"
+                         " personalized homepage feed and to receive email"
+                         " updates.</p></article></body>", 0),
+             "The story.");
+    CheckTrue("a paragraph about JavaScript is a paragraph",
+              strlen(Extract(&e, "<body><p>JavaScript was written in ten days"
+                                 " in 1995, and the language has carried that"
+                                 " haste ever since: the type coercions, the"
+                                 " equality operators, the global scope, and"
+                                 " the array that is not quite an array, all"
+                                 " of it a decision made under deadline and"
+                                 " kept for compatibility.</p></body>", 0))
+              > 200);
 
     /* What a page shows a reader without JavaScript is what this reader
        is shown. */
