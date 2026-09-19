@@ -580,6 +580,9 @@ static void PutBreak(GazetteExtract *e)
     /* A line of nothing but marks — an empty heading, a list item whose
        only content was turned away, a face opened and closed on nothing —
        is no line at all. The photo marker is the one mark that is. */
+    if (e->outLen > 0 && e->out[e->outLen - 1] == ' ') {
+        e->outLen--;
+    }
     {
         size_t i = e->outLen;
 
@@ -593,9 +596,6 @@ static void PutBreak(GazetteExtract *e)
     }
     if (e->outLen == 0 || e->out[e->outLen - 1] == '\n') {
         return;
-    }
-    if (e->out[e->outLen - 1] == ' ') {
-        e->outLen--;
     }
     PutChar(e, '\n');
     e->tagSpace = 0;
