@@ -1205,7 +1205,7 @@ static void TestEntities(void)
                     "</p><p>More.</p>");
         GazetteStripMarkup(buf, strlen(buf));
         CheckStr("a paragraph with its own words stays", buf,
-                 "Via  a source .\nMore.");
+                 "Via  a source .\nMore.\n");
         strcpy(buf, "<p>Text.</p><p><a href=\"/l\">A linked line that runs on"
                     " long enough to be a sentence of its own, not a button"
                     "</a></p>");
