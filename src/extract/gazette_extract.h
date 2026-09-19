@@ -98,7 +98,10 @@ enum {
      * through and the flattener knows only whitespace — and the reader
      * pane turns it into the space the picture is drawn in.
      */
-    kGazettePhotoMarker = 1
+    kGazettePhotoMarker = 1,
+
+    /* Columns a table's header row is remembered for; see FinishTag. */
+    kGazetteTableColumns = 4
 };
 
 /* One picture the page carries: where it is, as the page wrote it (resolved
@@ -176,6 +179,16 @@ typedef struct {
     /* The last byte written was a space an inline tag put there, not one
        the page wrote: punctuation that follows closes up to the word. */
     int    tagSpace;
+
+    /* A table being written out; see the table notes in FinishTag. */
+    int    inTable;
+    int    inCell;
+    int    cellIsHeader;
+    int    column;
+    int    row;
+    int    headerColumns;
+    size_t cellStart;
+    char   columnName[kGazetteTableColumns][48];
 } GazetteExtract;
 
 void GazetteExtractInit(GazetteExtract *e);

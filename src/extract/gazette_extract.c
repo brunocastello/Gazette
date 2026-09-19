@@ -91,7 +91,20 @@ static const char *const kUnwantedMarkers[] = {
        when, said again in a box at the top or the bottom; the affiliate
        list; the tag cloud; the third-party recommendation rails. */
     "byline", "author", "dateline", "timestamp", "affiliate", "disclosure",
-    "tags", "taglist", "outbrain", "taboola", "recommend", "signup"
+    "tags", "taglist", "outbrain", "taboola", "recommend", "signup",
+    /* MacRumors' "Tag:" and "Related Roundups:" lines; the headline said
+       again inside the block, by the name a CMS gives it. */
+    "linkback", "headline", "manchete"
+};
+
+/*
+ * Class names that say "the article's text" only when they are the whole
+ * name, because as substrings they are inside too many other words:
+ * "corpo" is NETVASCO's body and also "corporate"; "texto" is Portuguese
+ * for text and also "context". Compared token by token.
+ */
+static const char *const kContentWords[] = {
+    "corpo", "texto", "conteudo", "materia", "artigo", "story", "body"
 };
 
 /*
@@ -101,6 +114,8 @@ static const char *const kUnwantedMarkers[] = {
  * pipeline, so the comparison is against the text a reader would see.
  */
 static const char *const kTrailerStarts[] = {
+    "Tag:", "Tags:", "Topics:", "Filed under", "Related Roundup",
+    "Related Forum", "Buyer's Guide:",
     "Worth checking out", "Shop ", "Buy now", "Best deals",
     "FTC:", "Check out 9to5", "Add 9to5", "Follow us on", "Follow 9to5",
     "Subscribe to our", "Sign up for", "Related:", "Related Articles",
@@ -317,6 +332,35 @@ static int TagIsAffiliateLink(const char *tag, size_t len)
     return 0;
 }
 
+/* 1 when any of the words is one of the value's space-separated tokens,
+   compared case-insensitively and whole. */
+static int ValueHasWord(const char *value, size_t len,
+                        const char *const *words, size_t count)
+{
+    size_t i = 0;
+
+    while (i < len) {
+        size_t start, w;
+
+        while (i < len && value[i] == ' ') {
+            i++;
+        }
+        start = i;
+        while (i < len && value[i] != ' ') {
+            i++;
+        }
+        for (w = 0; w < count; w++) {
+            size_t wordLen = strlen(words[w]);
+
+            if (i - start == wordLen &&
+                gz_strnicmp(value + start, words[w], wordLen) == 0) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
 /* Whether this tag opens one of the blocks a page wraps around its article. */
 static int TagIsUnwanted(const char *tag, size_t len, const char *name)
 {
@@ -378,9 +422,12 @@ static int TagIsContent(const char *tag, size_t len, const char *name)
     }
     for (i = 0; i < sizeof kNamed / sizeof kNamed[0]; i++) {
         if (GazetteHtmlAttr(tag, len, kNamed[i], &value, &valueLen) &&
-            ValueHasAny(value, valueLen, kContentMarkers,
-                        sizeof kContentMarkers /
-                        sizeof kContentMarkers[0])) {
+            (ValueHasAny(value, valueLen, kContentMarkers,
+                         sizeof kContentMarkers /
+                         sizeof kContentMarkers[0]) ||
+             ValueHasWord(value, valueLen, kContentWords,
+                          sizeof kContentWords /
+                          sizeof kContentWords[0]))) {
             return 1;
         }
     }
@@ -746,15 +793,89 @@ static void FinishTag(GazetteExtract *e)
         e->photosBeforeBody = e->photoCount;
     }
 
-    /* A table's cells on one line, told apart: "iPhone 15 Pro | iPhone 18
-       Pro" reads; the two run together do not. The row is a block and
-       breaks the line. */
-    if (!e->closing && (strcmp(name, "td") == 0 || strcmp(name, "th") == 0)) {
-        if (e->outLen > 0 && e->out[e->outLen - 1] != '\n') {
+    /*
+     * Tables. TextEdit has no grid, so a table is written out. One with a
+     * header row — a comparison, which is what a news page's tables are —
+     * becomes "Header: cell" paragraphs, each cell under the column it was
+     * in; one without becomes rows of cells told apart by a bar. A line
+     * break inside a cell is a slash, so the cell stays one line.
+     */
+    if (strcmp(name, "table") == 0) {
+        e->inTable = e->closing ? 0 : 1;
+        e->inCell  = 0;
+        e->column  = 0;
+        e->row     = 0;
+        e->headerColumns = 0;
+        PutBreak(e);
+        return;
+    }
+    if (e->inTable && strcmp(name, "tr") == 0) {
+        if (e->closing) {
+            e->row++;
+        }
+        e->column = 0;
+        e->inCell = 0;
+        PutBreak(e);
+        return;
+    }
+    if (e->inTable && (strcmp(name, "td") == 0 || strcmp(name, "th") == 0)) {
+        if (e->closing) {
+            if (e->inCell && e->cellIsHeader) {
+                /* The header's text becomes the column's name and comes
+                   out of the text: it is said again over every cell. */
+                size_t from = e->cellStart;
+                size_t n    = e->outLen > from ? e->outLen - from : 0;
+
+                if (n > 0 && e->out[from + n - 1] == ' ') {
+                    n--;
+                }
+                if (e->column < kGazetteTableColumns) {
+                    gz_copy_n(e->columnName[e->column],
+                              sizeof e->columnName[e->column],
+                              e->out + from, n);
+                    if (e->column + 1 > e->headerColumns) {
+                        e->headerColumns = e->column + 1;
+                    }
+                }
+                e->outLen = from;
+            } else if (e->inCell && e->headerColumns > 0) {
+                PutBreak(e);
+            }
+            if (e->inCell) {
+                e->column++;
+                e->inCell = 0;
+            }
+            return;
+        }
+        e->inCell = 1;
+        /* A <th> names its column only in the first row. Further down it is
+           a row's own label — "Display", "Battery" — and is written out
+           like any cell. */
+        e->cellIsHeader = (strcmp(name, "th") == 0 && e->row == 0);
+        if (e->cellIsHeader) {
+            /* nothing: its text is captured at the close */
+        } else if (e->headerColumns > 0 && e->column < e->headerColumns &&
+                   e->columnName[e->column][0] != '\0') {
+            const char *h = e->columnName[e->column];
+
+            PutBreak(e);
+            while (*h != '\0') {
+                PutText(e, *h++);
+            }
+            PutChar(e, ':');
+            PutChar(e, ' ');
+        } else if (e->outLen > 0 && e->out[e->outLen - 1] != '\n') {
             PutText(e, ' ');
             PutChar(e, '|');
             PutChar(e, ' ');
         }
+        e->cellStart = e->outLen;
+        return;
+    }
+    if (e->inTable && e->inCell && strcmp(name, "br") == 0) {
+        PutText(e, ' ');
+        PutChar(e, '/');
+        PutChar(e, ' ');
         return;
     }
 

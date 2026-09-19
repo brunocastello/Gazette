@@ -129,13 +129,14 @@ enum {
     /*
      * A photograph in the article fills the column, the way NetNewsWire's
      * stylesheet has it — max-width 100%, height auto — scaled down to fit
-     * and never up. These two bound the offscreen world it is decoded into
-     * rather than the look: a column wider than this shows the picture at
-     * this size, and three worlds of 480 by 360 at 16 bits are a megabyte,
+     * and never up, and centred when it is narrower than the column. These
+     * two bound the offscreen world it is decoded into rather than the
+     * look: a column wider than this shows the picture at this size, in
+     * the middle, and three worlds of 560 by 420 at 16 bits are 1.4 MB,
      * which is what an 8 MB partition can spare for pictures.
      */
-    kPhotoMaxWidth  = 480,
-    kPhotoMaxHeight = 360,
+    kPhotoMaxWidth  = 560,
+    kPhotoMaxHeight = 420,
     kPhotoFrameGrey = 170,      /* the placeholder's edge */
 
     kMaxTitleLines = 3,         /* a headline wraps, but not without end   */
@@ -2367,8 +2368,14 @@ static void DrawReaderPhotos(void)
             w = room;
         }
 
-        SetRect(&box, view.left, top, (short)(view.left + w),
-                (short)(top + h));
+        /* In the middle of the column when it does not fill it: a
+           portrait, or a small picture, or a column wider than the world
+           it was decoded into. */
+        {
+            short left = (short)(view.left + (room - w) / 2);
+
+            SetRect(&box, left, top, (short)(left + w), (short)(top + h));
+        }
         if (box.bottom <= view.top || box.top >= view.bottom) {
             continue;                       /* scrolled out of the pane */
         }
@@ -2402,8 +2409,8 @@ static void DrawReaderPhotos(void)
             FontInfo    fi;
             RGBColor    black = { 0, 0, 0 };
 
-            SetRect(&capBox, view.left, (short)(top + h),
-                    (short)(view.left + w), (short)(top + h + gReaderLine));
+            SetRect(&capBox, box.left, (short)(top + h),
+                    box.right, (short)(top + h + gReaderLine));
             if (clip != NULL) {
                 GetClip(clip);
             }
@@ -2413,7 +2420,7 @@ static void DrawReaderPhotos(void)
             TextFace(normal);
             GetFontInfo(&fi);
             RGBForeColor(&black);
-            MoveTo(view.left, (short)(top + h + fi.ascent + 2));
+            MoveTo(box.left, (short)(top + h + fi.ascent + 2));
             DrawText(alt, 0, (short)strlen(alt));
             if (clip != NULL) {
                 SetClip(clip);

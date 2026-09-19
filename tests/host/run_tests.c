@@ -2573,12 +2573,44 @@ static void TestExtractTrailers(void)
                          "<aside class=\"affiliate-links\"><p>AirPods</p></aside>"
                          "</article></body>", 0),
              "The story.");
-    CheckStr("a table's cells are told apart",
+    /* A comparison table: each cell under the name of its column, and a
+       break inside a cell kept on the cell's line. */
+    CheckStr("a table with a header row is written out by column",
+             Extract(&e, "<body><p>Compare:</p><table class=\"comparison\">"
+                         "<colgroup><col></colgroup><p></p>"
+                         "<tr><th>iPhone 15 Pro (2023)</th><th>&zwnj;iPhone 18 Pro&zwnj; (2026)</th></tr>"
+                         "<tr><td>Titanium</td><td>Aluminum</td></tr>"
+                         "<tr><td><strong>15 Pro</strong>: 6.1-inch<br /><strong>15 Pro Max</strong>: 6.7-inch</td>"
+                         "<td>6.3-inch</td></tr>"
+                         "</table><p>After.</p></body>", 0),
+             "Compare:\niPhone 15 Pro (2023): Titanium\niPhone 18 Pro (2026): Aluminum\n"
+             "iPhone 15 Pro (2023): 15 Pro: 6.1-inch / 15 Pro Max: 6.7-inch\n"
+             "iPhone 18 Pro (2026): 6.3-inch\nAfter.");
+    CheckStr("a table without one is rows of cells told apart",
              Extract(&e, "<body><p>Compare:</p><table>"
-                         "<tr><th>iPhone 15 Pro</th><th>iPhone 18 Pro</th></tr>"
                          "<tr><td>6.1-inch</td><td>6.3-inch</td></tr>"
+                         "<tr><th>Battery</th><td>Good</td></tr>"
                          "</table></body>", 0),
-             "Compare:\niPhone 15 Pro | iPhone 18 Pro\n6.1-inch | 6.3-inch");
+             "Compare:\n6.1-inch | 6.3-inch\nBattery | Good");
+    CheckStr("MacRumors' linkback lines go",
+             Extract(&e, "<body><article><p>The story.</p>"
+                         "<div class=\"linkback\">Related Roundups: <a href=\"/r\">iPhone</a></div>"
+                         "<div class=\"linkback\">Tag: <a href=\"/t\">Cases</a></div>"
+                         "</article></body>", 0),
+             "The story.");
+    CheckStr("a page with no paragraphs but a body block by name",
+             Extract(&e, "<body><div class=\"noticia\">"
+                         "<div class=\"manchete\">Feminino: Vasco promovera encontro</div>"
+                         "<div class=\"data\">Sexta-feira, 18/09/2026 - 23:34</div>"
+                         "<div class=\"corpo\"><div class=\"galeria\"><table><tr><td>"
+                         "<a href=\"/p.jpg\"><img src=\"/p.jpg\" alt=\"Torcida\">Torcida do Vasco</a>"
+                         "</td></tr></table></div> <BR> <BR>O Vasco tera um domingo. <BR> <BR>"
+                         "A acao esta prevista.</div></div></body>", 0),
+             "\001\nTorcida do Vasco\nO Vasco tera um domingo.\nA acao esta prevista.");
+    CheckStr("but corporate is not corpo",
+             Extract(&e, "<body><p>Intro.</p><div class=\"corporate\"><p>Menu</p></div>"
+                         "<p>Text.</p></body>", 0),
+             "Intro.\nMenu\nText.");
     CheckStr("a space the page wrote before a quote stays",
              Extract(&e, "<body><p>the 'best' one, he said.</p></body>", 0),
              "the 'best' one, he said.");
