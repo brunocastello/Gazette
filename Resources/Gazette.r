@@ -169,7 +169,7 @@ resource 'DITL' (kNameDialogID, "Name") {
  * box itself.
  */
 resource 'DLOG' (kPrefsDialogID, "Preferences") {
-    { 0, 0, 132, 400 },
+    { 0, 0, 160, 400 },
     noGrowDocProc,
     invisible,
     goAway,
@@ -185,33 +185,41 @@ resource 'dlgx' (kPrefsDialogID) {
     }
 };
 
-/* Two numbers, each with what it means after it. Item 1 is OK, item 2
-   Cancel; 4 and 7 the fields. */
+/* Two numbers, each with a unit after it and a note under it — the note
+   a user item the dialog code stands a small-system-font control on, as
+   the feed dialog's is, aligned with the label. Item 1 is OK, item 2
+   Cancel; 4 and 8 the fields, 6 and 10 the notes. */
 resource 'DITL' (kPrefsDialogID, "Preferences") {
     {
-        { 98, 324, 118, 384 },
+        { 126, 324, 146, 384 },
         Button { enabled, "OK" };
 
-        { 98, 252, 118, 312 },
+        { 126, 252, 146, 312 },
         Button { enabled, "Cancel" };
 
-        { 22, 16, 38, 152 },
+        { 18, 16, 34, 152 },
         StaticText { disabled, "Refresh feeds every" };
 
-        { 20, 156, 36, 204 },
+        { 16, 156, 32, 204 },
         EditText { enabled, "" };
 
-        { 22, 212, 38, 384 },
-        StaticText { disabled, "minutes. Zero never refreshes." };
+        { 18, 212, 34, 384 },
+        StaticText { disabled, "minutes" };
 
-        { 54, 16, 70, 152 },
+        { 38, 16, 52, 384 },
+        UserItem { disabled };
+
+        { 68, 16, 84, 152 },
         StaticText { disabled, "Keep at most" };
 
-        { 52, 156, 68, 204 },
+        { 66, 156, 82, 204 },
         EditText { enabled, "" };
 
-        { 54, 212, 70, 384 },
-        StaticText { disabled, "articles per feed. Zero keeps all." };
+        { 68, 212, 84, 384 },
+        StaticText { disabled, "articles per feed" };
+
+        { 88, 16, 102, 384 },
+        UserItem { disabled };
     }
 };
 

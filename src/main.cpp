@@ -273,21 +273,23 @@ enum {
    Read: what is done to a row most often, nearest the mouse. */
 enum {
     kCtxSmartRefresh = 1,
-    kCtxSmartMarkAll = 2
+    kCtxSmartSort    = 2,
+    kCtxSmartMarkAll = 3
 };
 enum {
     kCtxGroupRefresh = 1,
-    kCtxGroupMarkAll = 2,
-    /* 3 is a divider */
-    kCtxGroupEdit    = 4,
-    kCtxGroupEnabled = 5,
-    /* 6 is a divider */
-    kCtxGroupDelete  = 7
+    kCtxGroupSort    = 2,
+    kCtxGroupMarkAll = 3,
+    /* 4 is a divider */
+    kCtxGroupEdit    = 5,
+    kCtxGroupEnabled = 6,
+    /* 7 is a divider */
+    kCtxGroupDelete  = 8
 };
 enum {
     kCtxFeedRefresh  = 1,
-    kCtxFeedMarkAll  = 2,
-    kCtxFeedSort     = 3,
+    kCtxFeedSort     = 2,
+    kCtxFeedMarkAll  = 3,
     /* 4 is a divider */
     kCtxFeedHome     = 5,
     /* 6 is a divider */
@@ -537,14 +539,14 @@ static Boolean BuildMenuBar(void)
     if (ctx == nil) {
         return false;
     }
-    AppendMenu(ctx, "\pRefresh;Mark All as Read");
+    AppendMenu(ctx, "\pRefresh;Show Oldest First;Mark All as Read");
     InsertMenu(ctx, hierMenu);
 
     ctx = NewMenu(kMenuCtxGroup, "\p");
     if (ctx == nil) {
         return false;
     }
-    AppendMenu(ctx, "\pRefresh;Mark All as Read;(-;"
+    AppendMenu(ctx, "\pRefresh;Show Oldest First;Mark All as Read;(-;"
                     "Edit Group\311;Turn Off;(-;Delete Group");
     InsertMenu(ctx, hierMenu);
 
@@ -552,7 +554,7 @@ static Boolean BuildMenuBar(void)
     if (ctx == nil) {
         return false;
     }
-    AppendMenu(ctx, "\pRefresh;Mark All as Read;Show Oldest First;(-;"
+    AppendMenu(ctx, "\pRefresh;Show Oldest First;Mark All as Read;(-;"
                     "Open Home Page;(-;"
                     "Copy Feed URL;Copy Home Page URL;(-;"
                     "Edit Feed\311;Turn Off;(-;Delete Feed");
@@ -945,6 +947,9 @@ static void HandleMenuChoice(long menuResult)
         case kMenuCtxSmart:
             switch (menuItem) {
                 case kCtxSmartRefresh: HandleRefreshSelection(); break;
+                case kCtxSmartSort:
+                    HandleSortOrder((Boolean)!GazetteCoreOldestFirst());
+                    break;
                 case kCtxSmartMarkAll: HandleMarkAllRead(); break;
                 default: break;
             }
@@ -953,6 +958,9 @@ static void HandleMenuChoice(long menuResult)
         case kMenuCtxGroup:
             switch (menuItem) {
                 case kCtxGroupRefresh: HandleRefreshSelection(); break;
+                case kCtxGroupSort:
+                    HandleSortOrder((Boolean)!GazetteCoreOldestFirst());
+                    break;
                 case kCtxGroupMarkAll: HandleMarkAllRead();     break;
                 case kCtxGroupEnabled: HandleToggleEnabled();   break;
                 case kCtxGroupEdit:    HandleEditGroup();       break;
@@ -1395,6 +1403,9 @@ static void ShowSidebarContextMenu(int kind, int index, Point global)
             if (menu != nil) {
                 AdjustRefreshItem(menu, kCtxSmartRefresh);
                 AdjustMarkAllItem(menu, kCtxSmartMarkAll);
+                SetMenuItemText(menu, kCtxSmartSort,
+                                GazetteCoreOldestFirst() ? "\pShow Newest First"
+                                                         : "\pShow Oldest First");
             }
             break;
 
@@ -1405,6 +1416,9 @@ static void ShowSidebarContextMenu(int kind, int index, Point global)
             }
             AdjustRefreshItem(menu, kCtxGroupRefresh);
             AdjustMarkAllItem(menu, kCtxGroupMarkAll);
+            SetMenuItemText(menu, kCtxGroupSort,
+                            GazetteCoreOldestFirst() ? "\pShow Newest First"
+                                                     : "\pShow Oldest First");
             SetMenuItemText(menu, kCtxGroupEnabled,
                             GazetteCoreGroupEnabled(index) ? "\pTurn Off"
                                                            : "\pTurn On");

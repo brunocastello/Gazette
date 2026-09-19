@@ -31,8 +31,10 @@ enum {
 };
 
 enum {
-    kPrefsItemMinutes  = 4,
-    kPrefsItemArticles = 7
+    kPrefsItemMinutes      = 4,
+    kPrefsItemMinutesNote  = 6,     /* a user item: see DrawItemControl */
+    kPrefsItemArticles     = 8,
+    kPrefsItemArticlesNote = 10
 };
 
 /* Item numbers, in the order the DITLs list them. */
@@ -75,7 +77,7 @@ enum {
 };
 
 static ControlHandle gFeedPopup;    /* while the feed dialog is up */
-static ControlHandle gNote;         /* the feed dialog's note, while it is up */
+static ControlHandle gNotes[2];     /* a dialog's notes, while it is up */
 static UserItemUPP   gDrawItem;     /* made once, kept */
 
 /* The user items' draw procedure: whichever control stands on the item. */
@@ -86,13 +88,20 @@ static pascal void DrawItemControl(DialogRef dialog, DialogItemIndex item)
     short  type;
 
     GetDialogItem(dialog, item, &type, &handle, &box);
-    if (gNote != NULL) {
-        Rect noteBox;
+    {
+        size_t i;
 
-        GetControlBounds(gNote, &noteBox);
-        if (EqualRect(&noteBox, &box)) {
-            Draw1Control(gNote);
-            return;
+        for (i = 0; i < sizeof gNotes / sizeof gNotes[0]; i++) {
+            Rect noteBox;
+
+            if (gNotes[i] == NULL) {
+                continue;
+            }
+            GetControlBounds(gNotes[i], &noteBox);
+            if (EqualRect(&noteBox, &box)) {
+                Draw1Control(gNotes[i]);
+                return;
+            }
         }
     }
     if (gFeedPopup != NULL) {
@@ -378,7 +387,7 @@ Boolean GazetteAskFeed(GazetteFeedDialog *d)
     SetItemText(dialog, kFeedItemTitle, d->title);
     SetItemText(dialog, kFeedItemURL, d->url);
 
-    gNote = MakeNote(dialog, kFeedItemNote,
+    gNotes[0] = MakeNote(dialog, kFeedItemNote,
                      "The address of an RSS or Atom feed. Leave the name "
                      "empty to use the feed's own.");
 
@@ -435,7 +444,7 @@ Boolean GazetteAskFeed(GazetteFeedDialog *d)
     }
 
     gFeedPopup = NULL;
-    gNote      = NULL;
+    gNotes[0]  = NULL;
     DisposeDialog(dialog);              /* takes its controls with the window */
     if (menu != NULL) {
         DeleteMenu(kGroupPopupMenuID);
@@ -509,6 +518,11 @@ Boolean GazetteAskPreferences(long *refreshMinutes, long *maxArticles)
         return false;
     }
 
+    gNotes[0] = MakeNote(dialog, kPrefsItemMinutesNote,
+                         "Zero never refreshes by itself.");
+    gNotes[1] = MakeNote(dialog, kPrefsItemArticlesNote,
+                         "Zero keeps every article the feed offers.");
+
     SetItemNumber(dialog, kPrefsItemMinutes, *refreshMinutes);
     SetItemNumber(dialog, kPrefsItemArticles, *maxArticles);
     SelectDialogItemText(dialog, kPrefsItemMinutes, 0, 32767);
@@ -522,7 +536,9 @@ Boolean GazetteAskPreferences(long *refreshMinutes, long *maxArticles)
         *maxArticles    = articles < 0 ? 0 : articles;
     }
 
-    DisposeDialog(dialog);
+    gNotes[0] = NULL;
+    gNotes[1] = NULL;
+    DisposeDialog(dialog);              /* takes the notes with the window */
     return ok;
 }
 
