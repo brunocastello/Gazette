@@ -1,0 +1,188 @@
+/*
+ * Gazette.rc - the Windows resources: the menu bar, the accelerators, the
+ * version block and the manifest.
+ *
+ * Compiled by windres. The Mac side's equivalent is Resources/Gazette.r,
+ * and the two are deliberately separate files: nothing Rez understands is
+ * spelled the same way here.
+ *
+ * Items the Windows shell does not implement yet are GRAYED in place. A
+ * menu item that is present and does nothing is worse than one that is
+ * visibly not ready, and each one loses the GRAYED as its handler lands.
+ */
+
+#include <windows.h>
+#include "gazette_win_res.h"
+
+/* ------------------------------------------------------------------ */
+/* The menu bar                                                        */
+/*                                                                     */
+/* The same six menus as the Mac build, in Windows' spelling: Quit is   */
+/* Exit and sits at the foot of File, Preferences is Options at the     */
+/* foot of Edit, and About moves from the Apple menu to Help. The       */
+/* Apple menu has no Windows counterpart, so Help is a new menu rather  */
+/* than a renamed one.                                                 */
+/* ------------------------------------------------------------------ */
+
+IDR_MAIN_MENU MENU
+BEGIN
+    POPUP "&File"
+    BEGIN
+        MENUITEM "&New Feed...\tCtrl+N",        IDM_FILE_NEW_FEED,  GRAYED
+        MENUITEM "New &Group...\tCtrl+G",       IDM_FILE_NEW_GROUP, GRAYED
+        MENUITEM SEPARATOR
+        /* F5 rather than the Mac's Command-R: on Windows refresh is F5
+           everywhere, and Ctrl+R is a browser's reload, not a reader's. */
+        MENUITEM "&Refresh\tF5",                IDM_FILE_REFRESH,   GRAYED
+        MENUITEM SEPARATOR
+        MENUITEM "&Import Feeds...",            IDM_FILE_IMPORT,    GRAYED
+        MENUITEM "&Export Feeds...",            IDM_FILE_EXPORT,    GRAYED
+        MENUITEM SEPARATOR
+        /* Exit carries no accelerator: Alt+F4 is the window's, not ours. */
+        MENUITEM "E&xit",                       IDM_FILE_EXIT
+    END
+
+    POPUP "&Edit"
+    BEGIN
+        MENUITEM "&Undo\tCtrl+Z",               IDM_EDIT_UNDO,      GRAYED
+        MENUITEM SEPARATOR
+        MENUITEM "Cu&t\tCtrl+X",                IDM_EDIT_CUT,       GRAYED
+        MENUITEM "&Copy\tCtrl+C",               IDM_EDIT_COPY,      GRAYED
+        MENUITEM "&Paste\tCtrl+V",              IDM_EDIT_PASTE,     GRAYED
+        MENUITEM "&Delete",                     IDM_EDIT_DELETE,    GRAYED
+        MENUITEM SEPARATOR
+        MENUITEM "&Find...\tCtrl+F",            IDM_EDIT_FIND,      GRAYED
+        MENUITEM SEPARATOR
+        MENUITEM "&Options...",                 IDM_EDIT_OPTIONS,   GRAYED
+    END
+
+    POPUP "&View"
+    BEGIN
+        MENUITEM "&Group by Feed",              IDM_VIEW_GROUP_BY_FEED, GRAYED
+        MENUITEM "&Hide Read Articles\tCtrl+H", IDM_VIEW_HIDE_READ, GRAYED
+        MENUITEM "Hide Read &Feeds\tCtrl+Shift+H", IDM_VIEW_HIDE_FEEDS, GRAYED
+        MENUITEM "Show &Photos",                IDM_VIEW_SHOW_PHOTOS, GRAYED
+        MENUITEM SEPARATOR
+        /* The one View item the skeleton can honour: it is pure layout,
+           and it is the cheapest proof that the splitter arithmetic is
+           right, because the sidebar's width has to survive going away
+           and coming back. */
+        MENUITEM "Hide &Sidebar\tCtrl+S",       IDM_VIEW_SIDEBAR
+        MENUITEM "Hide &Toolbar\tCtrl+T",       IDM_VIEW_TOOLBAR,   GRAYED
+    END
+
+    POPUP "Fee&ds"
+    BEGIN
+        MENUITEM "&Today\tCtrl+1",              IDM_FEEDS_TODAY,    GRAYED
+        MENUITEM "All &Unread\tCtrl+2",         IDM_FEEDS_UNREAD,   GRAYED
+        MENUITEM "&Starred\tCtrl+3",            IDM_FEEDS_STARRED,  GRAYED
+        MENUITEM SEPARATOR
+        MENUITEM "Show &Oldest First",          IDM_FEEDS_OLDEST_FIRST, GRAYED
+        MENUITEM "&Mark All as Read\tCtrl+K",   IDM_FEEDS_MARK_ALL, GRAYED
+        MENUITEM SEPARATOR
+        MENUITEM "&Edit Feed...",               IDM_FEEDS_EDIT,     GRAYED
+        MENUITEM "Turn O&ff",                   IDM_FEEDS_TURN_OFF, GRAYED
+        MENUITEM SEPARATOR
+        MENUITEM "&Delete Feed",                IDM_FEEDS_DELETE,   GRAYED
+    END
+
+    POPUP "&Article"
+    BEGIN
+        MENUITEM "&Next Unread\tCtrl+/",        IDM_ARTICLE_NEXT,   GRAYED
+        MENUITEM SEPARATOR
+        MENUITEM "Mark as &Unread\tCtrl+U",     IDM_ARTICLE_UNREAD, GRAYED
+        MENUITEM "Mark &Above as Read",         IDM_ARTICLE_ABOVE,  GRAYED
+        MENUITEM "Mark &Below as Read",         IDM_ARTICLE_BELOW,  GRAYED
+        MENUITEM SEPARATOR
+        MENUITEM "&Star Article\tCtrl+L",       IDM_ARTICLE_STAR,   GRAYED
+        MENUITEM SEPARATOR
+        MENUITEM "&Open in Browser\tCtrl+B",    IDM_ARTICLE_BROWSER, GRAYED
+    END
+
+    POPUP "&Help"
+    BEGIN
+        MENUITEM "&About Gazette...",           IDM_HELP_ABOUT
+    END
+END
+
+/* ------------------------------------------------------------------ */
+/* Accelerators                                                        */
+/*                                                                     */
+/* The whole table is here from the start, including the keys whose     */
+/* items are still GRAYED: an accelerator for a disabled item does      */
+/* nothing, so there is no harm in it, and the alternative is a second  */
+/* list to keep in step with the menu.                                  */
+/* ------------------------------------------------------------------ */
+
+IDR_ACCELERATORS ACCELERATORS
+BEGIN
+    "N",        IDM_FILE_NEW_FEED,      VIRTKEY, CONTROL
+    "G",        IDM_FILE_NEW_GROUP,     VIRTKEY, CONTROL
+    VK_F5,      IDM_FILE_REFRESH,       VIRTKEY
+    "F",        IDM_EDIT_FIND,          VIRTKEY, CONTROL
+    "H",        IDM_VIEW_HIDE_READ,     VIRTKEY, CONTROL
+    "H",        IDM_VIEW_HIDE_FEEDS,    VIRTKEY, CONTROL, SHIFT
+    "S",        IDM_VIEW_SIDEBAR,       VIRTKEY, CONTROL
+    "T",        IDM_VIEW_TOOLBAR,       VIRTKEY, CONTROL
+    "1",        IDM_FEEDS_TODAY,        VIRTKEY, CONTROL
+    "2",        IDM_FEEDS_UNREAD,       VIRTKEY, CONTROL
+    "3",        IDM_FEEDS_STARRED,      VIRTKEY, CONTROL
+    "K",        IDM_FEEDS_MARK_ALL,     VIRTKEY, CONTROL
+    "U",        IDM_ARTICLE_UNREAD,     VIRTKEY, CONTROL
+    "L",        IDM_ARTICLE_STAR,       VIRTKEY, CONTROL
+    "B",        IDM_ARTICLE_BROWSER,    VIRTKEY, CONTROL
+END
+
+/* ------------------------------------------------------------------ */
+/* Version                                                             */
+/*                                                                     */
+/* The third place the version number is written out -- src/           */
+/* gazette_version.h says so itself, and names the Rez file. A resource */
+/* script cannot read that header either, so this one is literal too.   */
+/* ------------------------------------------------------------------ */
+
+VS_VERSION_INFO VERSIONINFO
+    FILEVERSION     0,1,0,0
+    PRODUCTVERSION  0,1,0,0
+    FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+    FILEFLAGS       0
+    FILEOS          VOS__WINDOWS32
+    FILETYPE        VFT_APP
+    FILESUBTYPE     VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        /* 0409 is US English; 04E4 is the Windows Multilingual code page,
+           which is what an ANSI build declares. */
+        BLOCK "040904E4"
+        BEGIN
+            VALUE "CompanyName",      "brunocastello"
+            VALUE "FileDescription",  "Gazette - RSS / Atom Reader"
+            VALUE "FileVersion",      "0.1.0"
+            VALUE "InternalName",     "Gazette"
+            VALUE "LegalCopyright",   "Copyright (c) 2026 brunocastello"
+            VALUE "OriginalFilename", "GAZETTE.EXE"
+            VALUE "ProductName",      "Gazette"
+            VALUE "ProductVersion",   "0.1.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1252
+    END
+END
+
+/* ------------------------------------------------------------------ */
+/* The manifest                                                        */
+/*                                                                     */
+/* 1 is CREATEPROCESS_MANIFEST_RESOURCE_ID and 24 is RT_MANIFEST. This  */
+/* is the whole of the XP decision: it asks for version 6 of the common */
+/* controls, so XP draws the tree, the list and the status bar in Luna  */
+/* while every earlier Windows ignores the resource and draws them in   */
+/* the 3D chrome. One binary, native on each.                           */
+/*                                                                     */
+/* Version 6 also makes InitCommonControlsEx mandatory rather than      */
+/* merely advisable -- without it the controls do not register at all.  */
+/* ------------------------------------------------------------------ */
+
+1 24 "Gazette.manifest"

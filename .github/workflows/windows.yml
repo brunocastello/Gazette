@@ -1,0 +1,118 @@
+# Gazette — GitHub Actions CI Workflow (Win32, MinGW cross-compile)
+#
+# The second of two build workflows. build.yml makes the Carbon PPC
+# application for Mac OS 9; this one makes the single 32-bit executable
+# that runs on Windows 95, 98, Me, NT 4.0, 2000 and XP, and the floppy
+# image it is tested from.
+#
+# It is a separate file rather than a job in build.yml because it shares
+# nothing with the Retro68 container: a different toolchain, a different
+# shell and a different set of assets. The host tests that gate the
+# Carbon build gate this one too -- they run on every push in build.yml,
+# over the same portable modules this executable links.
+
+name: Build Gazette (Win32)
+
+on:
+  push:
+    # Both filters, for the same reason build.yml gives: naming tags
+    # alone would silently stop every branch build.
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+    paths:
+      - 'src/win/**'
+      - 'src/portable/**'
+      - 'src/prefs/**'
+      - 'src/feeds/**'
+      - 'src/extract/**'
+      - 'Resources/win/**'
+      - 'cmake/**'
+      - 'CMakeLists.txt'
+      - 'tools/make_img.sh'
+      - '.github/workflows/windows.yml'
+  pull_request:
+    paths:
+      - 'src/win/**'
+      - 'src/portable/**'
+      - 'src/prefs/**'
+      - 'src/feeds/**'
+      - 'src/extract/**'
+      - 'Resources/win/**'
+      - 'cmake/**'
+      - 'CMakeLists.txt'
+      - 'tools/make_img.sh'
+      - '.github/workflows/windows.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install the MinGW cross-toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          # The -win32 packages are the Win32-threads flavour of the
+          # compiler. The -posix one links libwinpthread-1.dll, and a
+          # DLL beside the executable is the one thing a single-file
+          # application for these machines must not need.
+          #
+          # mtools writes the floppy image without root and without a
+          # loop mount; zip makes the archive.
+          sudo apt-get install -y --no-install-recommends \
+            gcc-mingw-w64-i686-win32 \
+            g++-mingw-w64-i686-win32 \
+            binutils-mingw-w64-i686 \
+            mtools \
+            zip
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-win \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-i686.toolchain.cmake \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build-win --verbose
+
+      - name: Inspect the executable
+        run: |
+          set -euo pipefail
+
+          # Two things this proves, and neither of them can be checked
+          # from a Mac or a Linux box any other way:
+          #
+          #   The subsystem version. 4.00 is what a Windows 95 or NT 4
+          #   loader requires; MinGW's default is later, and a binary
+          #   stamped with it is refused before it runs.
+          #
+          #   The import table. Every name here has to exist on a plain
+          #   Windows 95 -- no libwinpthread, no libgcc, and no
+          #   comctl32, which the shell loads by hand precisely so that
+          #   it does not appear in this list.
+          i686-w64-mingw32-objdump -p build-win/Gazette.exe \
+            | grep -E 'Magic|MajorSubsystemVersion|MinorSubsystemVersion|MajorOperatingSystemVersion|Subsystem'
+
+          echo "DLLs imported:"
+          i686-w64-mingw32-objdump -p build-win/Gazette.exe \
+            | grep -i 'DLL Name'
+
+          ls -l build-win/Gazette.exe
+
+      - name: Package release assets (.zip and floppy .img)
+        run: tools/make_img.sh build-win/Gazette.exe package
+
+      - name: Upload executable, archive and disk image
+        uses: actions/upload-artifact@v4
+        with:
+          name: Gazette-win32
+          path: |
+            build-win/Gazette.exe
+            package/Gazette.zip
+            package/Gazette.img
+          if-no-files-found: error
