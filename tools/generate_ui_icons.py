@@ -653,12 +653,14 @@ def ascii_art(px):
         print("".join(row))
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--out")
-    ap.add_argument("--ascii", action="store_true")
-    args = ap.parse_args()
+def icon_list():
+    """
+    Every icon this file draws, in resource-id order.
 
+    A function rather than a literal inside main() because the Windows
+    build cuts the same drawings into its own formats and must not keep
+    a second copy of the list -- see tools/generate_win_assets.py.
+    """
     # From 256: the Finder icon family is 128, and the desktop database reads
     # the application's small icon by that ID out of the same resource fork
     # -- a 'Today' sun numbered 128 was what the Apple menu showed for
@@ -690,6 +692,17 @@ def main():
         (270, "New", draw_new()),
         (271, "Find", draw_find()),
     ]
+
+    return icons
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out")
+    ap.add_argument("--ascii", action="store_true")
+    args = ap.parse_args()
+
+    icons = icon_list()
 
     if args.ascii:
         for res_id, name, px in icons:

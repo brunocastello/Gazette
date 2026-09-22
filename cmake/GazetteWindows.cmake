@@ -25,8 +25,10 @@
 enable_language(RC)
 
 set(GAZETTE_WIN_SOURCES
-    # The Windows shell -- WinMain, the frame, the menu bar, the panes
+    # The Windows shell. The split mirrors the Mac build's: _main is
+    # src/main.cpp and _window is src/ui/platinum_window.c.
     src/win/gazette_win_main.c
+    src/win/gazette_win_window.c
 
     # Portable helpers -- pure C, host-tested (tests/host)
     src/portable/gazette_portable.c
@@ -62,10 +64,14 @@ target_include_directories(Gazette PRIVATE
 
 target_compile_options(Gazette PRIVATE -Wall -Wextra -Wno-unused-parameter)
 
-# comctl32 is missing from this list on purpose -- see InitControls() in
-# src/win/gazette_win_main.c. The shell loads it with LoadLibrary so that
-# a Windows 95 without Internet Explorer can still start the program.
-target_link_libraries(Gazette PRIVATE user32 gdi32)
+# comctl32 is linked, and that is safe: the DLL shipped on the Windows 95
+# CD. What did not ship with it is anything numbered after 4.0 --
+# InitCommonControlsEx above all -- so InitControls() in
+# src/win/gazette_win_main.c fetches that one by name instead. The rule
+# for this list is the version, not the library: nothing newer than
+# comctl32 4.0 may appear in the import table, which the workflow checks
+# by printing it on every build.
+target_link_libraries(Gazette PRIVATE user32 gdi32 comctl32)
 
 # Static everything: no libgcc, no libstdc++, no pthread DLL. What is
 # copied onto the disk image has to be the whole application.

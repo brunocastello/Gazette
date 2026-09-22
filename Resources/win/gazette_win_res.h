@@ -15,6 +15,9 @@
 #define IDI_GAZETTE            100
 #define IDR_MAIN_MENU          101
 #define IDR_ACCELERATORS       102
+/* The strip of every 16x16 icon Gazette drew for itself, cut into an
+   image list at startup. tools/generate_win_assets.py writes it. */
+#define IDB_UI_ICONS           103
 
 /* Menu commands. Grouped by menu in blocks of a hundred so a new item
    never has to be squeezed between two existing numbers. */
@@ -23,15 +26,15 @@
 #define IDM_FILE_REFRESH       40102
 #define IDM_FILE_IMPORT        40103
 #define IDM_FILE_EXPORT        40104
-#define IDM_FILE_EXIT          40105
+#define IDM_FILE_QUIT          40105
 
 #define IDM_EDIT_UNDO          40200
 #define IDM_EDIT_CUT           40201
 #define IDM_EDIT_COPY          40202
 #define IDM_EDIT_PASTE         40203
-#define IDM_EDIT_DELETE        40204
+#define IDM_EDIT_CLEAR         40204
 #define IDM_EDIT_FIND          40205
-#define IDM_EDIT_OPTIONS       40206
+#define IDM_EDIT_PREFS         40206
 
 #define IDM_VIEW_GROUP_BY_FEED 40300
 #define IDM_VIEW_HIDE_READ     40301
@@ -59,11 +62,16 @@
 #define IDM_HELP_ABOUT         40600
 
 /* Child window identifiers. */
+#define IDC_TOOLBAR             999
 #define IDC_SIDEBAR            1000
 #define IDC_HEADLINES          1001
 #define IDC_READER             1002
 #define IDC_SPLIT_LEFT         1003
 #define IDC_SPLIT_RIGHT        1004
 #define IDC_STATUSBAR          1005
+#define IDC_SIDEBAR_HEADER     1006
+#define IDC_LIST_HEADER        1007
+#define IDC_SEARCH             1008
+#define IDC_FINDICON           1009
 
 #endif /* GAZETTE_WIN_RES_H */
