@@ -90,6 +90,7 @@ static LRESULT CALLBACK ReaderWndProc(HWND, UINT, WPARAM, LPARAM);
 /* ------------------------------------------------------------------ */
 
 typedef BOOL (WINAPI *InitCommonControlsExProc)(const INITCOMMONCONTROLSEX *);
+typedef void (WINAPI *InitCommonControlsProc)(void);
 
 /*
  * Bring comctl32 in and register the classes this shell asks for.
@@ -105,6 +106,7 @@ static BOOL InitControls(void)
 {
     HMODULE comctl;
     InitCommonControlsExProc initEx;
+    InitCommonControlsProc init;
     INITCOMMONCONTROLSEX icc;
 
     comctl = LoadLibraryA("comctl32.dll");
@@ -127,7 +129,17 @@ static BOOL InitControls(void)
            creation be the thing that reports it. */
     }
 
-    InitCommonControls();
+    /* The old entry point is fetched by hand as well, and for the same
+       reason: writing InitCommonControls() as a call puts the symbol in
+       the import table, which is precisely the load-time dependency on
+       comctl32 this function exists to avoid. */
+    init = (InitCommonControlsProc)
+           GetProcAddress(comctl, "InitCommonControls");
+    if (init == NULL) {
+        return FALSE;
+    }
+
+    init();
     return TRUE;
 }
 

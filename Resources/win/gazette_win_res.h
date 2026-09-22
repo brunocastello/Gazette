@@ -2,7 +2,8 @@
  * gazette_win_res.h - the identifiers the resource script and the Windows
  * shell both have to agree on.
  *
- * Included by Gazette.rc (through windres) and by src/win/*.c, so it must
+ * Included by Gazette.rc (through windres) and by the sources under
+ * src/win, so it must
  * stay free of anything a resource compiler cannot read: #define only, no
  * declarations and no types.
  */
