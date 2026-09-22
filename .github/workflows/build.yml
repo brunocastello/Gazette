@@ -15,9 +15,18 @@ on:
     # happens, publish it by hand against the tag:
     #
     #     gh workflow run build.yml --ref v0.1.0
+    #
+    # The Windows shell and its resources are excluded by name. They sit
+    # under src/ and Resources/ like everything else, so without these
+    # two lines every Win32 commit rebuilds Carbon for nothing. What is
+    # genuinely shared -- the engine below src/, CMakeLists.txt, the
+    # tests -- still triggers this build, which is the point: a change
+    # to the engine has to be proved on both.
     paths:
       - 'src/**'
+      - '!src/win/**'
       - 'Resources/**'
+      - '!Resources/win/**'
       - 'CMakeLists.txt'
       - 'third_party/AUI/**'
       - 'tests/**'
@@ -26,7 +35,9 @@ on:
   pull_request:
     paths:
       - 'src/**'
+      - '!src/win/**'
       - 'Resources/**'
+      - '!Resources/win/**'
       - 'CMakeLists.txt'
       - 'third_party/AUI/**'
       - 'tests/**'
