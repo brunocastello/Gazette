@@ -9,6 +9,7 @@
 
 #include "extract/gazette_extract.h"
 #include "core/gazette_core.h"
+#include "feeds/gazette_googlenews.h"
 #include "feeds/gazette_index.h"
 #include "feeds/gazette_photos.h"
 #include "net/gazette_fetch.h"
@@ -80,37 +81,165 @@ static long               gFetchedAt;
 static char               gCurrentURL[1024];
 
 /*
- * The article that is open: its body as the feed carried it, laid out by the
- * extractor when the feed was read, with the pictures that were in it. Read
- * off the disk the moment the article is opened — see GazetteFeedsArticleText
- * — so there is no job here and nothing to wait for; Gazette reads the feed,
- * not the site (Bruno, 2026-09-23: "it's an RSS/Atom reader, not a website
- * parser"), which is what NetNewsWire does too.
+ * The full-text job, kept entirely separate from the refresh above. They
+ * share the one connection by refusing to overlap rather than by sharing any
+ * state, which is the difference between two small state machines and one
+ * that has to remember what it is in the middle of.
+ *
+ * gFullText is 8 KB that stays allocated; the extractor is 16 KB that does
+ * not, and is taken for the length of one fetch the way the parser is.
  */
+static GazetteExtract     *gExtract;
+static GazetteFetch       *gFullFetch;
+static GazetteRefreshState gFullState = kGazetteRefreshIdle;
 static int                 gFullArticle = -1;      /* what gFullText is for */
+static int                 gPendingFullArticle = -1;
+
+/*
+ * The page that still has to be got, and where from. Set the moment one is
+ * asked for and cleared only when it arrives or is given up on — so it stands
+ * through a fetch running, through a request held back because the refresh
+ * had the connection, and through a refresh taking the connection away from a
+ * fetch that had already started.
+ *
+ * That is what makes one question answer all three: GazetteFeedsFullTextComing
+ * is this and nothing else. Reading the full article is not optional, so
+ * "busy" never means "settle for the summary" — it means "in a moment", and
+ * GazetteFeedsFullTextResume is what comes back for it.
+ */
+static int                 gWantArticle = -1;
+static char                gWantURL[kGazetteArticleLinkLen];
 static char                gFullText[kGazetteExtractMax];
+static char                gFullError[192];
+
+/*
+ * A Google News item links to Google, not to the story, and the story's
+ * address has to be asked for first — see the article-link section of
+ * gazette_googlenews.h. That is two fetches before the article's own, and
+ * this is what they need: the token, the scan of the first page, the body
+ * of the second request and its answer. Taken for the length of the
+ * resolution and let go before the article is fetched.
+ */
+typedef struct {
+    char             token[kGazetteGNewsTokenMax];
+    GazetteGNewsScan scan;
+    char             body[kGazetteGNewsBodyMax];
+    char             answer[4096];
+    size_t           answerLen;
+    char             url[kGazetteArticleLinkLen];
+} GNewsResolve;
+
+enum {
+    kFullStageArticle = 0,      /* the story's own page, into the extractor */
+    kFullStagePage,             /* Google's page, for the two attributes */
+    kFullStageAnswer            /* Google's decoder, for the address */
+};
+
+static GNewsResolve       *gResolve;
+static int                 gFullStage = kFullStageArticle;
+
+/* The pictures the page named, and the page's own address once the
+   redirects were followed — what a relative picture resolves against.
+   Copied out of the extractor at the finish, since the extractor goes. */
 static GazettePhotoRef     gFullPhotos[kGazetteMaxPhotos];
 static int                 gFullPhotoCount;
-
-/* The address a relative picture resolves against: the article's own link,
-   since the HTML came from the feed and that is the page it stands for. */
 static char                gFullFinalURL[kGazetteArticleLinkLen];
 
 /*
- * The refresh's half of it. Each item's body, whole, is lent to the parser
- * to fill (gBodyHTML), laid out by an extractor that lives as long as the
- * refresh (gBodyExtract), and written to the feed's text file (gTextFile)
- * as the item is kept. 48 KB of HTML is a long article; one longer is cut
- * there, and the extractor keeps no more than kGazetteExtractMax of text
- * from any of them anyway. Both blocks are taken for the length of one
- * refresh, the way the parser is, and a Mac with no room for them still
- * refreshes — its articles open on their summaries.
+ * The pages read lately, so that going back to an article does not fetch
+ * it again. Keyed by the article's link as the feed gave it — the one the
+ * reader pane asks by — which is not the address the page came from when
+ * Google News stood between. A ring of a few: each is the text, the
+ * pictures' addresses and the page's own, about 20 KB, taken one at a time
+ * as pages are read and never all at once, so a partition with no room
+ * for another simply reads that page again next time. A refresh empties
+ * it: what was read then is what the user asked to read again.
  */
-enum { kBodyHTMLMax = 48L * 1024 };
+typedef struct {
+    char            key[kGazetteArticleLinkLen];
+    char            text[kGazetteExtractMax];
+    GazettePhotoRef photos[kGazetteMaxPhotos];
+    int             photoCount;
+    char            finalURL[kGazetteArticleLinkLen];
+} ReadPage;
 
-static char              *gBodyHTML;
-static GazetteExtract    *gBodyExtract;
-static GazetteStoreFile  *gTextFile;
+enum { kReadPages = 6 };
+
+static ReadPage *gReadPages[kReadPages];
+static int       gReadNext;                 /* the slot the next page takes */
+static char      gWantKey[kGazetteArticleLinkLen];  /* the link being read */
+
+static ReadPage *FindReadPage(const char *key)
+{
+    int i;
+
+    for (i = 0; i < kReadPages; i++) {
+        if (gReadPages[i] != NULL && strcmp(gReadPages[i]->key, key) == 0) {
+            return gReadPages[i];
+        }
+    }
+    return NULL;
+}
+
+static void ForgetReadPages(void)
+{
+    int i;
+
+    for (i = 0; i < kReadPages; i++) {
+        if (gReadPages[i] != NULL) {
+            gReadPages[i]->key[0] = '\0';
+        }
+    }
+}
+
+/* Keep what has just been read, under the link it was asked by. */
+static void RememberReadPage(void)
+{
+    ReadPage *page;
+    int       i;
+
+    if (gWantKey[0] == '\0') {
+        return;
+    }
+    page = FindReadPage(gWantKey);
+    if (page == NULL) {
+        if (gReadPages[gReadNext] == NULL) {
+            gReadPages[gReadNext] =
+                (ReadPage *)NewPtrClear((Size)sizeof(ReadPage));
+            if (gReadPages[gReadNext] == NULL) {
+                return;             /* no room: read it again next time */
+            }
+        }
+        page      = gReadPages[gReadNext];
+        gReadNext = (gReadNext + 1) % kReadPages;
+    }
+    gz_copy_n(page->key, sizeof page->key, gWantKey, strlen(gWantKey));
+    gz_copy_n(page->text, sizeof page->text, gFullText, strlen(gFullText));
+    page->photoCount = gFullPhotoCount;
+    for (i = 0; i < gFullPhotoCount; i++) {
+        page->photos[i] = gFullPhotos[i];
+    }
+    gz_copy_n(page->finalURL, sizeof page->finalURL, gFullFinalURL,
+              strlen(gFullFinalURL));
+}
+
+/* Put a remembered page where a fetched one would go. */
+static void RecallReadPage(const ReadPage *page, int articleIndex)
+{
+    int i;
+
+    GazetteFeedsFullTextCancel();
+    gz_copy_n(gFullText, sizeof gFullText, page->text, strlen(page->text));
+    gFullPhotoCount = page->photoCount;
+    for (i = 0; i < gFullPhotoCount; i++) {
+        gFullPhotos[i] = page->photos[i];
+    }
+    gz_copy_n(gFullFinalURL, sizeof gFullFinalURL, page->finalURL,
+              strlen(page->finalURL));
+    gFullArticle = articleIndex;
+    gWantArticle = -1;              /* settled: it is here */
+    gFullState   = kGazetteRefreshDone;
+}
 
 /*
  * Seconds between the Macintosh epoch (1904) and the Unix one (1970).
@@ -152,16 +281,12 @@ enum { kMacToUnixEpoch = 2082844800L };
  */
 static const char kCacheMagic[] = "GAZETTE-CACHE 6";
 
-/*
- * The first line of a text file: one record per article, "-" then the
- * article's link, its pictures and its paragraphs. The marks the extractor
- * leaves in a paragraph are bytes below a space and never CR or LF, so a
- * paragraph is one line as it stands.
- */
-static const char kTextMagic[] = "GAZETTE-TEXT 1";
-
 static void SaveCache(const char *url, long fetchedAt);
-static void WriteTextLine(GazetteStoreFile *f, char tag, const char *text);
+
+/* The full-text job's three halves: begin the fetch for whatever is in the
+   held request, and give the connection up without giving the request up. */
+static int  BeginFullText(void);
+static void PauseFullText(void);
 
 static long UnixNow(void)
 {
@@ -485,74 +610,6 @@ void GazetteFeedsMarkStarred(int index, int starred)
 /* ------------------------------------------------------------------ */
 
 /*
- * The article's body, laid out, into the feed's text file. The parser has
- * the body as the feed wrote it: HTML inside CDATA, which is markup already,
- * or HTML escaped into the element's text ("&lt;p&gt;"), which is markup
- * once its entities are decoded — and a body with no '<' in it at all is the
- * second kind, or plain text, which decoding does no harm. The extractor
- * decodes what is left when it finishes, as it does a page's text.
- *
- * The file is opened with the first article kept, so a refresh that fails
- * before any arrives leaves the last one's texts alone.
- */
-static void WriteArticleText(const GazetteArticle *article)
-{
-    const char *html;
-    size_t      len;
-    int         i;
-
-    if (gBodyExtract == NULL || gParser == NULL || article->link[0] == '\0') {
-        return;
-    }
-    if (gTextFile == NULL) {
-        gTextFile = GazetteStoreTextCreate(gCurrentURL);
-        if (gTextFile == NULL) {
-            return;
-        }
-        GazetteStoreWriteLine(gTextFile, kTextMagic);
-    }
-
-    html = GazetteFeedParserBody(gParser, &len);
-    if (len == 0) {
-        return;                     /* nothing but the summary to show */
-    }
-    if (memchr(html, '<', len) == NULL) {
-        len = GazetteDecodeEntities(gBodyHTML, len);
-    }
-
-    GazetteExtractInitFragment(gBodyExtract);
-    (void)GazetteExtractFeed(gBodyExtract, gBodyHTML, len);
-    if (GazetteExtractFinish(gBodyExtract) == 0) {
-        return;
-    }
-
-    GazetteStoreWriteLine(gTextFile, "-");
-    WriteTextLine(gTextFile, 'L', article->link);
-    for (i = 0; i < GazetteExtractPhotoCount(gBodyExtract); i++) {
-        const GazettePhotoRef *ref = GazetteExtractPhoto(gBodyExtract, i);
-
-        WriteTextLine(gTextFile, 'P', ref->url);
-        WriteTextLine(gTextFile, 'C', ref->alt);
-    }
-    {
-        const char *at = GazetteExtractText(gBodyExtract);
-
-        while (*at != '\0') {
-            const char *end = strchr(at, '\n');
-            size_t      n   = (end != NULL) ? (size_t)(end - at) : strlen(at);
-
-            GazetteStoreWrite(gTextFile, "X ", 2);
-            GazetteStoreWrite(gTextFile, at, (long)n);
-            GazetteStoreWrite(gTextFile, "\r", 1);
-            if (end == NULL) {
-                break;
-            }
-            at = end + 1;
-        }
-    }
-}
-
-/*
  * One article, straight from the parser. Returns 0 once the store is full,
  * which stops the parser, which stops the fetch — so a feed with two thousand
  * items costs one buffer's worth of parsing rather than all of it.
@@ -591,8 +648,6 @@ static int ArticleSink(const GazetteArticle *article, void *context)
             }
         }
     }
-
-    WriteArticleText(article);
 
     gArticles[gArticleCount] = *article;
     gArticles[gArticleCount].feed = gPendingFeed;
@@ -637,18 +692,6 @@ static void ReleaseRefresh(void)
         DisposePtr((Ptr)gDiscover);
         gDiscover = NULL;
     }
-    if (gTextFile != NULL) {
-        GazetteStoreClose(gTextFile);
-        gTextFile = NULL;
-    }
-    if (gBodyExtract != NULL) {
-        DisposePtr((Ptr)gBodyExtract);
-        gBodyExtract = NULL;
-    }
-    if (gBodyHTML != NULL) {
-        DisposePtr(gBodyHTML);
-        gBodyHTML = NULL;
-    }
 }
 
 const char *GazetteFeedsDiscoveredURL(void)
@@ -663,9 +706,12 @@ int GazetteFeedsRefreshStart(int feedIndex, const char *url, long maxArticles,
         return 0;
     }
 
-    /* There is one connection and headlines outrank an article's pictures:
-       they are postponed, not abandoned. */
+    /* There is one connection and headlines outrank an article's page — but
+       the page is postponed, not abandoned. See PauseFullText. The pictures
+       are postponed the same way. */
+    PauseFullText();
     GazettePhotosPause();
+    ForgetReadPages();
 
     ReleaseRefresh();
     gError[0] = '\0';
@@ -684,24 +730,6 @@ int GazetteFeedsRefreshStart(int feedIndex, const char *url, long maxArticles,
         return 0;
     }
     GazetteFeedParserInit(gParser, ArticleSink, NULL);
-
-    /* The articles' own text. Not having room for it is not a reason to
-       fail the refresh: the headlines and their summaries still come. */
-    gBodyHTML    = NewPtr((Size)kBodyHTMLMax);
-    gBodyExtract = (GazetteExtract *)NewPtr((Size)sizeof(GazetteExtract));
-    if (gBodyHTML != NULL && gBodyExtract != NULL) {
-        GazetteFeedParserSetBodyBuffer(gParser, gBodyHTML,
-                                       (size_t)kBodyHTMLMax);
-    } else {
-        if (gBodyHTML != NULL) {
-            DisposePtr(gBodyHTML);
-            gBodyHTML = NULL;
-        }
-        if (gBodyExtract != NULL) {
-            DisposePtr((Ptr)gBodyExtract);
-            gBodyExtract = NULL;
-        }
-    }
 
     gDiscovered[0] = '\0';
     if (allowDiscovery) {
@@ -823,16 +851,71 @@ const char *GazetteFeedsRefreshErrorText(void)
 
 
 /* ------------------------------------------------------------------ */
-/* The article's own text                                              */
+/* Full article text                                                   */
 /* ------------------------------------------------------------------ */
+
+static void ReleaseFullText(void)
+{
+    if (gFullFetch != NULL) {
+        GazetteFetchDestroy(gFullFetch);
+        gFullFetch = NULL;
+    }
+    if (gExtract != NULL) {
+        DisposePtr((Ptr)gExtract);
+        gExtract = NULL;
+    }
+    if (gResolve != NULL) {
+        DisposePtr((Ptr)gResolve);
+        gResolve = NULL;
+    }
+    gFullStage = kFullStageArticle;
+}
 
 void GazetteFeedsFullTextCancel(void)
 {
-    GazettePhotosCancel();          /* they were the article's; it goes */
-    gFullText[0]     = '\0';
-    gFullPhotoCount  = 0;
-    gFullFinalURL[0] = '\0';
-    gFullArticle     = -1;
+    ReleaseFullText();
+    GazettePhotosCancel();          /* they were the page's; the page goes */
+    gFullText[0]        = '\0';
+    gFullError[0]       = '\0';
+    gFullPhotoCount     = 0;
+    gFullFinalURL[0]    = '\0';
+    gFullArticle        = -1;
+    gPendingFullArticle = -1;
+    gWantArticle        = -1;
+    gWantURL[0]         = '\0';
+    gFullState          = kGazetteRefreshIdle;
+}
+
+/*
+ * Start the page that was asked for while the line was busy. Called from the
+ * idle loop, so it costs a comparison a pass and begins the moment whatever
+ * was holding the connection lets go. Returns 1 if a fetch started.
+ */
+int GazetteFeedsFullTextResume(void)
+{
+    if (gWantArticle < 0 || gState == kGazetteRefreshRunning ||
+        gFullState == kGazetteRefreshRunning) {
+        return 0;
+    }
+    return BeginFullText();
+}
+
+int GazetteFeedsFullTextComing(int articleIndex)
+{
+    return (articleIndex >= 0 && gWantArticle == articleIndex);
+}
+
+/*
+ * Give the connection up without giving the article up. A refresh outranks an
+ * article's page — headlines are what the window is for — but abandoning the
+ * page would leave the pane saying it was still reading with nothing on its
+ * way. The request stands and Resume comes back for it.
+ */
+static void PauseFullText(void)
+{
+    ReleaseFullText();
+    gPendingFullArticle = -1;
+    gFullState          = kGazetteRefreshIdle;
 }
 
 int GazetteFeedsFullTextArticle(void)
@@ -843,6 +926,11 @@ int GazetteFeedsFullTextArticle(void)
 const char *GazetteFeedsFullText(void)
 {
     return gFullText;
+}
+
+const char *GazetteFeedsFullTextErrorText(void)
+{
+    return gFullError;
 }
 
 int GazetteFeedsFullTextPhotos(const GazettePhotoRef **refs)
@@ -858,98 +946,309 @@ const char *GazetteFeedsFullTextFinalURL(void)
     return gFullFinalURL;
 }
 
-/*
- * Find the article's record in its feed's text file and make it the one held.
- * A walk from the top, because the file is written in the order the feed
- * listed its items and read far less often than it is written; a feed of
- * long articles is a few hundred kilobytes, which a Mac reads in a blink.
- * The paragraph buffer is taken for the walk and let go after it, since a
- * paragraph may be as long as the whole text.
- */
-int GazetteFeedsArticleText(int articleIndex)
+GazetteRefreshState GazetteFeedsFullTextGetState(void)
 {
-    const GazetteArticle *article = GazetteFeedsArticleAt(articleIndex);
-    GazetteStoreFile     *f;
-    char                 *line;
-    long                  n;
-    int                   found = 0;
-    size_t                used  = 0;
-    enum { kLineMax = kGazetteExtractMax + 8 };
+    return gFullState;
+}
 
-    GazetteFeedsFullTextCancel();
-    if (article == NULL || article->link[0] == '\0') {
+/* The fetch's body sink: the page goes straight into the extractor, which
+   stops the fetch itself once it has as much text as it keeps. */
+static int FullTextSink(const char *data, size_t len, void *context)
+{
+    (void)context;
+
+    if (gExtract == NULL) {
         return 0;
     }
-    f = GazetteStoreTextOpen(GazetteCoreFeedURL(article->feed));
-    if (f == NULL) {
-        return 0;                   /* not refreshed since texts were kept */
-    }
-    line = NewPtr((Size)kLineMax);
-    if (line == NULL) {
-        GazetteStoreClose(f);
+    return GazetteExtractFeed(gExtract, data, len);
+}
+
+/* The resolver's two sinks: the scan of Google's page, and the answer. */
+static int ResolvePageSink(const char *data, size_t len, void *context)
+{
+    (void)context;
+    if (gResolve == NULL) {
         return 0;
     }
+    return GazetteGNewsScanFeed(&gResolve->scan, data, len);
+}
 
-    n = GazetteStoreReadLine(f, line, kLineMax);
-    if (n < 0 || strcmp(line, kTextMagic) != 0) {
-        DisposePtr(line);
-        GazetteStoreClose(f);
+static int ResolveAnswerSink(const char *data, size_t len, void *context)
+{
+    size_t room;
+
+    (void)context;
+    if (gResolve == NULL) {
         return 0;
     }
-
-    while ((n = GazetteStoreReadLine(f, line, kLineMax)) >= 0) {
-        char        tag  = (n > 0) ? line[0] : '\0';
-        const char *rest = (n > 2) ? line + 2 : "";
-
-        if (tag == '-') {
-            if (found) {
-                break;              /* the next article's: this one is done */
-            }
-            continue;
-        }
-        if (tag == 'L') {
-            found = (strcmp(rest, article->link) == 0);
-            continue;
-        }
-        if (!found) {
-            continue;
-        }
-        if (tag == 'P' && gFullPhotoCount < kGazetteMaxPhotos) {
-            gz_copy_n(gFullPhotos[gFullPhotoCount].url,
-                      sizeof gFullPhotos[gFullPhotoCount].url,
-                      rest, strlen(rest));
-            gFullPhotos[gFullPhotoCount].alt[0] = '\0';
-            gFullPhotoCount++;
-        } else if (tag == 'C' && gFullPhotoCount > 0) {
-            gz_copy_n(gFullPhotos[gFullPhotoCount - 1].alt,
-                      sizeof gFullPhotos[gFullPhotoCount - 1].alt,
-                      rest, strlen(rest));
-        } else if (tag == 'X') {
-            size_t len = strlen(rest);
-
-            if (used > 0 && used + 1 < sizeof gFullText) {
-                gFullText[used++] = '\n';
-            }
-            if (used + len >= sizeof gFullText) {
-                len = sizeof gFullText - 1 - used;
-            }
-            memcpy(gFullText + used, rest, len);
-            used += len;
-            gFullText[used] = '\0';
-        }
+    room = sizeof gResolve->answer - 1 - gResolve->answerLen;
+    if (len > room) {
+        len = room;
     }
+    memcpy(gResolve->answer + gResolve->answerLen, data, len);
+    gResolve->answerLen += len;
+    return room > len;              /* full is enough: the address is near the top */
+}
 
-    DisposePtr(line);
-    GazetteStoreClose(f);
+static void FailFullText(const char *why)
+{
+    snprintf(gFullError, sizeof gFullError, "%s", why);
+    ReleaseFullText();
+    gWantArticle = -1;              /* settled: it is not coming */
+    gFullState   = kGazetteRefreshFailed;
+}
 
-    if (!found || used == 0) {
-        GazetteFeedsFullTextCancel();
+/* The story's own page, into the extractor. */
+static int BeginArticleStage(void)
+{
+    gExtract = (GazetteExtract *)NewPtrClear((Size)sizeof(GazetteExtract));
+    if (gExtract == NULL) {
+        FailFullText("Not enough memory to read the article.");
         return 0;
     }
-    gz_copy_n(gFullFinalURL, sizeof gFullFinalURL, article->link,
-              strlen(article->link));
-    gFullArticle = articleIndex;
+    GazetteExtractInit(gExtract);
+
+    gFullStage = kFullStageArticle;
+    gFullFetch = GazetteFetchStart(gWantURL, FullTextSink, NULL);
+    if (gFullFetch == NULL) {
+        FailFullText("Could not open the article's page.");
+        return 0;
+    }
     return 1;
+}
+
+/*
+ * Open the connection for the page already named in gWantArticle / gWantURL.
+ * Both entry points below go through here, so starting and resuming are the
+ * same act and cannot drift apart. A Google News link goes to Google first,
+ * for the story's address; see GNewsResolve.
+ */
+static int BeginFullText(void)
+{
+    gPendingFullArticle = gWantArticle;
+    gFullState          = kGazetteRefreshRunning;
+
+    if (gz_contains_ci(gWantURL, strlen(gWantURL), "news.google.com/")) {
+        gResolve = (GNewsResolve *)NewPtrClear((Size)sizeof(GNewsResolve));
+        if (gResolve == NULL) {
+            FailFullText("Not enough memory to read the article.");
+            return 0;
+        }
+        if (!GazetteGNewsArticleToken(gWantURL, gResolve->token,
+                                      sizeof gResolve->token)) {
+            /* On Google, but not a story link: read it as it is. */
+            DisposePtr((Ptr)gResolve);
+            gResolve = NULL;
+            return BeginArticleStage();
+        }
+        GazetteGNewsScanInit(&gResolve->scan);
+
+        /* url[] is scratch until the answer fills it. */
+        snprintf(gResolve->url, sizeof gResolve->url,
+                 "https://news.google.com/rss/articles/%s", gResolve->token);
+        gFullStage = kFullStagePage;
+        gFullFetch = GazetteFetchStart(gResolve->url, ResolvePageSink, NULL);
+        if (gFullFetch == NULL) {
+            FailFullText("Could not ask Google News where the story is.");
+            return 0;
+        }
+        return 1;
+    }
+
+    return BeginArticleStage();
+}
+
+int GazetteFeedsFullTextRecall(int articleIndex, const char *url)
+{
+    const ReadPage *page;
+
+    if (url == NULL || url[0] == '\0' ||
+        articleIndex < 0 || articleIndex >= GazetteFeedsArticleCount()) {
+        return 0;
+    }
+    page = FindReadPage(url);
+    if (page == NULL) {
+        return 0;
+    }
+    RecallReadPage(page, articleIndex);
+    return 1;
+}
+
+int GazetteFeedsFullTextStart(int articleIndex, const char *url)
+{
+    if (url == NULL || url[0] == '\0') {
+        return 0;
+    }
+    if (articleIndex < 0 || articleIndex >= GazetteFeedsArticleCount()) {
+        return 0;
+    }
+
+    /* Whatever was held was for a different article, and a fetch still in
+       flight is for one the user has already moved on from. */
+    GazetteFeedsFullTextCancel();
+
+    gWantArticle = articleIndex;
+    gz_copy_n(gWantURL, sizeof gWantURL, url, strlen(url));
+    gz_copy_n(gWantKey, sizeof gWantKey, url, strlen(url));
+
+    /*
+     * The refresh has the connection. Answered 1 all the same, because the
+     * page *is* coming — the reader pane asks this before it decides whether
+     * to lay out the summary, and "in a moment" is not "no".
+     */
+    if (gState == kGazetteRefreshRunning) {
+        return 1;
+    }
+    return BeginFullText();
+}
+
+GazetteRefreshState GazetteFeedsFullTextPump(void)
+{
+    GazetteFetchState fetchState;
+    size_t            len;
+
+    if (gFullState != kGazetteRefreshRunning || gFullFetch == NULL) {
+        return gFullState;
+    }
+
+    fetchState = GazetteFetchPump(gFullFetch);
+
+    if (fetchState == kGazetteFetchFailed) {
+        FailFullText(GazetteFetchErrorText(gFullFetch));
+        return gFullState;
+    }
+
+    if (fetchState != kGazetteFetchDone) {
+        return gFullState;
+    }
+
+    /*
+     * Google's page is in, or as much of it as the scan needed. If Google
+     * answered with a redirect to the story itself — the older kind of
+     * link — the address is simply where the fetch ended up; otherwise the
+     * two attributes go to the decoder.
+     */
+    if (gFullStage == kFullStagePage) {
+        const char *where = GazetteFetchFinalURL(gFullFetch);
+
+        if (!gz_contains_ci(where, strlen(where), "news.google.com")) {
+            gz_copy_n(gWantURL, sizeof gWantURL, where, strlen(where));
+            GazetteFetchDestroy(gFullFetch);
+            gFullFetch = NULL;
+            (void)BeginArticleStage();
+            return gFullState;
+        }
+        if (!GazetteGNewsScanDone(&gResolve->scan) ||
+            GazetteGNewsBuildBody(gResolve->token, gResolve->scan.ts,
+                                  gResolve->scan.sig, gResolve->body,
+                                  sizeof gResolve->body) == 0) {
+            FailFullText("Google News did not say where the story is.");
+            return gFullState;
+        }
+        GazetteFetchDestroy(gFullFetch);
+        gFullStage          = kFullStageAnswer;
+        gResolve->answerLen = 0;
+        gFullFetch = GazetteFetchStartPost(
+            "https://news.google.com/_/DotsSplashUi/data/batchexecute",
+            "application/x-www-form-urlencoded;charset=UTF-8",
+            gResolve->body, strlen(gResolve->body), ResolveAnswerSink, NULL);
+        if (gFullFetch == NULL) {
+            FailFullText("Could not ask Google News where the story is.");
+        }
+        return gFullState;
+    }
+
+    if (gFullStage == kFullStageAnswer) {
+        if (!GazetteGNewsParseAnswer(gResolve->answer, gResolve->answerLen,
+                                     gResolve->url, sizeof gResolve->url)) {
+            FailFullText("Google News did not say where the story is.");
+            return gFullState;
+        }
+        gz_copy_n(gWantURL, sizeof gWantURL, gResolve->url,
+                  strlen(gResolve->url));
+        GazetteFetchDestroy(gFullFetch);
+        gFullFetch = NULL;
+        DisposePtr((Ptr)gResolve);
+        gResolve = NULL;
+        (void)BeginArticleStage();
+        return gFullState;
+    }
+
+    /*
+     * The site said no. A 403 from a bot wall, a 405 from a WAF, a 404, a
+     * 500: what came with it is a notice, not the story, and reading it
+     * as the story is how "verify that you're not a robot" ends up in the
+     * reader pane. The feed's own summary is what NewsProxy shows for these
+     * and it is what Gazette shows too; the status line says why.
+     */
+    if (GazetteFetchStatus(gFullFetch) >= 400) {
+        char why[64];
+
+        snprintf(why, sizeof why, "The site would not serve the page (%d).",
+                 GazetteFetchStatus(gFullFetch));
+        FailFullText(why);
+        return gFullState;
+    }
+
+    /*
+     * Not a page at all. A feed's link may go to a PDF — a press release,
+     * a paper — or to a picture, and read as HTML a PDF comes out as
+     * "%PDF-1.7 %???? 14 0 obj" in the reader pane. The type is the
+     * server's word; a server that says nothing is read as a page.
+     */
+    {
+        const char *type = GazetteFetchContentType(gFullFetch);
+
+        if (type[0] != '\0' && !gz_starts_ci(type, strlen(type), "text/") &&
+            !gz_contains_ci(type, strlen(type), "html") &&
+            !gz_contains_ci(type, strlen(type), "xml")) {
+            char why[96];
+
+            snprintf(why, sizeof why, "That link is a %s, not a page.",
+                     type);
+            FailFullText(why);
+            return gFullState;
+        }
+    }
+
+    /* Done also means the extractor filled up and stopped the fetch, which is
+       a success: what it has is as much as it keeps. */
+    (void)GazetteExtractFinish(gExtract);
+
+    if (!GazetteExtractUsable(gExtract)) {
+        /*
+         * A paywall stub, a cookie wall, a consent page, or a redirector that
+         * only works with JavaScript — and no description in its head to
+         * stand in. The feed's own summary is better than any of those, so
+         * the failure keeps it on screen.
+         */
+        FailFullText("That page had no article text in it.");
+        return gFullState;
+    }
+    len = strlen(GazetteExtractText(gExtract));
+
+    gz_copy_n(gFullText, sizeof gFullText, GazetteExtractText(gExtract), len);
+    gFullArticle = gPendingFullArticle;
+
+    /* The pictures and the address to resolve them against, before the
+       extractor and the fetch go. */
+    {
+        int i;
+
+        gFullPhotoCount = GazetteExtractPhotoCount(gExtract);
+        for (i = 0; i < gFullPhotoCount; i++) {
+            gFullPhotos[i] = *GazetteExtractPhoto(gExtract, i);
+        }
+        gz_copy_n(gFullFinalURL, sizeof gFullFinalURL,
+                  GazetteFetchFinalURL(gFullFetch),
+                  strlen(GazetteFetchFinalURL(gFullFetch)));
+    }
+
+    ReleaseFullText();
+    gWantArticle = -1;              /* settled: it is here */
+    gFullState   = kGazetteRefreshDone;
+    RememberReadPage();
+    return gFullState;
 }
 
 /* ------------------------------------------------------------------ */

@@ -28,8 +28,7 @@ run_tests: run_tests.c $(SOURCES)
 test: run_tests
 	./run_tests
 
-# Not a test: a feed through the article path by hand, for
-# .github/workflows/probe.yml.
+# Not a test: the article path by hand, for .github/workflows/probe.yml.
 probe: probe.c $(SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^
 

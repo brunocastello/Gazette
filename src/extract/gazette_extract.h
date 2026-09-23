@@ -231,14 +231,6 @@ typedef struct {
        the page wrote: punctuation that follows closes up to the word. */
     int    tagSpace;
 
-    /*
-     * The HTML is a feed's article, not a page: content:encoded, or a
-     * description. It is all article, so nothing in it is looked for as the
-     * article's block and nothing before its first paragraph is cut as a
-     * header. See GazetteExtractInitFragment.
-     */
-    int    fragment;
-
     int    quoteDepth;              /* inside <blockquote>, how deep */
     int    linkDepth;               /* inside <a href>, how deep */
 
@@ -254,15 +246,6 @@ typedef struct {
 } GazetteExtract;
 
 void GazetteExtractInit(GazetteExtract *e);
-
-/*
- * The same, for the HTML a feed carries as an item's body rather than for a
- * web page. What is dropped by element and by name is dropped the same way —
- * a script, a share box, an "FTC:" line — and the marks and pictures come out
- * the same; but there is no article block to find, no page header to cut,
- * and no page description to fall back on.
- */
-void GazetteExtractInitFragment(GazetteExtract *e);
 
 /* Feed the next run of page bytes. Returns 0 once there is no room for more,
    which is the fetch's signal to stop reading — the same contract the feed

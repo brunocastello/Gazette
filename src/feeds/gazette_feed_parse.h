@@ -139,22 +139,6 @@ typedef struct {
     long articleCount;
     int  stopped;
 
-    /*
-     * The item's body as the feed wrote it, whole: the markup and the
-     * pictures that the summary above strips out. Only kept when the caller
-     * lends a buffer for it (GazetteFeedParserSetBodyBuffer) — the headline
-     * list has no use for it and the host tests none for a buffer this size.
-     * The same field wins it as wins the summary: content:encoded or
-     * <content> over <description> or <summary>. A candidate is written
-     * after whatever is already held, from bodyMark, and moved to the front
-     * or cut off again once its element ends and it is judged.
-     */
-    char  *bodyBuf;
-    size_t bodyCap;
-    size_t bodyLen;
-    size_t bodyMark;
-    int    bodyCapturing;
-
     GazetteArticleSink sink;
     void *context;
 } GazetteFeedParser;
@@ -172,22 +156,6 @@ void GazetteFeedParserInitDiscovery(GazetteFeedParser *p);
 
 /* Feed one chunk. Returns 0 once the sink has asked to stop, 1 otherwise. */
 int GazetteFeedParserFeed(GazetteFeedParser *p, const char *data, size_t len);
-
-/*
- * Lend the parser a buffer for each item's whole body; see bodyBuf. Call
- * after Init. A body longer than cap is cut off there, which costs the end
- * of a very long article and nothing else.
- */
-void GazetteFeedParserSetBodyBuffer(GazetteFeedParser *p, char *buf,
-                                    size_t cap);
-
-/*
- * The current item's body, as the feed wrote it — entities, CDATA'd HTML
- * and all — and its length. Only meaningful inside the article sink, for
- * the article being handed over; "" when no buffer was lent or the item
- * had no body.
- */
-const char *GazetteFeedParserBody(const GazetteFeedParser *p, size_t *len);
 
 /*
  * Finish. An item whose closing tag never arrived — a truncated download — is

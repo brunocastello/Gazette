@@ -1778,163 +1778,6 @@ static void TestFeedParsing(void)
 /* Feed auto-discovery                                                 */
 /* ------------------------------------------------------------------ */
 
-/* ------------------------------------------------------------------ */
-/* Item bodies, whole                                                  */
-/* ------------------------------------------------------------------ */
-
-#define kBodyCopies 8
-
-static GazetteFeedParser *gBodyParser;
-static char               gBodies[kBodyCopies][512];
-static int                gBodyCount;
-
-static int CollectBody(const GazetteArticle *a, void *context)
-{
-    size_t      len;
-    const char *body = GazetteFeedParserBody(gBodyParser, &len);
-
-    (void)a;
-    (void)context;
-    if (gBodyCount < kBodyCopies) {
-        gz_copy_n(gBodies[gBodyCount], sizeof gBodies[gBodyCount], body, len);
-        gBodyCount++;
-    }
-    return 1;
-}
-
-static void ParseBodies(const char *doc, size_t chunk, char *buf, size_t cap)
-{
-    static GazetteFeedParser p;
-    size_t len = strlen(doc);
-    size_t off = 0;
-
-    gBodyCount  = 0;
-    gBodyParser = &p;
-    GazetteFeedParserInit(&p, CollectBody, NULL);
-    GazetteFeedParserSetBodyBuffer(&p, buf, cap);
-    while (off < len) {
-        size_t n = (chunk == 0 || len - off < chunk) ? len - off : chunk;
-
-        GazetteFeedParserFeed(&p, doc + off, n);
-        off += n;
-    }
-    GazetteFeedParserFinish(&p);
-}
-
-static void TestFeedBodies(void)
-{
-    static const char kDoc[] =
-        "<rss><channel><title>T</title>"
-        /* A summary, then the full text: the full text wins, as the
-           markup it was written in. */
-        "<item><title>One</title><link>https://e/1</link>"
-        "<description>Short.</description>"
-        "<content:encoded><![CDATA[<p>Full <b>text</b>.</p>"
-        "<img src=\"a.jpg\">]]></content:encoded></item>"
-        /* An empty <content:encoded> does not wipe the summary, which is
-           kept as the feed escaped it. */
-        "<item><title>Two</title><link>https://e/2</link>"
-        "<description>&lt;p&gt;Only a summary&lt;/p&gt;</description>"
-        "<content:encoded></content:encoded></item>"
-        /* The full text first: a later summary does not replace it. */
-        "<item><title>Three</title><link>https://e/3</link>"
-        "<content:encoded><![CDATA[<p>Whole.</p>]]></content:encoded>"
-        "<description>Less.</description></item>"
-        /* No body at all. */
-        "<item><title>Four</title><link>https://e/4</link></item>"
-        "</channel></rss>";
-    static char buf[1024];
-    size_t chunk;
-
-    for (chunk = 0; chunk <= 1; chunk++) {
-        const char *how = chunk ? " (byte by byte)" : "";
-        char what[96];
-
-        ParseBodies(kDoc, chunk, buf, sizeof buf);
-        CheckLong("every item is handed over with its body", gBodyCount, 4);
-        snprintf(what, sizeof what, "content:encoded wins, as HTML%s", how);
-        CheckStr(what, gBodies[0],
-                 "<p>Full <b>text</b>.</p><img src=\"a.jpg\">");
-        snprintf(what, sizeof what, "an empty one keeps the summary%s", how);
-        CheckStr(what, gBodies[1], "&lt;p&gt;Only a summary&lt;/p&gt;");
-        snprintf(what, sizeof what, "a later summary loses%s", how);
-        CheckStr(what, gBodies[2], "<p>Whole.</p>");
-        snprintf(what, sizeof what, "no body is empty%s", how);
-        CheckStr(what, gBodies[3], "");
-    }
-
-    /* A body longer than the buffer is cut, not lost. */
-    ParseBodies(kDoc, 0, buf, 8);
-    CheckStr("a long body is cut at the buffer", gBodies[0], "<p>Full");
-
-    /* Without a buffer the parser keeps none, and says so. */
-    {
-        static GazetteFeedParser p;
-        size_t len = 99;
-
-        GazetteFeedParserInit(&p, NULL, NULL);
-        CheckStr("no buffer, no body", GazetteFeedParserBody(&p, &len), "");
-        CheckLong("and its length is 0", (long)len, 0);
-    }
-}
-
-/* A feed's body is all article: none of the page rules cut into it. */
-static void TestExtractFragment(void)
-{
-    static GazetteExtract e;
-    const char *text;
-    static const char kHTML[] =
-        "Intro line<img src=\"https://s/lead.jpg\">"
-        "<p>First.</p><article><p>Inside.</p></article><p>After.</p>";
-
-    GazetteExtractInitFragment(&e);
-    GazetteExtractFeed(&e, kHTML, strlen(kHTML));
-    GazetteExtractFinish(&e);
-    text = GazetteExtractText(&e);
-
-    CheckTrue("the text before the first paragraph stays",
-              strncmp(text, "Intro line", 10) == 0);
-    CheckTrue("an <article> inside does not start the text over",
-              strstr(text, "First.") != NULL);
-    CheckTrue("nor end it", strstr(text, "After.") != NULL);
-    CheckLong("the picture before the first paragraph is kept",
-              GazetteExtractPhotoCount(&e), 1);
-
-    /* A picture's address is an attribute's value: its entities are
-       characters. */
-    {
-        static const char kAmp[] =
-            "<p>Text.</p><img src=\"https://s/a.jpg?q=82&#038;w=1600&amp;x=1\">";
-
-        GazetteExtractInitFragment(&e);
-        GazetteExtractFeed(&e, kAmp, strlen(kAmp));
-        GazetteExtractFinish(&e);
-        CheckStr("a picture's address has its ampersands back",
-                 GazetteExtractPhoto(&e, 0)->url,
-                 "https://s/a.jpg?q=82&w=1600&x=1");
-    }
-
-    /* The same HTML read as a page loses the lot before <article>. */
-    GazetteExtractInit(&e);
-    GazetteExtractFeed(&e, kHTML, strlen(kHTML));
-    GazetteExtractFinish(&e);
-    CheckTrue("as a page, the text starts at the article's block",
-              strstr(GazetteExtractText(&e), "Intro line") == NULL);
-
-    /* What is dropped by name is still dropped. */
-    {
-        static const char kShare[] =
-            "<p>Story.</p><div class=\"share-box\">Share this</div>"
-            "<script>x()</script>";
-
-        GazetteExtractInitFragment(&e);
-        GazetteExtractFeed(&e, kShare, strlen(kShare));
-        GazetteExtractFinish(&e);
-        CheckStr("a share box and a script still go",
-                 GazetteExtractText(&e), "Story.");
-    }
-}
-
 static void TestDiscovery(void)
 {
     static const char page[] =
@@ -2751,6 +2594,15 @@ static void TestExtractPhotos(void)
     CheckStr("and its marker stands where it stood", text,
              "First.\n\001\nSecond.");
 
+    /* A picture's address is an attribute's value: its entities are
+       characters. WordPress writes "?quality=82&#038;w=1600". */
+    Extract(&e, "<body><article><p>Text.</p>"
+                "<img src=\"https://s/a.jpg?q=82&#038;w=1600&amp;x=1\">"
+                "<p>More.</p></article></body>", 0);
+    CheckStr("a picture's address has its ampersands back",
+             GazetteExtractPhoto(&e, 0)->url,
+             "https://s/a.jpg?q=82&w=1600&x=1");
+
     /* The furniture: named, sized, inline, vector, or a repeat. */
     text = Extract(&e,
                    "<body><article><p>Text.</p>"
@@ -3545,8 +3397,6 @@ int main(void)
     TestExtractPhotos();
     TestExtractTrailers();
     TestExtractWrappers();
-    TestExtractFragment();
-    TestFeedBodies();
     TestDiscovery();
     TestDiscoveryPaths();
     TestGoogleNews();

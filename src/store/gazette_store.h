@@ -55,12 +55,6 @@ GazetteStoreFile *GazetteStoreCacheCreate(const char *feedURL);
 /* Open a feed's cache file for reading, or NULL when there is none. */
 GazetteStoreFile *GazetteStoreCacheOpen(const char *feedURL);
 
-/* The same for the feed's articles' text — the body each item carried,
-   laid out — which lives in a file of its own beside the cache so that
-   reading a feed's headlines never reads its articles. */
-GazetteStoreFile *GazetteStoreTextCreate(const char *feedURL);
-GazetteStoreFile *GazetteStoreTextOpen(const char *feedURL);
-
 /* Append text. Returns 1 on success. */
 int GazetteStoreWrite(GazetteStoreFile *f, const char *text, long len);
 
@@ -78,8 +72,7 @@ long GazetteStoreReadLine(GazetteStoreFile *f, char *buf, long cap);
 /* Close and free. Safe with NULL. */
 void GazetteStoreClose(GazetteStoreFile *f);
 
-/* Delete a feed's cache file and its text file. Used when a feed is
-   removed. */
+/* Delete a feed's cache file. Used when a feed is removed. */
 void GazetteStoreCacheDelete(const char *feedURL);
 
 /* ------------------------------------------------------------------ */
