@@ -199,8 +199,9 @@ HFONT GazetteWindowFont(void)
 /* A one-item header control each, which is the Windows control whose   */
 /* job this is: a band of the face colour with a rule under it, themed  */
 /* on XP and 3D before it. The Mac uses kControlWindowHeaderProc for    */
-/* the same two bands. The headline list's carries a count at its       */
-/* right-hand end, so that one has two items.                          */
+/* the same two bands. Each item is exactly as wide as its pane, and    */
+/* the headline list's is drawn here so it can carry the count at its   */
+/* right-hand end without becoming a second column.                     */
 /* ------------------------------------------------------------------ */
 
 static HWND MakeHeader(HWND parent, int id)
@@ -211,22 +212,53 @@ static HWND MakeHeader(HWND parent, int id)
                            gInstance, NULL);
 }
 
+/*
+ * One item, as wide as the header. Text NULL leaves the text alone and only
+ * resizes: saying HDI_TEXT with a NULL pointer is how "U÷w" got into the
+ * headline band -- the control read a string from address zero.
+ */
 static void SetHeaderItem(HWND header, int index, const char *text,
-                          int width, BOOL rightAligned)
+                          int width, int format)
 {
     HD_ITEMA item;
 
     ZeroMemory(&item, sizeof(item));
-    item.mask    = HDI_TEXT | HDI_WIDTH | HDI_FORMAT;
-    item.pszText = (char *)text;
-    item.cxy     = width;
-    item.fmt     = HDF_STRING | (rightAligned ? HDF_RIGHT : HDF_LEFT);
+    item.mask = HDI_WIDTH | HDI_FORMAT;
+    item.cxy  = width;
+    item.fmt  = format;
+    if (text != NULL) {
+        item.mask   |= HDI_TEXT;
+        item.pszText = (char *)text;
+        item.cchTextMax = (int)strlen(text);
+    }
 
-    if (SendMessage(header, HDM_GETITEMA, (WPARAM)index, (LPARAM)&item) == 0 &&
-        SendMessage(header, HDM_GETITEMCOUNT, 0, 0) <= index) {
+    if (SendMessage(header, HDM_GETITEMCOUNT, 0, 0) <= index) {
         SendMessage(header, HDM_INSERTITEMA, (WPARAM)index, (LPARAM)&item);
     } else {
         SendMessage(header, HDM_SETITEMA, (WPARAM)index, (LPARAM)&item);
+    }
+}
+
+/*
+ * The headline band says two things, as the Mac's does: the view's name on
+ * the left and its unread count on the right. A header item holds one
+ * string with one alignment, so the item is drawn here (HDF_OWNERDRAW, in
+ * comctl32 4.0); a second item for the count read as a column, which the
+ * Mac's single list of headlines has none of.
+ */
+static char gListTitle[128] = "Today";
+static char gListCount[32];
+
+static void SetListTitle(const char *title, const char *count)
+{
+    if (title != NULL) {
+        lstrcpynA(gListTitle, title, sizeof(gListTitle));
+    }
+    if (count != NULL) {
+        lstrcpynA(gListCount, count, sizeof(gListCount));
+    }
+    if (gListHeader != NULL) {
+        InvalidateRect(gListHeader, NULL, TRUE);
     }
 }
 
@@ -288,29 +320,74 @@ static BOOL MakeToolbar(HWND parent)
     SendMessage(gToolbar, TB_BUTTONSTRUCTSIZE, sizeof(TBBUTTON), 0);
     SendMessage(gToolbar, TB_SETIMAGELIST, 0, (LPARAM)gIcons);
 
-    ZeroMemory(buttons, sizeof(buttons));
-    for (i = 0; i < kToolbarButtons; i++) {
-        if (kToolSpec[i].group) {
-            buttons[count].iBitmap   = 6;       /* the separator's width */
-            buttons[count].fsStyle   = TBSTYLE_SEP;
-            buttons[count].idCommand = 0;
+    /*
+     * The captions go in through TB_ADDSTRING, as one run of strings each
+     * ended by a NUL and the run by a second, and each button names its
+     * caption by index. A button's iString may also be a pointer to its
+     * text, but only from comctl32 4.70 on; the 4.0 on a Windows 95 CD
+     * reads the pointer as an index and draws whatever it finds there.
+     */
+    {
+        char pool[512];
+        int  used = 0;
+        int  first;
+
+        for (i = 0; i < kToolbarButtons; i++) {
+            int n = lstrlenA(kToolSpec[i].caption);
+
+            if (used + n + 2 > (int)sizeof(pool)) {
+                break;
+            }
+            CopyMemory(pool + used, kToolSpec[i].caption, (SIZE_T)n);
+            used += n;
+            pool[used++] = '\0';
+        }
+        pool[used] = '\0';
+        first = (int)SendMessage(gToolbar, TB_ADDSTRINGA, 0, (LPARAM)pool);
+
+        ZeroMemory(buttons, sizeof(buttons));
+        for (i = 0; i < kToolbarButtons; i++) {
+            if (kToolSpec[i].group) {
+                buttons[count].iBitmap   = 6;   /* the separator's width */
+                buttons[count].fsStyle   = TBSTYLE_SEP;
+                buttons[count].idCommand = 0;
+                count++;
+            }
+            buttons[count].iBitmap   = kToolSpec[i].icon;
+            buttons[count].idCommand = kToolSpec[i].command;
+            buttons[count].fsState   = TBSTATE_ENABLED;
+            /* TBSTYLE_AUTOSIZE (4.70) sizes each button to its own
+               caption, as the Mac's are; 4.0 ignores it and makes them
+               all as wide as the widest. */
+            buttons[count].fsStyle   = TBSTYLE_BUTTON | TBSTYLE_AUTOSIZE;
+            buttons[count].iString   = (first >= 0) ? first + i : -1;
             count++;
         }
-        buttons[count].iBitmap   = kToolSpec[i].icon;
-        buttons[count].idCommand = kToolSpec[i].command;
-        buttons[count].fsState   = TBSTATE_ENABLED;
-        buttons[count].fsStyle   = TBSTYLE_BUTTON;
-        buttons[count].iString   = (INT_PTR)kToolSpec[i].caption;
-        count++;
     }
 
     SendMessage(gToolbar, TB_ADDBUTTONS, (WPARAM)count, (LPARAM)buttons);
-    SendMessage(gToolbar, TB_AUTOSIZE, 0, 0);
 
+    /*
+     * The bar's height, from its first button. It was measured from the
+     * toolbar window itself, which CCS_NORESIZE leaves at the zero by zero
+     * it was created at -- so the height came out 0, the bar was laid out
+     * with no room and never seen, and the panes started under the menu.
+     * TB_GETITEMRECT is in comctl32 4.0; the button's top is the bar's
+     * padding, given again below it.
+     */
     {
-        RECT bar;
-        GetWindowRect(gToolbar, &bar);
-        gToolbarHeight = bar.bottom - bar.top;
+        RECT button;
+
+        gToolbarHeight = 0;
+        if (SendMessage(gToolbar, TB_GETITEMRECT, 0, (LPARAM)&button)) {
+            gToolbarHeight = button.bottom + button.top;
+            if (gToolbarHeight < button.bottom + 2) {
+                gToolbarHeight = button.bottom + 2;
+            }
+        }
+        if (gToolbarHeight <= 0) {
+            gToolbarHeight = gLineHeight + 16 + 8;
+        }
     }
 
     /*
@@ -395,9 +472,9 @@ BOOL GazetteWindowCreate(HWND frame, HINSTANCE instance)
     ApplyFont(gListHeader);
     MeasureHeader();
 
-    SetHeaderItem(gSidebarHeader, 0, "Feeds", 100, FALSE);
-    SetHeaderItem(gListHeader, 0, "Today", 100, FALSE);
-    SetHeaderItem(gListHeader, 1, "", 60, TRUE);
+    SetHeaderItem(gSidebarHeader, 0, "Feeds", kDefaultSidebar,
+                  HDF_STRING | HDF_LEFT);
+    SetHeaderItem(gListHeader, 0, NULL, kDefaultList, HDF_OWNERDRAW);
 
     gSidebar = CreateWindowExA(
         0, WC_TREEVIEWA, NULL,
@@ -475,6 +552,16 @@ BOOL GazetteWindowCreate(HWND frame, HINSTANCE instance)
     AddSmartView("Today", kIconToday);
     AddSmartView("All Unread", kIconAllUnread);
     AddSmartView("Starred", kIconStarred);
+
+    /* Today is the view the window opens on, so it is the row selected --
+       the band over the headlines says "Today" and the sidebar agrees. */
+    {
+        HTREEITEM today = (HTREEITEM)SendMessage(gSidebar, TVM_GETNEXTITEM,
+                                                 TVGN_ROOT, 0);
+        if (today != NULL) {
+            SendMessage(gSidebar, TVM_SELECTITEM, TVGN_CARET, (LPARAM)today);
+        }
+    }
 
     {
         RECT bar;
@@ -709,10 +796,11 @@ void GazetteWindowLayout(HWND frame)
     ShowWindow(gSidebarHeader, gSidebarHidden ? SW_HIDE : SW_SHOW);
     ShowWindow(gSplitLeft, gSidebarHidden ? SW_HIDE : SW_SHOW);
 
-    /* The header's two items divide the band: the view's name takes
-       what the count does not. */
-    SetHeaderItem(gListHeader, 1, "", 60, TRUE);
-    SetHeaderItem(gListHeader, 0, NULL, gListWidth - 60, FALSE);
+    /* Each band's one item is exactly its pane's width, so the band reads
+       as a title over the pane and never as the first of several columns. */
+    SetHeaderItem(gSidebarHeader, 0, NULL, sidebarWidth,
+                  HDF_STRING | HDF_LEFT);
+    SetHeaderItem(gListHeader, 0, NULL, gListWidth, HDF_OWNERDRAW);
 
     SendMessage(gHeadlines, LVM_SETCOLUMNWIDTH, 0, MAKELPARAM(gListWidth, 0));
 }
@@ -771,12 +859,44 @@ void GazetteWindowMeasureItem(MEASUREITEMSTRUCT *measure)
     }
 }
 
+/* The headline band's one item: the view's name, and its count at the
+   right-hand end. The control has drawn the band; this is the words. */
+static void DrawListHeader(const DRAWITEMSTRUCT *draw)
+{
+    RECT  text = draw->rcItem;
+    HFONT previous = (HFONT)SelectObject(draw->hDC, gUIFont);
+
+    SetBkMode(draw->hDC, TRANSPARENT);
+    SetTextColor(draw->hDC, GetSysColor(COLOR_BTNTEXT));
+    InflateRect(&text, -6, 0);
+
+    if (gListCount[0] != '\0') {
+        RECT count = text;
+        SIZE extent;
+
+        DrawTextA(draw->hDC, gListCount, -1, &count,
+                  DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        if (GetTextExtentPoint32A(draw->hDC, gListCount,
+                                  lstrlenA(gListCount), &extent)) {
+            text.right -= extent.cx + 8;
+        }
+    }
+    DrawTextA(draw->hDC, gListTitle, -1, &text,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX |
+              DT_END_ELLIPSIS);
+    SelectObject(draw->hDC, previous);
+}
+
 void GazetteWindowDrawItem(const DRAWITEMSTRUCT *draw)
 {
     RECT  row;
     HFONT previous;
     BOOL  selected;
 
+    if (draw->CtlID == IDC_LIST_HEADER) {
+        DrawListHeader(draw);
+        return;
+    }
     if (draw->CtlID != IDC_HEADLINES || draw->itemID == (UINT)-1) {
         return;
     }
@@ -810,7 +930,6 @@ void GazetteWindowDrawItem(const DRAWITEMSTRUCT *draw)
 BOOL GazetteWindowNotify(HWND frame, NMHDR *header, LRESULT *result)
 {
     (void)frame;
-    (void)result;
 
     /*
      * Choosing a standing view renames the band over the headline list,
@@ -829,7 +948,25 @@ BOOL GazetteWindowNotify(HWND frame, NMHDR *header, LRESULT *result)
         item.cchTextMax = sizeof(name);
 
         if (SendMessage(gSidebar, TVM_GETITEMA, 0, (LPARAM)&item)) {
-            SetHeaderItem(gListHeader, 0, name, gListWidth - 60, FALSE);
+            SetListTitle(name, NULL);
+        }
+        return TRUE;
+    }
+
+    /*
+     * The bands are titles, not columns: dragging the edge of one would
+     * resize an item that has to stay its pane's width, and double-clicking
+     * it would do the same. Both are refused. HDN_BEGINTRACK and
+     * HDN_DIVIDERDBLCLICK come in A and W forms depending on the parent
+     * window, so both codes are answered.
+     */
+    if ((header->hwndFrom == gSidebarHeader ||
+         header->hwndFrom == gListHeader) &&
+        (header->code == HDN_BEGINTRACKA || header->code == HDN_BEGINTRACKW ||
+         header->code == HDN_DIVIDERDBLCLICKA ||
+         header->code == HDN_DIVIDERDBLCLICKW)) {
+        if (result != NULL) {
+            *result = TRUE;
         }
         return TRUE;
     }
@@ -927,7 +1064,7 @@ static LRESULT CALLBACK ReaderProc(HWND hwnd, UINT message,
 
     case WM_PAINT: {
         PAINTSTRUCT ps;
-        HDC dc = BeginPaint(hwnd, &ps);
+        BeginPaint(hwnd, &ps);
         EndPaint(hwnd, &ps);
         return 0;
     }
