@@ -35,11 +35,13 @@ jobs:
           printf 'GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\nAccept: application/rss+xml, application/atom+xml, application/xml, text/xml, */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n' \
                  "$PATHPART" "$HOST" "$UA" > request.txt
           echo "== $HOST $PATHPART"
+          # Input held open: brssl closes the session when its stdin ends,
+          # which would be before the response.
           set +e
           "$RUNNER_TEMP/brssl" client "$HOST:443" -sni "$HOST" \
               -CA /etc/ssl/certs/ca-certificates.crt \
               -vmin tls12 -vmax tls12 -cs "$SUITES" -mono -buf 16709 \
-              < request.txt > response.bin 2> brssl.log
+              < <(cat request.txt; sleep 20) > response.bin 2> brssl.log
           echo "brssl exit: $?"
           set -e
           cat brssl.log
