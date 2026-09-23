@@ -337,6 +337,9 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message,
     }
 
     case WM_COMMAND:
+        if (GazetteWindowCommand(hwnd, LOWORD(wParam))) {
+            return 0;
+        }
         switch (LOWORD(wParam)) {
         case IDM_VIEW_SIDEBAR:
             GazetteWindowToggleSidebar(hwnd);

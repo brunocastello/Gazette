@@ -55,6 +55,9 @@ BOOL GazetteWindowToolbarHidden(void);
 void GazetteWindowMeasureItem(MEASUREITEMSTRUCT *measure);
 void GazetteWindowDrawItem(const DRAWITEMSTRUCT *draw);
 BOOL GazetteWindowNotify(HWND frame, NMHDR *header, LRESULT *result);
+/* A WM_COMMAND the window itself answers -- the toolbar's chevron. Returns
+   TRUE when it was one. */
+BOOL GazetteWindowCommand(HWND frame, int id);
 void GazetteWindowMinimumSize(POINT *minimum);
 
 #endif /* GAZETTE_WIN_H */

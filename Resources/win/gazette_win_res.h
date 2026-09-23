@@ -73,5 +73,6 @@
 #define IDC_LIST_HEADER        1007
 #define IDC_SEARCH             1008
 #define IDC_FINDICON           1009
+#define IDC_TOOL_CHEVRON       1010   /* the toolbar's >> when it is full */
 
 #endif /* GAZETTE_WIN_RES_H */

@@ -28,6 +28,12 @@
 #include "gazette_win.h"
 #include "gazette_win_res.h"
 
+/* I_IMAGENONE is declared for _WIN32_IE 0x0501 and up; the value is what
+   comctl32 4.70 already understood as "this button has no image". */
+#ifndef I_IMAGENONE
+#define I_IMAGENONE (-2)
+#endif
+
 /* ------------------------------------------------------------------ */
 /* Measurements                                                        */
 /*                                                                     */
@@ -298,6 +304,9 @@ static BOOL gToolOther[kToolbarButtons];    /* showing its second face */
 static BOOL gToolCaptioned[kToolbarButtons];
 static int  gToolString[kToolbarButtons][2];/* string-pool index per face */
 static int  gToolLimit;                     /* the width last fitted to */
+static BOOL gToolHidden[kToolbarButtons];   /* behind the chevron */
+static BOOL gToolChevron;                   /* the row has a >> at its end */
+static int  gChevronString = -1;
 
 static int ToolIcon(int i)
 {
@@ -341,9 +350,19 @@ static void AddToolStrings(void)
             gToolString[i][face] = next++;
         }
     }
+    /* The chevron's caption: a right-pointing double angle, which the
+       ANSI code page of every Western Windows has at 0xBB. */
+    if (used + 3 <= (int)sizeof(pool)) {
+        pool[used++] = (char)0xBB;
+        pool[used++] = '\0';
+        gChevronString = next++;
+    }
     pool[used] = '\0';
 
     first = (int)SendMessage(gToolbar, TB_ADDSTRINGA, 0, (LPARAM)pool);
+    if (gChevronString >= 0) {
+        gChevronString = (first >= 0) ? first + gChevronString : -1;
+    }
     for (i = 0; i < kToolbarButtons; i++) {
         for (face = 0; face < 2; face++) {
             if (gToolString[i][face] >= 0) {
@@ -374,16 +393,32 @@ static void RebuildToolbar(void)
         if (kToolSpec[i].group) {
             buttons[count].iBitmap   = 6;       /* the separator's width */
             buttons[count].fsStyle   = TBSTYLE_SEP;
+            buttons[count].fsState   = (BYTE)(gToolHidden[i] ? TBSTATE_HIDDEN
+                                                             : 0);
             count++;
         }
         buttons[count].iBitmap   = ToolIcon(i);
         buttons[count].idCommand = kToolSpec[i].command;
-        buttons[count].fsState   = (BYTE)(gToolEnabled[i] ? TBSTATE_ENABLED : 0);
+        buttons[count].fsState   = (BYTE)((gToolEnabled[i] ? TBSTATE_ENABLED
+                                                           : 0) |
+                                          (gToolHidden[i] ? TBSTATE_HIDDEN
+                                                          : 0));
         /* TBSTYLE_AUTOSIZE (4.70) sizes each button to its own caption, as
            the Mac's are; 4.0 ignores it and makes them all one width. */
         buttons[count].fsStyle   = TBSTYLE_BUTTON | TBSTYLE_AUTOSIZE;
         buttons[count].iString   = gToolCaptioned[i] ? gToolString[i][face]
                                                      : -1;
+        count++;
+    }
+    /* The chevron, last, when buttons are hidden behind it: a caption and
+       no picture (I_IMAGENONE, comctl32 4.70; 4.0 draws the caption under
+       an empty square). */
+    if (gToolChevron) {
+        buttons[count].iBitmap   = I_IMAGENONE;
+        buttons[count].idCommand = IDC_TOOL_CHEVRON;
+        buttons[count].fsState   = TBSTATE_ENABLED;
+        buttons[count].fsStyle   = TBSTYLE_BUTTON | TBSTYLE_AUTOSIZE;
+        buttons[count].iString   = gChevronString;
         count++;
     }
     SendMessage(gToolbar, TB_ADDBUTTONS, (WPARAM)count, (LPARAM)buttons);
@@ -392,36 +427,51 @@ static void RebuildToolbar(void)
     InvalidateRect(gToolbar, NULL, TRUE);
 }
 
-/* How far right the row reaches, from its last button. */
+/* How far right the row reaches: the furthest right edge of any button
+   still showing (a hidden one answers an empty rectangle). */
 static int ToolbarWidth(void)
 {
     int  count = (int)SendMessage(gToolbar, TB_BUTTONCOUNT, 0, 0);
-    RECT last;
+    int  right = 0;
+    int  i;
+    RECT r;
 
-    if (count <= 0 ||
-        !SendMessage(gToolbar, TB_GETITEMRECT, (WPARAM)(count - 1),
-                     (LPARAM)&last)) {
-        return 0;
+    for (i = 0; i < count; i++) {
+        if (SendMessage(gToolbar, TB_GETITEMRECT, (WPARAM)i, (LPARAM)&r) &&
+            r.right > right) {
+            right = r.right;
+        }
     }
-    return last.right;
+    return right;
 }
 
 /*
- * The Mac's rule for a window narrower than its toolbar: every button keeps
- * its icon, and captions go one at a time from the right-hand end until the
- * row fits; widen the window and they come back. On comctl32 4.70 and later
- * each button is its own caption's width, so every caption dropped buys its
- * width back. On 4.0 every button is as wide as the widest, so the row only
- * narrows once the last caption has gone -- captions underneath the icons
- * are that version's look anyway, and it still ends as a row of icons.
+ * A window narrower than its toolbar, in two steps (Bruno's choice,
+ * 2026-09-23: the Mac's rule, then Outlook Express 5's).
+ *
+ * First the Mac's: every button keeps its icon and captions go one at a
+ * time from the right-hand end. On comctl32 4.70 and later each button is
+ * its own caption's width, so every caption dropped buys its width back;
+ * on 4.0 every button is as wide as the widest, so the row narrows only
+ * once the last caption has gone.
+ *
+ * Then Outlook Express's: if icons alone still do not fit, buttons are
+ * hidden from the right behind a >> at the end of the row, which drops
+ * down a menu of them. OE's chevron is the rebar's, and that needs
+ * comctl32 5.80; this one is a toolbar button and TrackPopupMenu, which
+ * Windows 95 has, so every version gets it.
+ *
+ * Widen the window and it all comes back, in the reverse order.
  */
 static void FitToolbar(int limit)
 {
     int i;
 
-    gToolLimit = limit;
+    gToolLimit   = limit;
+    gToolChevron = FALSE;
     for (i = 0; i < kToolbarButtons; i++) {
         gToolCaptioned[i] = TRUE;
+        gToolHidden[i]    = FALSE;
     }
     RebuildToolbar();
 
@@ -429,11 +479,78 @@ static void FitToolbar(int limit)
         for (i = kToolbarButtons - 1; i >= 0 && !gToolCaptioned[i]; i--) {
         }
         if (i < 0) {
-            break;                  /* icons only, and still too wide */
+            break;                  /* icons only; the chevron is next */
         }
         gToolCaptioned[i] = FALSE;
         RebuildToolbar();
     }
+
+    if (limit > 0 && ToolbarWidth() > limit) {
+        gToolChevron = TRUE;
+        RebuildToolbar();
+        while (ToolbarWidth() > limit) {
+            /* Never the first two: New and Hide Sidebar are always there
+               on the Mac, and a row of only a chevron would say nothing. */
+            for (i = kToolbarButtons - 1; i >= 2 && gToolHidden[i]; i--) {
+            }
+            if (i < 2) {
+                break;
+            }
+            gToolHidden[i] = TRUE;
+            RebuildToolbar();
+        }
+    }
+}
+
+/* The chevron's menu: every hidden button, as the menu item it stands for,
+   greyed when the button is. Chosen, it is sent on as the button would
+   have sent it. */
+static void ShowToolChevron(HWND frame)
+{
+    HMENU menu = CreatePopupMenu();
+    int   count = (int)SendMessage(gToolbar, TB_BUTTONCOUNT, 0, 0);
+    RECT  chevron;
+    int   chosen;
+    int   i;
+
+    if (menu == NULL) {
+        return;
+    }
+    for (i = 0; i < kToolbarButtons; i++) {
+        const char *text;
+
+        if (!gToolHidden[i]) {
+            continue;
+        }
+        text = (gToolOther[i] && kToolSpec[i].otherCaption != NULL)
+                   ? kToolSpec[i].otherCaption : kToolSpec[i].caption;
+        AppendMenuA(menu, MF_STRING | (gToolEnabled[i] ? 0 : MF_GRAYED),
+                    (UINT)kToolSpec[i].command, text);
+    }
+
+    SetRectEmpty(&chevron);
+    SendMessage(gToolbar, TB_GETITEMRECT, (WPARAM)(count - 1),
+                (LPARAM)&chevron);
+    MapWindowPoints(gToolbar, HWND_DESKTOP, (POINT *)&chevron, 2);
+
+    chosen = (int)TrackPopupMenu(menu,
+                                 TPM_LEFTALIGN | TPM_TOPALIGN |
+                                 TPM_RETURNCMD | TPM_NONOTIFY,
+                                 chevron.left, chevron.bottom, 0, frame,
+                                 NULL);
+    DestroyMenu(menu);
+    if (chosen != 0) {
+        PostMessage(frame, WM_COMMAND, MAKEWPARAM(chosen, 0), 0);
+    }
+}
+
+BOOL GazetteWindowCommand(HWND frame, int id)
+{
+    if (id == IDC_TOOL_CHEVRON) {
+        ShowToolChevron(frame);
+        return TRUE;
+    }
+    return FALSE;
 }
 
 static BOOL MakeToolbar(HWND parent)
