@@ -170,6 +170,9 @@ jobs:
           # written fresh, as on a new machine.
           mkdir -p enginetest && cp build-win/GazetteEngineTest.exe enginetest/
           wine enginetest/GazetteEngineTest.exe
+          # And again: a second launch reads what the first one saved.
+          wine enginetest/GazetteEngineTest.exe | tee second.txt
+          grep -q "read from the file" second.txt
 
       - name: Package release assets (.zip and floppy .img)
         run: tools/make_img.sh build-win/Gazette.exe package

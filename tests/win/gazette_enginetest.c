@@ -21,6 +21,7 @@
 #include "feeds/gazette_feeds.h"
 #include "feeds/gazette_index.h"
 #include "net/gazette_net.h"
+#include "store/gazette_store.h"
 
 enum { kGiveUpMs = 120 * 1000 };
 
@@ -49,7 +50,10 @@ int main(void)
 
     printf("== the core\n");
     Check("network up", GazetteNetInit());
-    Check("core up, preferences read or written", GazetteCoreInit());
+    /* GazetteCoreInit answers whether a preferences file was there to read:
+       no on a first run, which then writes the defaults out at shutdown. */
+    printf("   preferences: %s\n", GazetteCoreInit() ? "read from the file"
+                                                    : "first run, defaults");
     Check("at least one feed", GazetteCoreFeedCount() > 0);
     if (GazetteCoreFeedCount() <= 0) {
         return 1;
@@ -99,6 +103,14 @@ int main(void)
     }
 
     GazetteCoreShutdown();
+    {
+        static char text[kGazettePrefsTextMax];
+        long        len = 0;
+
+        Check("the preferences are on disk, with the feed in them",
+              GazetteStoreReadPrefs(text, (long)sizeof text, &len) &&
+              strstr(text, "news.google.com") != NULL);
+    }
     GazetteNetShutdown();
     printf("%d failure%s\n", gFailures, gFailures == 1 ? "" : "s");
     return gFailures == 0 ? 0 : 1;
