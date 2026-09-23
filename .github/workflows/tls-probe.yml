@@ -1,0 +1,47 @@
+# Connect to a host the way Certainly's TLS 1.2 fallback does — BearSSL's
+# own engine, the vendored copy, with Certainly's six suites, TLS 1.2 only
+# and one mono buffer of a full record — send Gazette's request, and print
+# what BearSSL says. For a site that fails on the Mac with "the connection
+# failed while reading headers" and cannot be compiled against here. Run
+# from the Actions tab or `gh workflow run tls-probe.yml -f url=<https url>`.
+name: Probe a TLS 1.2 host
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "https:// URL to request"
+        required: true
+
+jobs:
+  tls:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build brssl from the vendored BearSSL
+        working-directory: third_party/certainly/bearssl
+        run: cc -O1 -w -Iinc -Isrc -o "$RUNNER_TEMP/brssl" src/*/*.c tools/*.c
+
+      - name: Request
+        env:
+          URL: ${{ inputs.url }}
+        run: |
+          HOST="${URL#https://}"; HOST="${HOST%%/*}"
+          PATHPART="/${URL#https://*/}"; [ "$PATHPART" = "/$URL" ] && PATHPART=/
+          UA="$(sed -n 's/^#define kGazetteUserAgent "\(.*\)"$/\1/p' src/portable/gazette_http.h)"
+          SUITES=ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,ECDHE_RSA_WITH_AES_128_GCM_SHA256,ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,ECDHE_RSA_WITH_AES_256_GCM_SHA384
+          printf 'GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\nAccept: application/rss+xml, application/atom+xml, application/xml, text/xml, */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n' \
+                 "$PATHPART" "$HOST" "$UA" > request.txt
+          echo "== $HOST $PATHPART"
+          set +e
+          "$RUNNER_TEMP/brssl" client "$HOST:443" -sni "$HOST" \
+              -CA /etc/ssl/certs/ca-certificates.crt \
+              -vmin tls12 -vmax tls12 -cs "$SUITES" -mono -buf 16709 \
+              < request.txt > response.bin 2> brssl.log
+          echo "brssl exit: $?"
+          set -e
+          cat brssl.log
+          echo "== received $(wc -c < response.bin) bytes"
+          head -c 1500 response.bin | sed -n '1,/^\r*$/p'
