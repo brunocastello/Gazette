@@ -305,6 +305,15 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message,
     }
 
     switch (message) {
+    case WM_PAINT: {
+        PAINTSTRUCT paint;
+        HDC         dc = BeginPaint(hwnd, &paint);
+
+        GazetteWindowPaint(hwnd, dc);
+        EndPaint(hwnd, &paint);
+        return 0;
+    }
+
     case WM_CREATE:
         gMainWindow = hwnd;
         if (!GazetteWindowCreate(hwnd, gInstance)) {

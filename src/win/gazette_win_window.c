@@ -56,7 +56,8 @@ enum {
     kRowIconGap     = 4,        /* icon to text */
     kRowIndent      = 4,        /* pane edge to icon */
 
-    kBandMargin     = 12        /* what the rebar's band keeps for itself */
+    kBandMargin     = 12,       /* what the rebar's band keeps for itself */
+    kEtchedEdge     = 2         /* the etched edge round the toolbar strip */
 };
 
 /* ------------------------------------------------------------------ */
@@ -150,6 +151,7 @@ static int  gDragOffset;
 static LRESULT CALLBACK SplitterProc(HWND, UINT, WPARAM, LPARAM);
 static LRESULT CALLBACK ReaderProc(HWND, UINT, WPARAM, LPARAM);
 static void AdjustToolbarState(void);
+static void MeasureToolbar(void);
 
 /* ------------------------------------------------------------------ */
 /* Fonts                                                               */
@@ -473,6 +475,50 @@ static void SetToolCaptions(BOOL on)
 }
 
 /*
+ * The strip's height, taken again whenever the captions come or go: with
+ * captions the buttons are two lines of text under an icon, without them an
+ * icon, and the strip follows -- as Outlook Express's does when its text
+ * labels are turned off -- so a narrow window has no empty band under a row
+ * of icons. From the first button (never hidden), whose top is the bar's
+ * padding, given again below it; through the rebar when there is one, since
+ * only it knows its own band borders; plus the etched edge the window draws
+ * round the strip (GazetteWindowPaint).
+ */
+static void MeasureToolbar(void)
+{
+    RECT button;
+    int  row = 0;
+
+    if (SendMessage(gToolbar, TB_GETITEMRECT, 0, (LPARAM)&button)) {
+        row = button.bottom + button.top;
+        if (row < button.bottom + 2) {
+            row = button.bottom + 2;
+        }
+    }
+    if (row <= 0) {
+        row = gLineHeight * 2 + 16 + 12;
+    }
+
+    if (gRebar != NULL) {
+        REBARBANDINFOA band;
+        UINT           bar;
+
+        ZeroMemory(&band, sizeof(band));
+        band.cbSize     = sizeof(band);
+        band.fMask      = RBBIM_CHILDSIZE;
+        band.cxMinChild = 0;
+        band.cyMinChild = row;
+        SendMessage(gRebar, RB_SETBANDINFOA, 0, (LPARAM)&band);
+
+        bar = (UINT)SendMessage(gRebar, RB_GETBARHEIGHT, 0, 0);
+        if (bar > 0) {
+            row = (int)bar;
+        }
+    }
+    gToolbarHeight = row + kEtchedEdge * 2;
+}
+
+/*
  * A window narrower than its toolbar, in two steps (Bruno's choice,
  * 2026-09-23): captions first, then Outlook Express 5's chevron.
  *
@@ -519,6 +565,7 @@ static void FitToolbar(int limit)
             RebuildToolbar();
         }
     }
+    MeasureToolbar();
 }
 
 /* The chevron's menu: every hidden button, as the menu item it stands for,
@@ -698,51 +745,19 @@ static BOOL MakeToolbar(HWND parent)
     SetToolCaptions(TRUE);
     RebuildToolbar();
 
-    /*
-     * The row's height, from its first button with every caption showing,
-     * and kept: a row that loses its captions as the window narrows must
-     * not also change height under the panes. TB_GETITEMRECT is in
-     * comctl32 4.0; the button's top is the bar's padding, given again
-     * below it.
-     */
-    {
-        RECT button;
-        int  row = 0;
+    if (gRebar != NULL) {
+        REBARBANDINFOA band;
 
-        if (SendMessage(gToolbar, TB_GETITEMRECT, 0, (LPARAM)&button)) {
-            row = button.bottom + button.top;
-            if (row < button.bottom + 2) {
-                row = button.bottom + 2;
-            }
-        }
-        if (row <= 0) {
-            row = gLineHeight * 2 + 16 + 12;
-        }
-        gToolbarHeight = row;
-
-        if (gRebar != NULL) {
-            REBARBANDINFOA band;
-
-            ZeroMemory(&band, sizeof(band));
-            band.cbSize     = sizeof(band);
-            band.fMask      = RBBIM_CHILD | RBBIM_CHILDSIZE | RBBIM_STYLE;
-            band.fStyle     = RBBS_CHILDEDGE | RBBS_NOGRIPPER;
-            band.hwndChild  = gToolbar;
-            band.cxMinChild = 0;
-            band.cyMinChild = row;
-            SendMessage(gRebar, RB_INSERTBANDA, (WPARAM)-1, (LPARAM)&band);
-
-            /* The band's edges and the child edge add to the row: the
-               rebar is asked, since only it knows its own borders. */
-            {
-                UINT bar = (UINT)SendMessage(gRebar, RB_GETBARHEIGHT, 0, 0);
-
-                if (bar > 0) {
-                    gToolbarHeight = (int)bar;
-                }
-            }
-        }
+        ZeroMemory(&band, sizeof(band));
+        band.cbSize     = sizeof(band);
+        band.fMask      = RBBIM_CHILD | RBBIM_CHILDSIZE | RBBIM_STYLE;
+        band.fStyle     = RBBS_CHILDEDGE | RBBS_NOGRIPPER;
+        band.hwndChild  = gToolbar;
+        band.cxMinChild = 0;
+        band.cyMinChild = gLineHeight * 2 + 16 + 12;
+        SendMessage(gRebar, RB_INSERTBANDA, (WPARAM)-1, (LPARAM)&band);
     }
+    MeasureToolbar();
 
     return TRUE;
 }
@@ -1083,6 +1098,18 @@ void GazetteWindowLayout(HWND frame)
     LayoutStatus(client.right);
     ShowWindow(bar, gToolbarHidden ? SW_HIDE : SW_SHOW);
 
+    /* The toolbar fits the width the band gives it: captions off, then
+       the chevron, as the window narrows -- and its height follows, so
+       this comes before anything is placed under it. */
+    if (!gToolbarHidden) {
+        int room = client.right - kEtchedEdge * 2 -
+                   (gRebar != NULL ? kBandMargin : 0);
+
+        if (room != gToolLimit) {
+            FitToolbar(room);
+        }
+    }
+
     top    = gToolbarHidden ? 0 : gToolbarHeight;
     bottom = client.bottom - gStatusHeight;
     if (bottom < top) {
@@ -1098,24 +1125,17 @@ void GazetteWindowLayout(HWND frame)
         readerWidth = 0;
     }
 
-    /* The toolbar fits the width the band gives it: captions off, then
-       the chevron, as the window narrows. */
-    if (!gToolbarHidden) {
-        int room = client.right - (gRebar != NULL ? kBandMargin : 0);
-
-        if (room != gToolLimit) {
-            FitToolbar(room);
-        }
-    }
-
     defer = BeginDeferWindowPos(8);
     if (defer == NULL) {
         return;
     }
 
     if (!gToolbarHidden) {
-        defer = DeferWindowPos(defer, bar, NULL, 0, 0, client.right,
-                               gToolbarHeight, SWP_NOZORDER);
+        /* Inside the etched edge the window draws round the strip. */
+        defer = DeferWindowPos(defer, bar, NULL, kEtchedEdge, kEtchedEdge,
+                               client.right - kEtchedEdge * 2,
+                               gToolbarHeight - kEtchedEdge * 2,
+                               SWP_NOZORDER);
     }
 
     x = 0;
@@ -1145,6 +1165,33 @@ void GazetteWindowLayout(HWND frame)
 
     ShowWindow(gSidebarPane, gSidebarHidden ? SW_HIDE : SW_SHOW);
     ShowWindow(gSplitLeft, gSidebarHidden ? SW_HIDE : SW_SHOW);
+
+    /* The edge is the frame's own paint: redraw it where the strip is. */
+    {
+        RECT strip;
+
+        SetRect(&strip, 0, 0, client.right, gToolbarHeight + 1);
+        InvalidateRect(frame, &strip, TRUE);
+    }
+}
+
+/*
+ * The etched edge round the toolbar strip -- Outlook Express's toolbar
+ * sits in a band framed this way, a light line under the menu and a dark
+ * one above the panes. A rebar draws that edge only between two bands, and
+ * Gazette's has one, so the window draws it: the same EDGE_ETCHED a rebar
+ * uses, in the system's colours on every version.
+ */
+void GazetteWindowPaint(HWND frame, HDC dc)
+{
+    RECT client, strip;
+
+    if (gToolbarHidden || gToolbar == NULL) {
+        return;
+    }
+    GetClientRect(frame, &client);
+    SetRect(&strip, 0, 0, client.right, gToolbarHeight);
+    DrawEdge(dc, &strip, EDGE_ETCHED, BF_RECT);
 }
 
 void GazetteWindowMinimumSize(POINT *minimum)

@@ -62,6 +62,9 @@ BOOL GazetteWindowCommand(HWND frame, int id);
 
 /* The status bar's two sections: what the view holds, and what the
    network is doing. */
+/* The frame's own painting: the edge round the toolbar strip. */
+void GazetteWindowPaint(HWND frame, HDC dc);
+
 void GazetteWindowSetCount(const char *text);
 void GazetteWindowSetStatus(const char *text);
 
