@@ -19,7 +19,7 @@ Goal: release-ready quality matching the 0.1.0 release notes, with known deliber
 - [x] Photo addresses have their entities decoded (`&#038;` → `&`): WordPress sizes were being lost on pages.
 - [x] `probe.yml` (one article link through resolver + extractor), `tls-probe.yml` (one host through the vendored BearSSL), `build.yml -f net_debug=true` (transport detail on fetch failures).
 - [x] Auto-refresh keeps the article being read (confirmed on the Mac by Bruno, 2026-09-23): selected by link after the list is rebuilt, reader scroll restored, its page kept through the refresh so nothing is fetched again (`GazetteUIKeepPlace`).
-- [x] Video players in article pages are dropped (a whole "video" token in class/id), and so is a player's clock left as text ("00:00 00:00", "0:00 / 3:45"). General rules, no site names.
+- [x] Video players in article pages are dropped (a whole "video" token in class/id), and so is a player's clock left as text ("00:00 00:00", "0:00 / 3:45"). General rules, no site names. Players stay out: OS 9's QuickTime 6 cannot play today's H.264/HLS web video, and Bruno chose no poster or caption in their place (2026-09-23).
 - [x] CI: `actions/checkout@v5` (Node 24) in every workflow.
 - [x] Gateway write-up for carrying §24 across: `docs/gateway-tls12-fix.md` (local, gitignored) and a shared doc.
 - [ ] Next release is **0.2.0** (no 0.1.1): the OS 9 changes since 0.1.0 plus the Windows port. Version bump, `docs/release-notes.md` and the `v0.2.0` tag happen then.
