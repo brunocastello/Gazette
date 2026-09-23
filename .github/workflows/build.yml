@@ -20,6 +20,7 @@ on:
       - 'Resources/**'
       - 'CMakeLists.txt'
       - 'third_party/AUI/**'
+      - 'third_party/certainly/**'
       - 'tests/**'
       - 'docs/release-notes.md'
       - '.github/workflows/build.yml'
@@ -29,6 +30,7 @@ on:
       - 'Resources/**'
       - 'CMakeLists.txt'
       - 'third_party/AUI/**'
+      - 'third_party/certainly/**'
       - 'tests/**'
       - '.github/workflows/build.yml'
   workflow_dispatch:
