@@ -59,7 +59,10 @@ Reuse Gateway’s Win32 networking and build patterns. Keep portable core pure.
 - [ ] Show feed list / titles from cache or a live fetch.
 - [x] Quit cleanly; basic menus. (From the windows-port skeleton: menus mirror the Mac's; Quit, About, Hide Sidebar/Toolbar wired, the rest greyed.)
 - [~] Fix the faults from the 86Box runs (2026-09-22, 2026-09-23 — Bruno's screenshot: no toolbar; "Ü÷w" in the headline header; the Feeds and headline headers not following their panes' widths and split into extra sections; no From/Date headers wanted — one headline header, as on the Mac): the toolbar is laid out 0 px tall (created with CCS_NORESIZE, measured before sizing — use TB_GETBUTTONSIZE), and the headline header shows garbage (SetHeaderItem with HDI_TEXT and NULL text — resize with HDI_WIDTH only).
-- [ ] `gazette_win_window.c:930` unused variable `dc` (compiler warning).
+- [x] `gazette_win_window.c:930` unused variable `dc` (compiler warning).
+- [~] Match Bruno's approved mockup (artifact MN9UA7itM2vc7Ro7vzVigp, "Gazette for Windows"): flat toolbar with captions beside icons in the Mac's four groups, glass + search field at the right; one header band per pane (Feeds; view name + count); sunken white panes; tree rows with icons, no lines; status bar with grip.
+- [~] Toolbar responsiveness on resize, the Mac's rule: captions drop one at a time from the right until the row fits beside the search field, and come back on widening. Rebuilt with TB_DELETEBUTTON/TB_ADDBUTTONS (comctl32 4.0); on 4.0 buttons are one width so the row narrows only once all captions are gone.
+- [ ] Confirm on 86Box (Windows 95) and an XP machine: toolbar visible, captions dropping on narrowing, header bands clean.
 
 ### W3 – Full three-pane UI
 - [ ] Sidebar (groups + feeds), headline list, article pane.

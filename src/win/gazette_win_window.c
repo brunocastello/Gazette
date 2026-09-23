@@ -288,10 +288,156 @@ static void MeasureHeader(void)
 /* Creation                                                            */
 /* ------------------------------------------------------------------ */
 
+/*
+ * What each button is showing, kept here rather than read back from the
+ * control: the toolbar is rebuilt from it whenever a caption has to come or
+ * go, and comctl32 4.0 has no call to change a button's caption in place.
+ */
+static BOOL gToolEnabled[kToolbarButtons];
+static BOOL gToolOther[kToolbarButtons];    /* showing its second face */
+static BOOL gToolCaptioned[kToolbarButtons];
+static int  gToolString[kToolbarButtons][2];/* string-pool index per face */
+static int  gToolLimit;                     /* the width last fitted to */
+
+static int ToolIcon(int i)
+{
+    return (gToolOther[i] && kToolSpec[i].otherIcon >= 0)
+               ? kToolSpec[i].otherIcon : kToolSpec[i].icon;
+}
+
+/*
+ * Every caption any button can show, added once. TB_ADDSTRING takes a run
+ * of strings each ended by a NUL, the run by a second, and answers the index
+ * of the first; buttons then name their caption by index. (A pointer in
+ * iString works too, but only from comctl32 4.70, and 4.0 reads it as an
+ * index and draws whatever is there.) Added once and not per rebuild,
+ * because 4.0 cannot take strings out again.
+ */
+static void AddToolStrings(void)
+{
+    char pool[768];
+    int  used = 0;
+    int  next = 0;
+    int  i, face;
+    int  first;
+
+    for (i = 0; i < kToolbarButtons; i++) {
+        for (face = 0; face < 2; face++) {
+            const char *text = face ? kToolSpec[i].otherCaption
+                                    : kToolSpec[i].caption;
+            int n;
+
+            gToolString[i][face] = -1;
+            if (text == NULL) {
+                continue;
+            }
+            n = lstrlenA(text);
+            if (used + n + 2 > (int)sizeof(pool)) {
+                continue;
+            }
+            CopyMemory(pool + used, text, (SIZE_T)n);
+            used += n;
+            pool[used++] = '\0';
+            gToolString[i][face] = next++;
+        }
+    }
+    pool[used] = '\0';
+
+    first = (int)SendMessage(gToolbar, TB_ADDSTRINGA, 0, (LPARAM)pool);
+    for (i = 0; i < kToolbarButtons; i++) {
+        for (face = 0; face < 2; face++) {
+            if (gToolString[i][face] >= 0) {
+                gToolString[i][face] = (first >= 0)
+                                           ? first + gToolString[i][face] : -1;
+            }
+        }
+    }
+}
+
+/* The buttons, made again from the state above. Redraw is held off so the
+   row does not flash empty in between. */
+static void RebuildToolbar(void)
+{
+    TBBUTTON buttons[kToolbarButtons * 2];
+    int      count = 0;
+    int      i;
+
+    SendMessage(gToolbar, WM_SETREDRAW, FALSE, 0);
+    while (SendMessage(gToolbar, TB_BUTTONCOUNT, 0, 0) > 0) {
+        SendMessage(gToolbar, TB_DELETEBUTTON, 0, 0);
+    }
+
+    ZeroMemory(buttons, sizeof(buttons));
+    for (i = 0; i < kToolbarButtons; i++) {
+        int face = (gToolOther[i] && kToolSpec[i].otherCaption != NULL);
+
+        if (kToolSpec[i].group) {
+            buttons[count].iBitmap   = 6;       /* the separator's width */
+            buttons[count].fsStyle   = TBSTYLE_SEP;
+            count++;
+        }
+        buttons[count].iBitmap   = ToolIcon(i);
+        buttons[count].idCommand = kToolSpec[i].command;
+        buttons[count].fsState   = (BYTE)(gToolEnabled[i] ? TBSTATE_ENABLED : 0);
+        /* TBSTYLE_AUTOSIZE (4.70) sizes each button to its own caption, as
+           the Mac's are; 4.0 ignores it and makes them all one width. */
+        buttons[count].fsStyle   = TBSTYLE_BUTTON | TBSTYLE_AUTOSIZE;
+        buttons[count].iString   = gToolCaptioned[i] ? gToolString[i][face]
+                                                     : -1;
+        count++;
+    }
+    SendMessage(gToolbar, TB_ADDBUTTONS, (WPARAM)count, (LPARAM)buttons);
+
+    SendMessage(gToolbar, WM_SETREDRAW, TRUE, 0);
+    InvalidateRect(gToolbar, NULL, TRUE);
+}
+
+/* How far right the row reaches, from its last button. */
+static int ToolbarWidth(void)
+{
+    int  count = (int)SendMessage(gToolbar, TB_BUTTONCOUNT, 0, 0);
+    RECT last;
+
+    if (count <= 0 ||
+        !SendMessage(gToolbar, TB_GETITEMRECT, (WPARAM)(count - 1),
+                     (LPARAM)&last)) {
+        return 0;
+    }
+    return last.right;
+}
+
+/*
+ * The Mac's rule for a window narrower than its toolbar: every button keeps
+ * its icon, and captions go one at a time from the right-hand end until the
+ * row fits; widen the window and they come back. On comctl32 4.70 and later
+ * each button is its own caption's width, so every caption dropped buys its
+ * width back. On 4.0 every button is as wide as the widest, so the row only
+ * narrows once the last caption has gone -- captions underneath the icons
+ * are that version's look anyway, and it still ends as a row of icons.
+ */
+static void FitToolbar(int limit)
+{
+    int i;
+
+    gToolLimit = limit;
+    for (i = 0; i < kToolbarButtons; i++) {
+        gToolCaptioned[i] = TRUE;
+    }
+    RebuildToolbar();
+
+    while (limit > 0 && ToolbarWidth() > limit) {
+        for (i = kToolbarButtons - 1; i >= 0 && !gToolCaptioned[i]; i--) {
+        }
+        if (i < 0) {
+            break;                  /* icons only, and still too wide */
+        }
+        gToolCaptioned[i] = FALSE;
+        RebuildToolbar();
+    }
+}
+
 static BOOL MakeToolbar(HWND parent)
 {
-    TBBUTTON buttons[kToolbarButtons + 4];
-    int count = 0;
     int i;
 
     /*
@@ -320,58 +466,20 @@ static BOOL MakeToolbar(HWND parent)
     SendMessage(gToolbar, TB_BUTTONSTRUCTSIZE, sizeof(TBBUTTON), 0);
     SendMessage(gToolbar, TB_SETIMAGELIST, 0, (LPARAM)gIcons);
 
-    /*
-     * The captions go in through TB_ADDSTRING, as one run of strings each
-     * ended by a NUL and the run by a second, and each button names its
-     * caption by index. A button's iString may also be a pointer to its
-     * text, but only from comctl32 4.70 on; the 4.0 on a Windows 95 CD
-     * reads the pointer as an index and draws whatever it finds there.
-     */
-    {
-        char pool[512];
-        int  used = 0;
-        int  first;
-
-        for (i = 0; i < kToolbarButtons; i++) {
-            int n = lstrlenA(kToolSpec[i].caption);
-
-            if (used + n + 2 > (int)sizeof(pool)) {
-                break;
-            }
-            CopyMemory(pool + used, kToolSpec[i].caption, (SIZE_T)n);
-            used += n;
-            pool[used++] = '\0';
-        }
-        pool[used] = '\0';
-        first = (int)SendMessage(gToolbar, TB_ADDSTRINGA, 0, (LPARAM)pool);
-
-        ZeroMemory(buttons, sizeof(buttons));
-        for (i = 0; i < kToolbarButtons; i++) {
-            if (kToolSpec[i].group) {
-                buttons[count].iBitmap   = 6;   /* the separator's width */
-                buttons[count].fsStyle   = TBSTYLE_SEP;
-                buttons[count].idCommand = 0;
-                count++;
-            }
-            buttons[count].iBitmap   = kToolSpec[i].icon;
-            buttons[count].idCommand = kToolSpec[i].command;
-            buttons[count].fsState   = TBSTATE_ENABLED;
-            /* TBSTYLE_AUTOSIZE (4.70) sizes each button to its own
-               caption, as the Mac's are; 4.0 ignores it and makes them
-               all as wide as the widest. */
-            buttons[count].fsStyle   = TBSTYLE_BUTTON | TBSTYLE_AUTOSIZE;
-            buttons[count].iString   = (first >= 0) ? first + i : -1;
-            count++;
-        }
+    AddToolStrings();
+    for (i = 0; i < kToolbarButtons; i++) {
+        gToolEnabled[i]   = TRUE;
+        gToolCaptioned[i] = TRUE;
     }
-
-    SendMessage(gToolbar, TB_ADDBUTTONS, (WPARAM)count, (LPARAM)buttons);
+    RebuildToolbar();
 
     /*
-     * The bar's height, from its first button. It was measured from the
-     * toolbar window itself, which CCS_NORESIZE leaves at the zero by zero
-     * it was created at -- so the height came out 0, the bar was laid out
-     * with no room and never seen, and the panes started under the menu.
+     * The bar's height, from its first button with every caption showing,
+     * and kept: a row that loses captions as the window narrows must not
+     * also change height under the panes. It was measured from the toolbar
+     * window itself, which CCS_NORESIZE leaves at the zero by zero it was
+     * created at -- so the height came out 0, the bar was laid out with no
+     * room and never seen, and the panes started under the menu.
      * TB_GETITEMRECT is in comctl32 4.0; the button's top is the bar's
      * padding, given again below it.
      */
@@ -476,10 +584,16 @@ BOOL GazetteWindowCreate(HWND frame, HINSTANCE instance)
                   HDF_STRING | HDF_LEFT);
     SetHeaderItem(gListHeader, 0, NULL, kDefaultList, HDF_OWNERDRAW);
 
+    /*
+     * The three panes are sunken wells, WS_EX_CLIENTEDGE, which is how a
+     * list sits in a window on 95 to 2000 and what XP themes. The sidebar
+     * has buttons to open a group but no dotted lines: the Mac's has its
+     * disclosure triangles and nothing joining the rows.
+     */
     gSidebar = CreateWindowExA(
-        0, WC_TREEVIEWA, NULL,
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER |
-        TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS,
+        WS_EX_CLIENTEDGE, WC_TREEVIEWA, NULL,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP |
+        TVS_HASBUTTONS | TVS_LINESATROOT | TVS_SHOWSELALWAYS,
         0, 0, 0, 0, frame, (HMENU)IDC_SIDEBAR, instance, NULL);
 
     /*
@@ -491,15 +605,15 @@ BOOL GazetteWindowCreate(HWND frame, HINSTANCE instance)
      * the pane naming the view.
      */
     gHeadlines = CreateWindowExA(
-        0, WC_LISTVIEWA, NULL,
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER |
+        WS_EX_CLIENTEDGE, WC_LISTVIEWA, NULL,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP |
         LVS_REPORT | LVS_NOCOLUMNHEADER | LVS_OWNERDRAWFIXED |
         LVS_SINGLESEL | LVS_SHOWSELALWAYS,
         0, 0, 0, 0, frame, (HMENU)IDC_HEADLINES, instance, NULL);
 
     gReader = CreateWindowExA(
-        0, kReaderClass, NULL,
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER | WS_VSCROLL,
+        WS_EX_CLIENTEDGE, kReaderClass, NULL,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL,
         0, 0, 0, 0, frame, (HMENU)IDC_READER, instance, NULL);
 
     gSplitLeft = CreateWindowExA(0, kSplitterClass, NULL,
@@ -601,28 +715,10 @@ void GazetteWindowDestroy(void)
 /* the same state.                                                     */
 /* ------------------------------------------------------------------ */
 
-static void SetToolState(int button, BOOL enabled, const char *caption,
-                         int icon)
+static void SetToolState(int button, BOOL enabled, BOOL other)
 {
-    TBBUTTONINFOA info;
-
-    if (gToolbar == NULL) {
-        return;
-    }
-
-    ZeroMemory(&info, sizeof(info));
-    info.cbSize  = sizeof(info);
-    info.dwMask  = TBIF_STATE | TBIF_IMAGE | TBIF_TEXT;
-    info.fsState = (BYTE)(enabled ? TBSTATE_ENABLED : 0);
-    info.iImage  = icon;
-    info.pszText = (char *)caption;
-
-    /* TBIF_TEXT and TB_SETBUTTONINFO are comctl32 4.71. Where they are
-       missing the caption simply stays as it was created, which is the
-       first of each toggle's two -- wrong only while the state it names
-       is not the state it is in, and never wrong about what it does. */
-    SendMessage(gToolbar, TB_SETBUTTONINFOA, (WPARAM)kToolSpec[button].command,
-                (LPARAM)&info);
+    gToolEnabled[button] = enabled;
+    gToolOther[button]   = other;
 }
 
 static void AdjustToolbarState(void)
@@ -639,29 +735,27 @@ static void AdjustToolbarState(void)
     BOOL unread       = FALSE;
     BOOL articleOpen  = FALSE;
 
-    SetToolState(kTBNew, TRUE, kToolSpec[kTBNew].caption,
-                 kToolSpec[kTBNew].icon);
-    SetToolState(kTBSidebar, TRUE,
-                 gSidebarHidden ? kToolSpec[kTBSidebar].otherCaption
-                                : kToolSpec[kTBSidebar].caption,
-                 kToolSpec[kTBSidebar].icon);
-    SetToolState(kTBRefresh, (BOOL)(feedCount > 0),
-                 kToolSpec[kTBRefresh].caption, kToolSpec[kTBRefresh].icon);
-    SetToolState(kTBMarkAll, (BOOL)(articleCount > 0),
-                 unread ? kToolSpec[kTBMarkAll].caption
-                        : kToolSpec[kTBMarkAll].otherCaption,
-                 unread ? kToolSpec[kTBMarkAll].icon
-                        : kToolSpec[kTBMarkAll].otherIcon);
-    SetToolState(kTBHideRead, TRUE, kToolSpec[kTBHideRead].caption,
-                 kToolSpec[kTBHideRead].icon);
-    SetToolState(kTBMarkRead, articleOpen, kToolSpec[kTBMarkRead].caption,
-                 kToolSpec[kTBMarkRead].icon);
-    SetToolState(kTBStar, articleOpen, kToolSpec[kTBStar].caption,
-                 kToolSpec[kTBStar].icon);
-    SetToolState(kTBNextUnread, unread, kToolSpec[kTBNextUnread].caption,
-                 kToolSpec[kTBNextUnread].icon);
-    SetToolState(kTBBrowser, articleOpen, kToolSpec[kTBBrowser].caption,
-                 kToolSpec[kTBBrowser].icon);
+    if (gToolbar == NULL) {
+        return;
+    }
+
+    SetToolState(kTBNew,        TRUE,                     FALSE);
+    SetToolState(kTBSidebar,    TRUE,                     gSidebarHidden);
+    SetToolState(kTBRefresh,    (BOOL)(feedCount > 0),    FALSE);
+    SetToolState(kTBMarkAll,    (BOOL)(articleCount > 0), !unread);
+    SetToolState(kTBHideRead,   TRUE,                     FALSE);
+    SetToolState(kTBMarkRead,   articleOpen,              FALSE);
+    SetToolState(kTBStar,       articleOpen,              FALSE);
+    SetToolState(kTBNextUnread, unread,                   FALSE);
+    SetToolState(kTBBrowser,    articleOpen,              FALSE);
+
+    /* A caption that changed can change the row's width, so the fit is
+       done again rather than the buttons merely re-enabled. */
+    if (gToolLimit > 0) {
+        FitToolbar(gToolLimit);
+    } else {
+        RebuildToolbar();
+    }
 
     EnableWindow(gSearch, feedCount > 0);
 }
@@ -751,9 +845,15 @@ void GazetteWindowLayout(HWND frame)
         int fieldHeight = gLineHeight + 6;
         int fieldTop    = (gToolbarHeight - fieldHeight) / 2;
 
+        int toolRoom    = searchLeft - 16 - kSearchGap * 2;
+
+        /* The row gives way to the search field, not the other way round:
+           captions go from the right until the buttons fit their room. */
+        if (toolRoom != gToolLimit) {
+            FitToolbar(toolRoom);
+        }
         defer = DeferWindowPos(defer, gToolbar, NULL, 0, 0,
-                               searchLeft - 16 - kSearchGap * 2,
-                               gToolbarHeight, SWP_NOZORDER);
+                               toolRoom, gToolbarHeight, SWP_NOZORDER);
         defer = DeferWindowPos(defer, gFindIcon, NULL,
                                searchLeft - 16 - kSearchGap,
                                (gToolbarHeight - 16) / 2, 16, 16,
