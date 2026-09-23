@@ -139,8 +139,7 @@ static void DropLine(void)
 
 static int LineIsBusy(void)
 {
-    return GazetteFeedsRefreshGetState()  == kGazetteRefreshRunning ||
-           GazetteFeedsFullTextGetState() == kGazetteRefreshRunning;
+    return GazetteFeedsRefreshGetState() == kGazetteRefreshRunning;
 }
 
 /* Open the connection for the next picture still pending. Returns 0 when

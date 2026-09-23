@@ -795,6 +795,37 @@ static void CaptureByte(GazetteFeedParser *p, char c)
     } else {
         p->captureTruncated = 1;
     }
+    if (p->bodyCapturing && p->bodyLen + 1 < p->bodyCap) {
+        p->bodyBuf[p->bodyLen++] = c;
+    }
+}
+
+/* A body element opens: its bytes go into bodyBuf after whatever body the
+   item already has, until it is judged at its end. */
+static void BodyBegin(GazetteFeedParser *p)
+{
+    if (p->bodyBuf == NULL) {
+        return;
+    }
+    p->bodyMark      = p->bodyLen;
+    p->bodyCapturing = 1;
+}
+
+/* And ends: kept, it replaces what was held; turned down, it goes. */
+static void BodyEnd(GazetteFeedParser *p, int keep)
+{
+    if (!p->bodyCapturing) {
+        return;
+    }
+    p->bodyCapturing = 0;
+    if (!keep) {
+        p->bodyLen = p->bodyMark;
+        return;
+    }
+    if (p->bodyMark > 0) {
+        memmove(p->bodyBuf, p->bodyBuf + p->bodyMark, p->bodyLen - p->bodyMark);
+        p->bodyLen -= p->bodyMark;
+    }
 }
 
 /*
@@ -1062,6 +1093,8 @@ static void StartElement(GazetteFeedParser *p, const char *tag, size_t len,
         if (strcmp(name, "item") == 0 || strcmp(name, "entry") == 0) {
             memset(&p->article, 0, sizeof p->article);
             p->related[0] = '\0';
+            p->bodyLen       = 0;
+            p->bodyCapturing = 0;
             p->inItem = 1;
             return;
         }
@@ -1165,6 +1198,7 @@ static void StartElement(GazetteFeedParser *p, const char *tag, size_t len,
      */
     if (strcmp(name, "content") == 0 || strcmp(name, "encoded") == 0) {
         CaptureBegin(p, kFieldBodyRich);
+        BodyBegin(p);
         return;
     }
     /* media:description is a video's, and YouTube's feeds have no other. */
@@ -1172,6 +1206,7 @@ static void StartElement(GazetteFeedParser *p, const char *tag, size_t len,
         strcmp(name, "media:description") == 0) {
         if (p->article.body[0] == '\0') {
             CaptureBegin(p, kFieldBody);
+            BodyBegin(p);
         }
         return;
     }
@@ -1222,6 +1257,9 @@ static void EndElement(GazetteFeedParser *p, const char *name)
             case kFieldBody:
                 if (p->article.body[0] == '\0') {
                     CaptureFinish(p, p->article.body, sizeof p->article.body, 1);
+                    BodyEnd(p, 1);
+                } else {
+                    BodyEnd(p, 0);
                 }
                 break;
             case kFieldBodyRich: {
@@ -1233,6 +1271,7 @@ static void EndElement(GazetteFeedParser *p, const char *name)
                     gz_copy_n(p->article.body, sizeof p->article.body,
                               p->scratch, len);
                 }
+                BodyEnd(p, len > 0);
                 break;
             }
             case kFieldDate: {
@@ -1319,6 +1358,33 @@ void GazetteFeedParserInit(GazetteFeedParser *p,
     p->mode    = kModeFeed;
     p->sink    = sink;
     p->context = context;
+}
+
+void GazetteFeedParserSetBodyBuffer(GazetteFeedParser *p, char *buf,
+                                    size_t cap)
+{
+    if (p == NULL) {
+        return;
+    }
+    p->bodyBuf       = (cap > 1) ? buf : NULL;
+    p->bodyCap       = (cap > 1) ? cap : 0;
+    p->bodyLen       = 0;
+    p->bodyCapturing = 0;
+}
+
+const char *GazetteFeedParserBody(const GazetteFeedParser *p, size_t *len)
+{
+    if (p == NULL || p->bodyBuf == NULL) {
+        if (len != NULL) {
+            *len = 0;
+        }
+        return "";
+    }
+    p->bodyBuf[p->bodyLen] = '\0';
+    if (len != NULL) {
+        *len = p->bodyLen;
+    }
+    return p->bodyBuf;
 }
 
 void GazetteFeedParserInitDiscovery(GazetteFeedParser *p)

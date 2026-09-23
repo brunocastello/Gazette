@@ -655,6 +655,14 @@ void GazetteExtractInit(GazetteExtract *e)
     e->state = kStateText;
 }
 
+void GazetteExtractInitFragment(GazetteExtract *e)
+{
+    GazetteExtractInit(e);
+    if (e != NULL) {
+        e->fragment = 1;
+    }
+}
+
 const char *GazetteExtractText(const GazetteExtract *e)
 {
     return (e != NULL) ? e->scratch : "";
@@ -1067,7 +1075,8 @@ static void FinishTag(GazetteExtract *e)
                 e->skip[0]   = '\0';
                 e->skipDepth = 0;
                 e->skipSoft  = 0;
-                if (e->focus[0] == '\0' && signal == kContentStrong) {
+                if (e->focus[0] == '\0' && signal == kContentStrong &&
+                    !e->fragment) {
                     gz_copy_n(e->focus, sizeof e->focus, name, strlen(name));
                     e->focusDepth = 1;
                     e->outLen     = 0;
@@ -1124,6 +1133,7 @@ not_skipped:
             e->focusDepth++;
         }
     } else if (!e->closing && e->focus[0] == '\0' && !fromSkip &&
+               !e->fragment &&
                TagIsContent(e->tag, e->tagLen, name) &&
                !(e->tagLen > 0 && e->tag[e->tagLen - 1] == '/')) {
         gz_copy_n(e->focus, sizeof e->focus, name, strlen(name));
@@ -1516,7 +1526,8 @@ size_t GazetteExtractFinish(GazetteExtract *e)
        and the pictures that were in it. Unless it is too long to be one:
        an abstract, a description, an article written in <div>s with a
        paragraph only at the end, which would lose the lot. */
-    if (e->bodyBegun && e->bodyStart > 0 && e->bodyStart <= e->outLen &&
+    if (!e->fragment &&
+        e->bodyBegun && e->bodyStart > 0 && e->bodyStart <= e->outLen &&
         e->bodyStart <= kGazetteHeaderMax) {
         int i, n;
 

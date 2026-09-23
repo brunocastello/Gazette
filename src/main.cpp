@@ -84,7 +84,6 @@ static void    ShowArticle(int articleIndex);
 static void    ShowGroup(int groupIndex);
 static Boolean AdvanceGroupRefresh(void);
 static void    PumpRefresh(void);
-static void    PumpFullText(void);
 static void    CheckAutoRefresh(void);
 
 static void    AdjustMenus(void);
@@ -106,7 +105,6 @@ static void    ShowSidebarContextMenu(int kind, int index, Point global);
 static void    ShowArticleContextMenu(int index, Point global);
 static void    HandleCopyArticleURL(void);
 static void    ShowSmart(int which);
-static void    ResumeFullText(void);
 static void    HandleMarkRead(void);
 static void    HandleMarkAllRead(void);
 static void    HandleMarkRange(Boolean below);
@@ -689,8 +687,6 @@ static void RunGazette(void)
 static void PumpNetwork(void)
 {
     PumpRefresh();
-    PumpFullText();
-    ResumeFullText();
     PumpPhotos();
     ResumePhotos();
     CheckAutoRefresh();
@@ -2415,57 +2411,30 @@ static void ShowFeed(int feedIndex)
  */
 static void ShowArticle(int articleIndex)
 {
-    const GazetteArticle *article;
-
     /* Whatever was held is for the article that was open a moment ago. */
     GazetteFeedsFullTextCancel();
 
-    article = GazetteFeedsArticleAt(articleIndex);
-    if (article == nil || article->link[0] == '\0') {
-        return;                     /* nothing to fetch: no address */
-    }
-
-    /* Read lately and still held: nothing to wait for, and nothing needed
-       from the network. The same three steps the pump takes when a page
-       lands. */
-    if (GazetteFeedsFullTextRecall(articleIndex, article->link)) {
+    /*
+     * The body the feed carried, off the disk — nothing to wait for and
+     * nothing from the network but the pictures, which go after the text
+     * and are asked for before the pane composes, so it leaves them room.
+     * An article with none shows the summary the pane already has.
+     */
+    if (GazetteFeedsArticleText(articleIndex)) {
         StartPhotos();
         GazetteUIArticleTextChanged();
-        GazetteUISetStatus("Full article.");
-        return;
-    }
-    if (!gNetUp) {
-        return;                     /* nothing to fetch it with */
-    }
-
-    /*
-     * Started, or — if the refresh has the one connection — remembered by the
-     * store and started by ResumeFullText the moment the line is free. Either
-     * way the answer is yes, the page is coming, which is what the reader
-     * pane asks before it decides whether to lay out the summary.
-     */
-    if (GazetteFeedsFullTextStart(articleIndex, article->link)) {
-        GazetteUISetStatus("Reading the full article\311");
     }
 }
 
-/* Start a page the store held back while the line was busy. */
-static void ResumeFullText(void)
-{
-    if (GazetteFeedsFullTextResume()) {
-        GazetteUISetStatus("Reading the full article\311");
-    }
-}
-
-/* Fetch the pictures of the article whose page has just been read, when
-   the user wants pictures. */
+/* Fetch the pictures in the article just opened, when the user wants
+   pictures. */
 static void StartPhotos(void)
 {
     const GazettePhotoRef *refs;
     int                    count;
     int                    article = GazetteFeedsFullTextArticle();
 
-    if (!GazetteCoreShowPhotos() || article < 0) {
+    if (!gNetUp || !GazetteCoreShowPhotos() || article < 0) {
         return;
     }
     count = GazetteFeedsFullTextPhotos(&refs);
@@ -2502,46 +2471,6 @@ static void PumpPhotos(void)
             GazetteUIPhotosChanged();
             break;
         }
-    }
-}
-
-static void PumpFullText(void)
-{
-    char message[224];
-
-    if (GazetteFeedsFullTextGetState() != kGazetteRefreshRunning) {
-        return;
-    }
-
-    switch (GazetteFeedsFullTextPump()) {
-        case kGazetteRefreshDone:
-            /* The pictures go after the text, on the same line: the article
-               is readable at once and they fill in behind it. Asked for
-               before the pane composes, so it knows to leave them room. */
-            StartPhotos();
-            /* The pane is showing the summary; this is what swaps it. */
-            GazetteUIArticleTextChanged();
-            GazetteUISetStatus("Full article.");
-            break;
-
-        case kGazetteRefreshFailed:
-            /*
-             * The pane has been saying it is reading. Now that the page is
-             * not coming after all, it falls back to the feed's summary —
-             * which is what this call composes, the store having just
-             * stopped answering that anything is on its way.
-             *
-             * Saying why is worth a status line and not worth a dialog: it
-             * happens on any paywall, and the article is still readable.
-             */
-            GazetteUIArticleTextChanged();
-            snprintf(message, sizeof message, "Summary only - %s",
-                     GazetteFeedsFullTextErrorText());
-            GazetteUISetStatus(message);
-            break;
-
-        default:
-            break;
     }
 }
 

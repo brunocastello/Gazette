@@ -307,75 +307,40 @@ long GazetteFeedsFetchedAt(void);
 void GazetteFeedsForgetCache(const char *url);
 
 /* ------------------------------------------------------------------ */
-/* Full article text                                                   */
+/* The article's own text                                              */
 /*                                                                     */
-/* Opening an article fetches the page it links to and extracts the    */
-/* prose from it. Always: the feed's own summary is what stands on     */
-/* screen until that lands, and what it falls back to when the page    */
-/* cannot be had, but it is never what was wanted.                     */
-/*                                                                     */
-/* Lazy and one article at a time on purpose. Fetching every page a    */
-/* refresh brought in would be a hundred connections and several       */
-/* minutes on a modem, nearly all of it for articles nobody opens.     */
+/* What the feed carried as the item's body — content:encoded or       */
+/* <content> where it has one, the description or summary where not — */
+/* laid out when the feed was read and kept in a text file beside the  */
+/* feed's cache. Opening an article reads it back; nothing goes over   */
+/* the wire but its pictures. Gazette reads the feed, not the site.    */
 /* ------------------------------------------------------------------ */
 
 /*
- * Start fetching one article's own page. Refused while a refresh is running:
- * there is one connection, and headlines matter more than the body of an
- * article that is already readable in summary. Returns 1 if it started.
+ * Hold this article's text, read off the disk. Returns 1 when there is some;
+ * 0 when the feed has not been refreshed since texts were kept, or its item
+ * had no body — the reader pane shows the summary then.
  */
-int GazetteFeedsFullTextStart(int articleIndex, const char *url);
-
-/*
- * The same article's page, if it was read lately and is still held: puts it
- * where a fetched one goes and answers 1 with the state Done, and nothing
- * goes over the wire — so it works with the machine unplugged. Asked before
- * Start. A refresh is what forgets what was read.
- */
-int GazetteFeedsFullTextRecall(int articleIndex, const char *url);
-
-/*
- * Whether this article's own page is still to come — a fetch running for it,
- * or one held back because the refresh has the connection.
- *
- * The reader pane asks before it composes anything. While the answer is yes
- * it says so rather than laying out the summary: the summary is what the
- * article falls back to, not what it starts as, and swapping one for the
- * other under the reader's eyes a second after they opened it is worse than
- * the wait it was meant to spare them.
- */
-int GazetteFeedsFullTextComing(int articleIndex);
-
-/* Start a page that was asked for while the line was busy. From the idle
-   branch; returns 1 if a fetch actually started. */
-int GazetteFeedsFullTextResume(void);
-
-/* One slice, from the event loop's idle branch, exactly like the refresh. */
-GazetteRefreshState GazetteFeedsFullTextPump(void);
-GazetteRefreshState GazetteFeedsFullTextGetState(void);
+int GazetteFeedsArticleText(int articleIndex);
 
 /* Which article the held text belongs to, or -1 when none is held. The
-   reader pane asks this before using it: the answer is no after a refresh,
-   after switching feeds, and while a fetch is still running. */
+   reader pane asks this before using it: the answer is no after a refresh
+   and after switching feeds. */
 int GazetteFeedsFullTextArticle(void);
 
-/* The extracted text, or "" when there is none. */
+/* The held text, marks and all, or "" when there is none. */
 const char *GazetteFeedsFullText(void);
 
-/* Why the last attempt came to nothing, or "". */
-const char *GazetteFeedsFullTextErrorText(void);
-
 /*
- * The pictures the page named, once the text is here: the list the
- * extractor built (see kGazettePhotoMarker there). Returns how many; 0
- * while no text is held. The addresses are as the page wrote them, to be
- * resolved against the page's own address — which is FinalURL, the one the
- * text actually came from.
+ * The pictures that were in the item's body (see kGazettePhotoMarker in
+ * gazette_extract.h). Returns how many; 0 while no text is held. Addresses
+ * are as the feed wrote them, to be resolved against FinalURL — the
+ * article's own link.
  */
 int         GazetteFeedsFullTextPhotos(const GazettePhotoRef **refs);
 const char *GazetteFeedsFullTextFinalURL(void);
 
-/* Abandon a fetch in flight and drop whatever was held. */
+/* Drop whatever is held, and the pictures being fetched for it. */
 void GazetteFeedsFullTextCancel(void);
 
 #ifdef __cplusplus

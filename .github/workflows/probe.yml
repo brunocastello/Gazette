@@ -1,15 +1,16 @@
-# Put one article link through Gazette's full-text path — the Google News
-# resolver and the extractor, the portable C the Mac runs — and print the
-# reader pane's text in the log. Run by hand from the Actions tab, or
-# `gh workflow run probe.yml -f link=<url>`. The pages it fetched are kept
-# as an artifact, to become host-test fixtures when a rule comes of them.
-name: Probe an article
+# Put one feed through Gazette's article path — the parser keeping each
+# item's body whole, the extractor laying it out, the portable C the Mac
+# runs — and print what the reader pane will show for every item. Run by
+# hand from the Actions tab, or `gh workflow run probe.yml -f feed=<url>`.
+# The feed it fetched is kept as an artifact, to become a host-test fixture
+# when a rule comes of it.
+name: Probe a feed
 
 on:
   workflow_dispatch:
     inputs:
-      link:
-        description: "Article link, Google News or direct"
+      feed:
+        description: "Feed URL"
         required: true
 
 jobs:
@@ -24,12 +25,12 @@ jobs:
 
       - name: Probe
         env:
-          LINK: ${{ inputs.link }}
-        run: bash tools/probe.sh "$LINK" probe-out
+          FEED: ${{ inputs.feed }}
+        run: bash tools/probe.sh "$FEED" probe-out
 
       - name: Keep the pages
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: probe-pages
+          name: probe-feed
           path: probe-out/

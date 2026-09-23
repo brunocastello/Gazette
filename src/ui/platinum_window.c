@@ -2689,16 +2689,11 @@ static void SetReaderText(void)
         }
 
         /*
-         * The article's own page when it has been fetched and extracted, and
-         * the feed's summary otherwise. The store answers which article the
-         * held text belongs to, so switching articles cannot show the last
-         * one's body under this one's headline.
-         *
-         * And while the page is still coming, neither: the pane says it is
-         * reading and shows nothing else. The summary is what an article
-         * falls back to when its page is behind a paywall or cannot be had —
-         * it is not a first draft, and laying it out only to replace it a
-         * second later is the flicker this avoids.
+         * The body the feed carried, laid out, when the store holds it for
+         * this article, and the plain summary otherwise — a feed not yet
+         * refreshed since texts were kept. The store answers which article
+         * the held text belongs to, so switching articles cannot show the
+         * last one's body under this one's headline.
          */
         if (GazetteFeedsFullTextArticle() == gSelectedArticle) {
             const char *full = GazetteFeedsFullText();
@@ -2706,8 +2701,6 @@ static void SetReaderText(void)
             if (full[0] != '\0') {
                 body = full;
             }
-        } else if (GazetteFeedsFullTextComing(gSelectedArticle)) {
-            body = NULL;
         }
 
         /*
@@ -2728,11 +2721,7 @@ static void SetReaderText(void)
         gReaderBodyStart = (short)used;
         gap              = used;
 
-        if (body == NULL) {
-            static const char kWaiting[] = "Reading the full article\311";
-
-            used = AppendText(used, kWaiting, sizeof kWaiting - 1);
-        } else if (body[0] != '\0') {
+        if (body[0] != '\0') {
             used = AppendBody(used, body);
         } else {
             static const char kNone[] = "(This feed carries no summary for "
