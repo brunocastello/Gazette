@@ -15,10 +15,10 @@ Goal: release-ready quality matching the 0.1.0 release notes, with known deliber
   Every Phase 5 item is ✅ in the pre-rename AGENT.md (`git show de48c05:AGENT.md`); the window was signed off 2026-09-18 and nothing in the source is marked unfinished. “Beyond Phase 5” held two notes: groups merge every enabled feed newest first (deliberate), and Google News links unresolved (since fixed, see next item).
 - [x] Google News JS-redirect article links: best-effort decode (NewsProxy technique) **or** clear status-line fallback to feed summary.
   Decode built and correct (CI probe run 35880811279 gets the full NBC article). On the Mac it failed at the last hop: debug build said "(www.nbcnews.com: TLS connected, err 0, ssl 0, OT -3162, alert 0)". Cause: Certainly's TLS 1.2 pump called BearSSL's between-records state "handshaking" after the handshake, so MacTLS_Read refused an established connection; every TLS 1.2-only server (NBC is one) failed "while reading headers". Fixed in `f0a2ed8` (PATCHES.md §24). Builds: run 35886767625 (normal), 35886776828 (NETDEBUG). Confirmed on the Mac by Bruno, 2026-09-23: the NBC article loads in full.
-- [-] 2026-09-23 detour, reverted: articles were switched to feed-text-only (a467649, 52dce8a), which was a misreading — Bruno wants FULL articles with photos, as Newsstand 1.1 shows them. Reverted in 861edbb / bc7c22f; the photo-address entity fix (146665e) stays, as it helps pages too.
+- [x] 2026-09-23 detour, reverted: articles were switched to feed-text-only (a467649, 52dce8a), which was a misreading — Bruno wants FULL articles with photos, as Newsstand 1.1 shows them. Reverted in 861edbb / bc7c22f; the photo-address entity fix (146665e) stays, as it helps pages too.
 - [x] Photo addresses have their entities decoded (`&#038;` → `&`): WordPress sizes were being lost on pages.
 - [x] `probe.yml` (one article link through resolver + extractor), `tls-probe.yml` (one host through the vendored BearSSL), `build.yml -f net_debug=true` (transport detail on fetch failures).
-- [x] Auto-refresh keeps the article being read: selected by link after the list is rebuilt, reader scroll restored, its page kept through the refresh so nothing is fetched again (`GazetteUIKeepPlace`).
+- [x] Auto-refresh keeps the article being read (confirmed on the Mac by Bruno, 2026-09-23): selected by link after the list is rebuilt, reader scroll restored, its page kept through the refresh so nothing is fetched again (`GazetteUIKeepPlace`).
 - [x] Video players in article pages are dropped (a whole "video" token in class/id), and so is a player's clock left as text ("00:00 00:00", "0:00 / 3:45"). General rules, no site names.
 - [x] CI: `actions/checkout@v5` (Node 24) in every workflow.
 - [x] Gateway write-up for carrying §24 across: `docs/gateway-tls12-fix.md` (local, gitignored) and a shared doc.
@@ -31,8 +31,8 @@ Goal: release-ready quality matching the 0.1.0 release notes, with known deliber
   Audited 265 Toolbox calls in the Mac sources and Certainly against AUI's `Availability:` blocks. Only five read “not available”: four OT macros that expand to `…InContext` (CarbonLib 1.0), and `NavServicesAvailable`/`LMGetTicks` in `!TARGET_API_MAC_CARBON` branches.
 - [x] SIZE 8 MB preferred / 4 MB minimum; one `WaitNextEvent` loop; no `Delay`/sync OT; the only `for (;;)` loops are bounded text/layout work.
 - [x] About window's modal loop now runs the same `PumpNetwork()` as the main loop. Before, photos and the auto-refresh clock stalled while About was open.
-- [-] Memory and cooperative rules still hold under real-hardware / SheepShaver stress (many feeds, full-text, photos on). Not needed (Bruno, 2026-09-23).
-- [-] CLAUDE.md dropped the detailed Phase 0–5 record and the group-merge note in the rename; left as is on Bruno's instruction (not to be edited for now). The full text is in `git show de48c05:AGENT.md`.
+- [x] Memory and cooperative rules still hold under real-hardware / SheepShaver stress (many feeds, full-text, photos on). Not needed (Bruno, 2026-09-23).
+- [x] CLAUDE.md: Bruno is rewriting it entirely (2026-09-23); earlier versions (AGENT.md included) are disregarded.
 
 ---
 
