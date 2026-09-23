@@ -151,7 +151,7 @@ jobs:
           /tmp/sit-src/sit -T APPL -C Gzt9 -o package/Gazette.sit package/Gazette
 
       - name: Upload disk image + app bundle
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: Gazette-carbon-ppc-macos9${{ inputs.net_debug && '-NETDEBUG' || '' }}
           path: |
