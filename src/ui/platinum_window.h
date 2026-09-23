@@ -140,9 +140,19 @@ void GazetteUIAdjustToolbar(void);
 
 /*
  * The article store has been replaced — by a refresh finishing or a cache
- * being read. Resets the selection and the scroll positions.
+ * being read. Resets the selection and the scroll positions, unless
+ * GazetteUIKeepPlace was called first.
  */
 void GazetteUIArticlesChanged(void);
+
+/*
+ * Before a refresh: note the open article, by its link, and how far down the
+ * reader is scrolled. The next GazetteUIArticlesChanged selects that article
+ * again and puts the reader back where it was, if the article is still in
+ * the list — an auto-refresh must not pull the reader off what they are
+ * reading. Once only: the note is used, or dropped, by that next call.
+ */
+void GazetteUIKeepPlace(void);
 
 /*
  * The text of the article being read has changed under the window — the full

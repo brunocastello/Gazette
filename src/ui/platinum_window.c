@@ -6480,13 +6480,53 @@ void GazetteUISetStatus(const char *text)
     }
 }
 
+/* See GazetteUIKeepPlace: the article to come back to, and where in it. */
+static char  gKeepLink[kGazetteArticleLinkLen];
+static short gKeepOffset;
+
+void GazetteUIKeepPlace(void)
+{
+    const GazetteArticle *a = (gSelectedArticle >= 0)
+                                  ? GazetteFeedsArticleAt(gSelectedArticle)
+                                  : NULL;
+
+    gKeepLink[0] = '\0';
+    gKeepOffset  = 0;
+    if (a != NULL && a->link[0] != '\0') {
+        gz_copy_n(gKeepLink, sizeof gKeepLink, a->link, strlen(a->link));
+        gKeepOffset = ReaderOffset();
+    }
+}
+
 void GazetteUIArticlesChanged(void)
 {
+    int kept = -1;
+
     if (gWindow == NULL) {
         return;
     }
 
-    gSelectedArticle = (GazetteFeedsArticleCount() > 0) ? 0 : -1;
+    /* The article that was open before the refresh, found by its link: the
+       list is new and an index into the old one means nothing. */
+    if (gKeepLink[0] != '\0') {
+        int i;
+
+        for (i = 0; i < GazetteFeedsArticleCount(); i++) {
+            const GazetteArticle *a = GazetteFeedsArticleAt(i);
+
+            if (a != NULL && strcmp(a->link, gKeepLink) == 0) {
+                kept = i;
+                break;
+            }
+        }
+        gKeepLink[0] = '\0';
+    }
+
+    if (kept >= 0) {
+        gSelectedArticle = kept;
+    } else {
+        gSelectedArticle = (GazetteFeedsArticleCount() > 0) ? 0 : -1;
+    }
 
     /* A refresh moves the unread counts, and those are what decide which
        feeds the sidebar is drawing. */
@@ -6499,7 +6539,7 @@ void GazetteUIArticlesChanged(void)
     LSetDrawingMode(false, gArticleList);
     SetRowCount(gArticleList, gHeadRowCount);
     LScroll(0, (short)-ListRowCount(gArticleList), gArticleList);
-    SelectRow(gArticleList, RowForArticle(gSelectedArticle), false);
+    SelectRow(gArticleList, RowForArticle(gSelectedArticle), kept >= 0);
     LSetDrawingMode(true, gArticleList);
 
     Layout();
@@ -6507,14 +6547,19 @@ void GazetteUIArticlesChanged(void)
         GazetteFeedsMarkRead(gSelectedArticle, 1);
     }
 
-    /* The first article is open now, exactly as if it had been clicked —
-       which means the shell is asked before the text is composed, for the
-       reason SelectArticle gives. */
+    /* The article is open now, exactly as if it had been clicked — which
+       means the shell is asked before the text is composed, for the reason
+       SelectArticle gives. The one kept across a refresh comes back from
+       the pages already read, so this costs no fetch. */
     if (gSelectedArticle >= 0 && gOnArticleChosen != NULL) {
         gOnArticleChosen(gSelectedArticle);
     }
 
     SetReaderText();
+    if (kept >= 0 && gKeepOffset > 0) {
+        ScrollReaderTo(gKeepOffset);
+    }
+    gKeepOffset = 0;
     GazetteUIUpdate();
 }
 

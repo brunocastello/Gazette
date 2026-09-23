@@ -115,7 +115,12 @@ static const char *const kUnwantedMarkers[] = {
  * on a desktop, and half a page went with it when it was tried.
  */
 static const char *const kUnwantedTokens[] = {
-    "ad", "ads"
+    "ad", "ads",
+    /* A video player: its title, its controls and its clock, none of which
+       a reader that cannot play video has any use for. As a token, because
+       "videogame" is a word in a story; and a block that also names itself
+       the article's body is still the body (see TagIsContent). */
+    "video"
 };
 
 /*
@@ -455,6 +460,32 @@ static int ParagraphIsNotice(const char *s, size_t len)
     }
     return ValueHasAny(s, len, kNoticeWords,
                        sizeof kNoticeWords / sizeof kNoticeWords[0]);
+}
+
+/*
+ * A media player's clock, left behind as text: "00:00 00:00", "0:00 / 3:45".
+ * Nothing but digits, colons, slashes and spaces, with a colon in it, and
+ * short. A story never has a paragraph that is only a time.
+ */
+static int ParagraphIsPlayerClock(const char *s, size_t len)
+{
+    size_t i;
+    int    colon = 0;
+
+    if (len == 0 || len > 24) {
+        return 0;
+    }
+    for (i = 0; i < len; i++) {
+        char c = s[i];
+
+        if (c == ':') {
+            colon = 1;
+        } else if (!((c >= '0' && c <= '9') || c == '/' || c == ' ' ||
+                     c == '-')) {
+            return 0;
+        }
+    }
+    return colon;
 }
 
 static int ParagraphIsPlug(const char *s, size_t len)
@@ -1487,7 +1518,9 @@ static size_t DropTrailers(char *s, size_t len)
                 }
             }
             if (!drop && end > at && (ParagraphIsPlug(s + at, end - at) ||
-                                      ParagraphIsNotice(s + at, end - at))) {
+                                      ParagraphIsNotice(s + at, end - at) ||
+                                      ParagraphIsPlayerClock(s + at,
+                                                             end - at))) {
                 drop = 1;
             }
         }

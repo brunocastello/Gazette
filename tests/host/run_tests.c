@@ -2745,6 +2745,25 @@ static void TestExtractWrappers(void)
     static char           want[2048];
     size_t                i, n;
 
+    /* A video player in the body: its title and its clock are not the
+       story. Named by a whole "video" token; a word containing it is not. */
+    CheckStr("an inline video player goes, title, clock and all",
+             Extract(&e, "<body><article><p>First.</p>"
+                         "<section class=\"inline-video inline-video--in-body\">"
+                         "<div class=\"player\"><p class=\"title\">Clip title</p>"
+                         "<span>00:00</span> <span>00:00</span></div></section>"
+                         "<p>Second.</p></article></body>", 0),
+             "First.\nSecond.");
+    CheckStr("a word containing video is not a player",
+             Extract(&e, "<body><article><p>First.</p>"
+                         "<div class=\"videogames\"><p>About games.</p></div>"
+                         "</article></body>", 0),
+             "First.\nAbout games.");
+    CheckStr("a player's clock left as text goes",
+             Extract(&e, "<body><article><p>First.</p><p>0:00 / 3:45</p>"
+                         "<p>At 10:30 the vote began.</p></article></body>", 0),
+             "First.\nAt 10:30 the vote began.");
+
     CheckStr("main inside a div named for the footer",
              Extract(&e, "<body><div class=\"flex-wrap-footer\">"
                          "<header>Site</header><main><p>The story.</p></main>"

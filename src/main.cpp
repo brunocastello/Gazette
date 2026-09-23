@@ -2702,6 +2702,9 @@ static void HandleRefreshAll(void)
         return;
     }
 
+    /* Whatever the refresh brings, the article being read stays open. */
+    GazetteUIKeepPlace();
+
     if (GazetteFeedsCurrentSmart() >= 0) {
         gQueueSmart = GazetteFeedsCurrentSmart();
     } else if (GazetteUISelection(&kind, &selection) &&
@@ -2751,6 +2754,10 @@ static void HandleRefreshSelection(void)
         GazetteUISetStatus("No feeds configured.");
         return;
     }
+
+    /* Whatever the refresh brings — and the automatic one comes through
+       here — the article being read stays open, scrolled where it was. */
+    GazetteUIKeepPlace();
 
     /* A standing view has no one feed behind it, so it refreshes the lot. */
     if (GazetteFeedsCurrentSmart() >= 0) {

@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Run host tests
         run: make -C tests/host
@@ -69,7 +69,7 @@ jobs:
       contents: write        # only used by the release step, on tags
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Build with Retro68 (Carbon / PowerPC toolchain)
         run: |

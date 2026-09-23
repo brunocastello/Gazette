@@ -168,6 +168,7 @@ enum { kReadPages = 6 };
 static ReadPage *gReadPages[kReadPages];
 static int       gReadNext;                 /* the slot the next page takes */
 static char      gWantKey[kGazetteArticleLinkLen];  /* the link being read */
+static char      gHeldKey[kGazetteArticleLinkLen];  /* the link on screen */
 
 static ReadPage *FindReadPage(const char *key)
 {
@@ -181,12 +182,16 @@ static ReadPage *FindReadPage(const char *key)
     return NULL;
 }
 
+/* All but the page on screen: a refresh should not make the article being
+   read fetch itself again the moment the new list lands. */
 static void ForgetReadPages(void)
 {
     int i;
 
     for (i = 0; i < kReadPages; i++) {
-        if (gReadPages[i] != NULL) {
+        if (gReadPages[i] != NULL &&
+            (gHeldKey[0] == '\0' ||
+             strcmp(gReadPages[i]->key, gHeldKey) != 0)) {
             gReadPages[i]->key[0] = '\0';
         }
     }
@@ -239,6 +244,7 @@ static void RecallReadPage(const ReadPage *page, int articleIndex)
     gFullArticle = articleIndex;
     gWantArticle = -1;              /* settled: it is here */
     gFullState   = kGazetteRefreshDone;
+    gz_copy_n(gHeldKey, sizeof gHeldKey, page->key, strlen(page->key));
 }
 
 /*
@@ -883,6 +889,7 @@ void GazetteFeedsFullTextCancel(void)
     gPendingFullArticle = -1;
     gWantArticle        = -1;
     gWantURL[0]         = '\0';
+    gHeldKey[0]         = '\0';
     gFullState          = kGazetteRefreshIdle;
 }
 
@@ -1248,6 +1255,7 @@ GazetteRefreshState GazetteFeedsFullTextPump(void)
     gWantArticle = -1;              /* settled: it is here */
     gFullState   = kGazetteRefreshDone;
     RememberReadPage();
+    gz_copy_n(gHeldKey, sizeof gHeldKey, gWantKey, strlen(gWantKey));
     return gFullState;
 }
 
