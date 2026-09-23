@@ -1591,11 +1591,15 @@ size_t GazetteExtractFinish(GazetteExtract *e)
     e->textLen = len;
 
     /* The captions are text too, and go the same way. The buffer is a
-       caption's length, which is nothing next to the two above. */
+       caption's length, which is nothing next to the two above. And an
+       address is an attribute's value, so "&amp;" and "&#038;" in it are
+       an ampersand: WordPress writes "?quality=82&#038;w=1600", and read
+       as it stands the size it asks for is lost and the original comes. */
     {
         int i;
 
         for (i = 0; i < e->photoCount; i++) {
+            char  *url = e->photos[i].url;
             char  *alt = e->photos[i].alt;
             char   ascii[kGazettePhotoAltLen];
             size_t n   = GazetteDecodeEntities(alt, strlen(alt));
@@ -1603,6 +1607,8 @@ size_t GazetteExtractFinish(GazetteExtract *e)
             n = gz_utf8_to_ascii(alt, n, ascii, sizeof ascii);
             n = gz_flatten_ws(ascii, n);
             gz_copy_n(alt, kGazettePhotoAltLen, ascii, n);
+
+            (void)GazetteDecodeEntities(url, strlen(url));
         }
     }
     return len;

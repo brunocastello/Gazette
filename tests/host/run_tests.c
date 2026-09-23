@@ -1908,6 +1908,20 @@ static void TestExtractFragment(void)
     CheckLong("the picture before the first paragraph is kept",
               GazetteExtractPhotoCount(&e), 1);
 
+    /* A picture's address is an attribute's value: its entities are
+       characters. */
+    {
+        static const char kAmp[] =
+            "<p>Text.</p><img src=\"https://s/a.jpg?q=82&#038;w=1600&amp;x=1\">";
+
+        GazetteExtractInitFragment(&e);
+        GazetteExtractFeed(&e, kAmp, strlen(kAmp));
+        GazetteExtractFinish(&e);
+        CheckStr("a picture's address has its ampersands back",
+                 GazetteExtractPhoto(&e, 0)->url,
+                 "https://s/a.jpg?q=82&w=1600&x=1");
+    }
+
     /* The same HTML read as a page loses the lot before <article>. */
     GazetteExtractInit(&e);
     GazetteExtractFeed(&e, kHTML, strlen(kHTML));
