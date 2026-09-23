@@ -62,7 +62,7 @@ Reuse Gateway’s Win32 networking and build patterns. Keep portable core pure.
 - [x] `gazette_win_window.c:930` unused variable `dc` (compiler warning).
 - [~] Match Bruno's approved mockup (artifact MN9UA7itM2vc7Ro7vzVigp, "Gazette for Windows"): flat toolbar with captions beside icons in the Mac's four groups, glass + search field at the right; one header band per pane (Feeds; view name + count); sunken white panes; tree rows with icons, no lines; status bar with grip.
 - [~] Toolbar responsiveness on resize — Bruno chose both (2026-09-23): the Mac's rule first (captions drop one at a time from the right, captions beside icons), then Outlook Express 5's (buttons hidden from the right behind a » chevron that drops down a menu of them). Chevron is a toolbar button + TrackPopupMenu so it works on every comctl32, not only 5.80. Rebuilt with TB_DELETEBUTTON/TB_ADDBUTTONS; New and Hide Sidebar never hide.
-- [ ] Confirm on 86Box (Windows 95) and an XP machine: toolbar visible, captions dropping on narrowing, header bands clean.
+- [ ] Confirm on 86Box (Windows 95) and an XP machine with build 35898874844 (artifact Gazette-win32): toolbar visible, captions dropping then » chevron on narrowing, header bands clean, sunken panes. **Next after Bruno's OK:** the Win32 store (`src/store/` on Win32 files per docs/windows.md), then `gazette_feeds.c` / `core` on Windows so the sidebar and headlines fill.
 
 ### W3 – Full three-pane UI
 - [ ] Sidebar (groups + feeds), headline list, article pane.
