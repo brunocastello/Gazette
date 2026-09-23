@@ -30,7 +30,7 @@ Goal: release-ready quality matching the 0.1.0 release notes, with known deliber
   Audited 265 Toolbox calls in the Mac sources and Certainly against AUI's `Availability:` blocks. Only five read “not available”: four OT macros that expand to `…InContext` (CarbonLib 1.0), and `NavServicesAvailable`/`LMGetTicks` in `!TARGET_API_MAC_CARBON` branches.
 - [x] SIZE 8 MB preferred / 4 MB minimum; one `WaitNextEvent` loop; no `Delay`/sync OT; the only `for (;;)` loops are bounded text/layout work.
 - [x] About window's modal loop now runs the same `PumpNetwork()` as the main loop. Before, photos and the auto-refresh clock stalled while About was open.
-- [ ] Memory and cooperative rules still hold under real-hardware / SheepShaver stress (many feeds, full-text, photos on). Needs Bruno on the Mac.
+- [-] Memory and cooperative rules still hold under real-hardware / SheepShaver stress (many feeds, full-text, photos on). Not needed (Bruno, 2026-09-23).
 - [-] CLAUDE.md dropped the detailed Phase 0–5 record and the group-merge note in the rename; left as is on Bruno's instruction (not to be edited for now). The full text is in `git show de48c05:AGENT.md`.
 
 ---
