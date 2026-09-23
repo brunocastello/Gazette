@@ -81,7 +81,7 @@ BEGIN
         MENUITEM "&Paste\tCtrl+V",              IDM_EDIT_PASTE,     GRAYED
         MENUITEM "C&lear",                      IDM_EDIT_CLEAR,     GRAYED
         MENUITEM SEPARATOR
-        MENUITEM "&Find...\tCtrl+F",            IDM_EDIT_FIND,      GRAYED
+        MENUITEM "&Find...\tCtrl+F",            IDM_EDIT_FIND
         MENUITEM SEPARATOR
         MENUITEM "P&references...",             IDM_EDIT_PREFS,     GRAYED
     END

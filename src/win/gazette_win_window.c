@@ -23,6 +23,7 @@
 
 #include <windows.h>
 #include <commctrl.h>
+#include <commdlg.h>
 #include <string.h>
 
 #include "gazette_win.h"
@@ -55,8 +56,7 @@ enum {
     kRowIconGap     = 4,        /* icon to text */
     kRowIndent      = 4,        /* pane edge to icon */
 
-    kSearchWidth    = 104,      /* the field, not counting its frame */
-    kSearchGap      = 6         /* toolbar's right-hand air */
+    kBandMargin     = 12        /* what the rebar's band keeps for itself */
 };
 
 /* ------------------------------------------------------------------ */
@@ -79,6 +79,7 @@ enum {
     kTBStar,
     kTBNextUnread,
     kTBBrowser,
+    kTBFind,
     kToolbarButtons
 };
 
@@ -100,7 +101,11 @@ static const ToolSpec kToolSpec[kToolbarButtons] = {
     { IDM_ARTICLE_UNREAD,   kIconMarkRead,     kIconMarkUnread,   "Mark as Read",       "Mark as Unread",     TRUE  },
     { IDM_ARTICLE_STAR,     kIconStarred,      -1,                "Star Article",       "Unstar Article",     FALSE },
     { IDM_ARTICLE_NEXT,     kIconNextUnread,   -1,                "Next Unread",        NULL,                 FALSE },
-    { IDM_ARTICLE_BROWSER,  kIconBrowser,      -1,                "Open in Browser",    NULL,                 FALSE }
+    { IDM_ARTICLE_BROWSER,  kIconBrowser,      -1,                "Open in Browser",    NULL,                 FALSE },
+    /* Find, in a group of its own at the end: the standard Find dialog
+       every Windows program has, in place of the Mac's search field, and
+       the same magnifier the Mac's field wears. */
+    { IDM_EDIT_FIND,        kIconFind,         -1,                "Find",               NULL,                 TRUE  }
 };
 
 /* ------------------------------------------------------------------ */
@@ -109,12 +114,14 @@ static const ToolSpec kToolSpec[kToolbarButtons] = {
 
 static const char kSplitterClass[] = "GazetteSplitter";
 static const char kReaderClass[]   = "GazetteReader";
+static const char kPaneClass[]     = "GazettePane";
 
 static HINSTANCE  gInstance;
 static HWND       gFrame;
+static HWND       gRebar;        /* the band the toolbar sits in; NULL on 4.0 */
 static HWND       gToolbar;
-static HWND       gSearch;
-static HWND       gFindIcon;     /* the glass beside the field */
+static HWND       gSidebarPane;  /* sunken frame holding header and tree */
+static HWND       gListPane;     /* the same for the headline list */
 static HWND       gSidebarHeader;
 static HWND       gListHeader;
 static HWND       gSidebar;
@@ -212,8 +219,9 @@ HFONT GazetteWindowFont(void)
 
 static HWND MakeHeader(HWND parent, int id)
 {
+    /* HDS_BUTTONS: the raised face a list view's column header has. */
     return CreateWindowExA(0, WC_HEADERA, NULL,
-                           WS_CHILD | WS_VISIBLE | HDS_HORZ,
+                           WS_CHILD | WS_VISIBLE | HDS_HORZ | HDS_BUTTONS,
                            0, 0, 0, 0, parent, (HMENU)(INT_PTR)id,
                            gInstance, NULL);
 }
@@ -403,9 +411,9 @@ static void RebuildToolbar(void)
                                                            : 0) |
                                           (gToolHidden[i] ? TBSTATE_HIDDEN
                                                           : 0));
-        /* TBSTYLE_AUTOSIZE (4.70) sizes each button to its own caption, as
-           the Mac's are; 4.0 ignores it and makes them all one width. */
-        buttons[count].fsStyle   = TBSTYLE_BUTTON | TBSTYLE_AUTOSIZE;
+        /* One width for every button, as Outlook Express's are, so a long
+           caption wraps to a second line instead of widening its button. */
+        buttons[count].fsStyle   = TBSTYLE_BUTTON;
         buttons[count].iString   = gToolCaptioned[i] ? gToolString[i][face]
                                                      : -1;
         count++;
@@ -446,22 +454,36 @@ static int ToolbarWidth(void)
 }
 
 /*
+ * The buttons' width: wide enough for a caption wrapped to two lines, as
+ * Outlook Express's are, or just an icon's when captions are off. The same
+ * for every button -- TB_SETBUTTONWIDTH (4.71) has no other kind -- which is
+ * why captions go all together rather than one at a time.
+ */
+static void SetToolCaptions(BOOL on)
+{
+    int i;
+
+    for (i = 0; i < kToolbarButtons; i++) {
+        gToolCaptioned[i] = on;
+    }
+    SendMessage(gToolbar, TB_SETMAXTEXTROWS, on ? 2 : 0, 0);
+    SendMessage(gToolbar, TB_SETBUTTONWIDTH, 0,
+                on ? MAKELPARAM(gLineHeight * 4, gLineHeight * 5)
+                   : MAKELPARAM(0, 0));
+}
+
+/*
  * A window narrower than its toolbar, in two steps (Bruno's choice,
- * 2026-09-23: the Mac's rule, then Outlook Express 5's). A button that
- * loses its caption keeps its icon and gets narrower; the row keeps its
- * height, measured with every caption on.
+ * 2026-09-23): captions first, then Outlook Express 5's chevron.
  *
- * First the Mac's: every button keeps its icon and captions go one at a
- * time from the right-hand end. On comctl32 4.70 and later each button is
- * its own caption's width, so every caption dropped buys its width back;
- * on 4.0 every button is as wide as the widest, so the row narrows only
- * once the last caption has gone.
- *
- * Then Outlook Express's: if icons alone still do not fit, buttons are
- * hidden from the right behind a >> at the end of the row, which drops
- * down a menu of them. OE's chevron is the rebar's, and that needs
+ * With every button one width, a caption dropped on its own buys nothing
+ * back, so the captions go together -- Outlook Express's own "no text
+ * labels" -- and the row becomes icons. If icons alone still do not fit,
+ * buttons hide from the right behind a >> at the end of the row, which
+ * drops down a menu of them. OE's chevron is the rebar's and needs
  * comctl32 5.80; this one is a toolbar button and TrackPopupMenu, which
- * Windows 95 has, so every version gets it.
+ * Windows 95 has, so every version gets it. The row keeps its height, set
+ * with captions on, so the panes never move.
  *
  * Widen the window and it all comes back, in the reverse order.
  */
@@ -472,18 +494,13 @@ static void FitToolbar(int limit)
     gToolLimit   = limit;
     gToolChevron = FALSE;
     for (i = 0; i < kToolbarButtons; i++) {
-        gToolCaptioned[i] = TRUE;
-        gToolHidden[i]    = FALSE;
+        gToolHidden[i] = FALSE;
     }
+    SetToolCaptions(TRUE);
     RebuildToolbar();
 
-    while (limit > 0 && ToolbarWidth() > limit) {
-        for (i = kToolbarButtons - 1; i >= 0 && !gToolCaptioned[i]; i--) {
-        }
-        if (i < 0) {
-            break;                  /* icons only; the chevron is next */
-        }
-        gToolCaptioned[i] = FALSE;
+    if (limit > 0 && ToolbarWidth() > limit) {
+        SetToolCaptions(FALSE);
         RebuildToolbar();
     }
 
@@ -546,18 +563,106 @@ static void ShowToolChevron(HWND frame)
     }
 }
 
+/*
+ * Find: Windows' own Find dialog, the one Notepad opens, from comdlg32 on
+ * every Windows 95. It is modeless -- it stays up while the window is
+ * used -- so the message loop hands it its keystrokes (GazetteWindowFind
+ * Dialog) and it reports through a message Windows names at run time.
+ * Up/Down and "Match whole word only" are hidden: Gazette's search filters
+ * the headlines, it does not step through them.
+ */
+static HWND         gFindDialog;
+static FINDREPLACEA gFind;
+static char         gFindWhat[128];
+static UINT         gFindMessage;
+
+static void ShowFind(HWND frame)
+{
+    if (gFindDialog != NULL) {
+        SetFocus(gFindDialog);
+        return;
+    }
+    ZeroMemory(&gFind, sizeof(gFind));
+    gFind.lStructSize   = sizeof(gFind);
+    gFind.hwndOwner     = frame;
+    gFind.lpstrFindWhat = gFindWhat;
+    gFind.wFindWhatLen  = sizeof(gFindWhat);
+    gFind.Flags         = FR_DOWN | FR_HIDEUPDOWN | FR_HIDEWHOLEWORD;
+    gFindDialog = FindTextA(&gFind);
+}
+
+HWND GazetteWindowFindDialog(void)
+{
+    return gFindDialog;
+}
+
+UINT GazetteWindowFindMessage(void)
+{
+    if (gFindMessage == 0) {
+        gFindMessage = RegisterWindowMessageA(FINDMSGSTRINGA);
+    }
+    return gFindMessage;
+}
+
+/*
+ * What the Find dialog said. Find Next asks for what was typed; the
+ * headline filter it drives joins with the store, so until then the
+ * status bar says what is being looked for.
+ */
+void GazetteWindowFindEvent(const FINDREPLACEA *find)
+{
+    if (find->Flags & FR_DIALOGTERM) {
+        gFindDialog = NULL;
+        return;
+    }
+    if (find->Flags & FR_FINDNEXT) {
+        char status[192];
+
+        wsprintfA(status, "Looking for \"%s\"", find->lpstrFindWhat);
+        GazetteWindowSetStatus(status);
+    }
+}
+
 BOOL GazetteWindowCommand(HWND frame, int id)
 {
     if (id == IDC_TOOL_CHEVRON) {
         ShowToolChevron(frame);
         return TRUE;
     }
+    if (id == IDM_EDIT_FIND) {
+        ShowFind(frame);
+        return TRUE;
+    }
     return FALSE;
 }
 
+/* RBBS_NOGRIPPER is declared from _WIN32_IE 0x0400; comctl32 4.71 knows
+   it, and 4.70 draws the gripper instead. */
+#ifndef RBBS_NOGRIPPER
+#define RBBS_NOGRIPPER 0x00000100
+#endif
+
 static BOOL MakeToolbar(HWND parent)
 {
-    int i;
+    HWND owner = parent;
+    int  i;
+
+    /*
+     * The band the toolbar sits in: a rebar, which is the raised strip with
+     * an edge round it that Outlook Express's and Internet Explorer's
+     * toolbars live in. comctl32 4.70 and later; on 4.0 there is no such
+     * class and the toolbar sits on the window itself, as it does in every
+     * program written for that version.
+     */
+    gRebar = CreateWindowExA(
+        WS_EX_TOOLWINDOW, REBARCLASSNAMEA, NULL,
+        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN |
+        RBS_VARHEIGHT | RBS_BANDBORDERS | CCS_NODIVIDER | CCS_NORESIZE |
+        CCS_NOPARENTALIGN,
+        0, 0, 0, 0, parent, NULL, gInstance, NULL);
+    if (gRebar != NULL) {
+        owner = gRebar;
+    }
 
     /*
      * Outlook Express 5's toolbar, which is Bruno's call for the Windows
@@ -574,7 +679,7 @@ static BOOL MakeToolbar(HWND parent)
         0, TOOLBARCLASSNAMEA, NULL,
         WS_CHILD | WS_VISIBLE | TBSTYLE_TOOLTIPS | TBSTYLE_FLAT |
         CCS_NODIVIDER | CCS_NORESIZE | CCS_NOPARENTALIGN,
-        0, 0, 0, 0, parent, (HMENU)IDC_TOOLBAR, gInstance, NULL);
+        0, 0, 0, 0, owner, (HMENU)IDC_TOOLBAR, gInstance, NULL);
 
     if (gToolbar == NULL) {
         return FALSE;
@@ -586,71 +691,58 @@ static BOOL MakeToolbar(HWND parent)
     SendMessage(gToolbar, TB_BUTTONSTRUCTSIZE, sizeof(TBBUTTON), 0);
     SendMessage(gToolbar, TB_SETIMAGELIST, 0, (LPARAM)gIcons);
 
-    /* Two lines of caption, and no wider than five lines are tall, so
-       "Hide Read Articles" wraps to "Hide Read / Articles" the way
-       OE's "Compose / Message" does. TB_SETMAXTEXTROWS is in 4.0;
-       TB_SETBUTTONWIDTH is 4.71, and before it a caption stays on one
-       line and its button is as wide as it needs. */
-    SendMessage(gToolbar, TB_SETMAXTEXTROWS, 2, 0);
-    SendMessage(gToolbar, TB_SETBUTTONWIDTH, 0,
-                MAKELPARAM(0, gLineHeight * 5));
-
     AddToolStrings();
     for (i = 0; i < kToolbarButtons; i++) {
-        gToolEnabled[i]   = TRUE;
-        gToolCaptioned[i] = TRUE;
+        gToolEnabled[i] = TRUE;
     }
+    SetToolCaptions(TRUE);
     RebuildToolbar();
 
     /*
-     * The bar's height, from its first button with every caption showing,
-     * and kept: a row that loses captions as the window narrows must not
-     * also change height under the panes. It was measured from the toolbar
-     * window itself, which CCS_NORESIZE leaves at the zero by zero it was
-     * created at -- so the height came out 0, the bar was laid out with no
-     * room and never seen, and the panes started under the menu.
-     * TB_GETITEMRECT is in comctl32 4.0; the button's top is the bar's
-     * padding, given again below it.
+     * The row's height, from its first button with every caption showing,
+     * and kept: a row that loses its captions as the window narrows must
+     * not also change height under the panes. TB_GETITEMRECT is in
+     * comctl32 4.0; the button's top is the bar's padding, given again
+     * below it.
      */
     {
         RECT button;
+        int  row = 0;
 
-        gToolbarHeight = 0;
         if (SendMessage(gToolbar, TB_GETITEMRECT, 0, (LPARAM)&button)) {
-            gToolbarHeight = button.bottom + button.top;
-            if (gToolbarHeight < button.bottom + 2) {
-                gToolbarHeight = button.bottom + 2;
+            row = button.bottom + button.top;
+            if (row < button.bottom + 2) {
+                row = button.bottom + 2;
             }
         }
-        if (gToolbarHeight <= 0) {
-            gToolbarHeight = gLineHeight + 16 + 8;
+        if (row <= 0) {
+            row = gLineHeight * 2 + 16 + 12;
+        }
+        gToolbarHeight = row;
+
+        if (gRebar != NULL) {
+            REBARBANDINFOA band;
+
+            ZeroMemory(&band, sizeof(band));
+            band.cbSize     = sizeof(band);
+            band.fMask      = RBBIM_CHILD | RBBIM_CHILDSIZE | RBBIM_STYLE;
+            band.fStyle     = RBBS_CHILDEDGE | RBBS_NOGRIPPER;
+            band.hwndChild  = gToolbar;
+            band.cxMinChild = 0;
+            band.cyMinChild = row;
+            SendMessage(gRebar, RB_INSERTBANDA, (WPARAM)-1, (LPARAM)&band);
+
+            /* The band's edges and the child edge add to the row: the
+               rebar is asked, since only it knows its own borders. */
+            {
+                UINT bar = (UINT)SendMessage(gRebar, RB_GETBARHEIGHT, 0, 0);
+
+                if (bar > 0) {
+                    gToolbarHeight = (int)bar;
+                }
+            }
         }
     }
-
-    /*
-     * The search field and the glass beside it, at the right-hand end,
-     * the way the Mac has them: a small field rather than another
-     * button's worth of the row. They are children of the frame rather
-     * than of the toolbar so that the toolbar's own layout never moves
-     * them.
-     */
-    gFindIcon = CreateWindowExA(0, "STATIC", NULL,
-                                WS_CHILD | WS_VISIBLE | SS_ICON | SS_CENTERIMAGE,
-                                0, 0, 16, 16, parent,
-                                (HMENU)IDC_FINDICON, gInstance, NULL);
-    if (gFindIcon != NULL) {
-        HICON glass = ImageList_GetIcon(gIcons, kIconFind, ILD_TRANSPARENT);
-        if (glass != NULL) {
-            SendMessage(gFindIcon, STM_SETICON, (WPARAM)glass, 0);
-        }
-    }
-
-    gSearch = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", NULL,
-                              WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-                              ES_AUTOHSCROLL,
-                              0, 0, 0, 0, parent, (HMENU)IDC_SEARCH,
-                              gInstance, NULL);
-    ApplyFont(gSearch);
 
     return TRUE;
 }
@@ -703,8 +795,25 @@ BOOL GazetteWindowCreate(HWND frame, HINSTANCE instance)
         return FALSE;
     }
 
-    gSidebarHeader = MakeHeader(frame, IDC_SIDEBAR_HEADER);
-    gListHeader    = MakeHeader(frame, IDC_LIST_HEADER);
+    /*
+     * The two lists sit in panes that are sunken wells with their header
+     * band inside the edge, as a list view's own column header is and as
+     * Outlook Express's are -- a header above the well read as part of the
+     * window, not of the list. The pane is a small window of Gazette's that
+     * lays the two out and passes their messages up to the frame.
+     */
+    gSidebarPane = CreateWindowExA(WS_EX_CLIENTEDGE, kPaneClass, NULL,
+                                   WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
+                                   0, 0, 0, 0, frame, NULL, instance, NULL);
+    gListPane    = CreateWindowExA(WS_EX_CLIENTEDGE, kPaneClass, NULL,
+                                   WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
+                                   0, 0, 0, 0, frame, NULL, instance, NULL);
+    if (gSidebarPane == NULL || gListPane == NULL) {
+        return FALSE;
+    }
+
+    gSidebarHeader = MakeHeader(gSidebarPane, IDC_SIDEBAR_HEADER);
+    gListHeader    = MakeHeader(gListPane, IDC_LIST_HEADER);
     ApplyFont(gSidebarHeader);
     ApplyFont(gListHeader);
     MeasureHeader();
@@ -714,16 +823,15 @@ BOOL GazetteWindowCreate(HWND frame, HINSTANCE instance)
     SetHeaderItem(gListHeader, 0, NULL, kDefaultList, HDF_OWNERDRAW);
 
     /*
-     * The three panes are sunken wells, WS_EX_CLIENTEDGE, which is how a
-     * list sits in a window on 95 to 2000 and what XP themes. The sidebar
-     * is a standard tree, dotted lines and all -- Windows' own way of
-     * showing groups, as Outlook Express's folder list does.
+     * The sidebar is a standard tree, dotted lines and all -- Windows' own
+     * way of showing groups, as Outlook Express's folder list does. Its
+     * edge is the pane's.
      */
     gSidebar = CreateWindowExA(
-        WS_EX_CLIENTEDGE, WC_TREEVIEWA, NULL,
+        0, WC_TREEVIEWA, NULL,
         WS_CHILD | WS_VISIBLE | WS_TABSTOP |
         TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS,
-        0, 0, 0, 0, frame, (HMENU)IDC_SIDEBAR, instance, NULL);
+        0, 0, 0, 0, gSidebarPane, (HMENU)IDC_SIDEBAR, instance, NULL);
 
     /*
      * The headline list draws its own rows -- two lines of text with an
@@ -734,15 +842,18 @@ BOOL GazetteWindowCreate(HWND frame, HINSTANCE instance)
      * the pane naming the view.
      */
     gHeadlines = CreateWindowExA(
-        WS_EX_CLIENTEDGE, WC_LISTVIEWA, NULL,
+        0, WC_LISTVIEWA, NULL,
         WS_CHILD | WS_VISIBLE | WS_TABSTOP |
         LVS_REPORT | LVS_NOCOLUMNHEADER | LVS_OWNERDRAWFIXED |
         LVS_SINGLESEL | LVS_SHOWSELALWAYS,
-        0, 0, 0, 0, frame, (HMENU)IDC_HEADLINES, instance, NULL);
+        0, 0, 0, 0, gListPane, (HMENU)IDC_HEADLINES, instance, NULL);
 
+    /* The article's pane: a sunken well with no header -- its headline and
+       byline are the text's first lines. No scroll bar until there is text
+       to scroll, as Outlook Express's preview has none when it is empty. */
     gReader = CreateWindowExA(
         WS_EX_CLIENTEDGE, kReaderClass, NULL,
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP,
         0, 0, 0, 0, frame, (HMENU)IDC_READER, instance, NULL);
 
     gSplitLeft = CreateWindowExA(0, kSplitterClass, NULL,
@@ -811,6 +922,7 @@ BOOL GazetteWindowCreate(HWND frame, HINSTANCE instance)
         GetWindowRect(gStatus, &bar);
         gStatusHeight = bar.bottom - bar.top;
     }
+    GazetteWindowSetCount("0 article(s)");
 
     AdjustToolbarState();
     return TRUE;
@@ -877,6 +989,7 @@ static void AdjustToolbarState(void)
     SetToolState(kTBStar,       articleOpen,              FALSE);
     SetToolState(kTBNextUnread, unread,                   FALSE);
     SetToolState(kTBBrowser,    articleOpen,              FALSE);
+    SetToolState(kTBFind,       TRUE,                     FALSE);
 
     /* A caption that changed can change the row's width, so the fit is
        done again rather than the buttons merely re-enabled. */
@@ -885,8 +998,6 @@ static void AdjustToolbarState(void)
     } else {
         RebuildToolbar();
     }
-
-    EnableWindow(gSearch, feedCount > 0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -929,12 +1040,38 @@ static void ClampWidths(int available)
     }
 }
 
+/* The status bar's two sections, as Outlook Express's are: what the view
+   holds on the left, what the network is doing on the right. */
+static void LayoutStatus(int width)
+{
+    int parts[2];
+
+    parts[0] = width - width / 3;
+    parts[1] = -1;
+    SendMessage(gStatus, SB_SETPARTS, 2, (LPARAM)parts);
+}
+
+void GazetteWindowSetCount(const char *text)
+{
+    if (gStatus != NULL) {
+        SendMessage(gStatus, SB_SETTEXTA, 0, (LPARAM)(text ? text : ""));
+    }
+}
+
+void GazetteWindowSetStatus(const char *text)
+{
+    if (gStatus != NULL) {
+        SendMessage(gStatus, SB_SETTEXTA, 1, (LPARAM)(text ? text : ""));
+    }
+}
+
 void GazetteWindowLayout(HWND frame)
 {
     RECT client;
     HDWP defer;
-    int top, bottom, height, x;
-    int sidebarWidth, readerWidth;
+    int  top, bottom, x;
+    int  sidebarWidth, readerWidth;
+    HWND bar = (gRebar != NULL) ? gRebar : gToolbar;
 
     if (gStatus == NULL) {
         return;
@@ -943,15 +1080,13 @@ void GazetteWindowLayout(HWND frame)
     GetClientRect(frame, &client);
 
     SendMessage(gStatus, WM_SIZE, 0, 0);
-    ShowWindow(gToolbar, gToolbarHidden ? SW_HIDE : SW_SHOW);
-    ShowWindow(gSearch, gToolbarHidden ? SW_HIDE : SW_SHOW);
-    ShowWindow(gFindIcon, gToolbarHidden ? SW_HIDE : SW_SHOW);
+    LayoutStatus(client.right);
+    ShowWindow(bar, gToolbarHidden ? SW_HIDE : SW_SHOW);
 
     top    = gToolbarHidden ? 0 : gToolbarHeight;
     bottom = client.bottom - gStatusHeight;
-    height = bottom - top - gHeaderHeight;
-    if (height < 0) {
-        height = 0;
+    if (bottom < top) {
+        bottom = top;
     }
 
     ClampWidths(client.right);
@@ -963,75 +1098,53 @@ void GazetteWindowLayout(HWND frame)
         readerWidth = 0;
     }
 
-    defer = BeginDeferWindowPos(10);
+    /* The toolbar fits the width the band gives it: captions off, then
+       the chevron, as the window narrows. */
+    if (!gToolbarHidden) {
+        int room = client.right - (gRebar != NULL ? kBandMargin : 0);
+
+        if (room != gToolLimit) {
+            FitToolbar(room);
+        }
+    }
+
+    defer = BeginDeferWindowPos(8);
     if (defer == NULL) {
         return;
     }
 
     if (!gToolbarHidden) {
-        int searchRight = client.right - kSearchGap;
-        int searchLeft  = searchRight - kSearchWidth;
-        int fieldHeight = gLineHeight + 6;
-        int fieldTop    = (gToolbarHeight - fieldHeight) / 2;
-
-        int toolRoom    = searchLeft - 16 - kSearchGap * 2;
-
-        /* The row gives way to the search field, not the other way round:
-           captions go from the right until the buttons fit their room. */
-        if (toolRoom != gToolLimit) {
-            FitToolbar(toolRoom);
-        }
-        defer = DeferWindowPos(defer, gToolbar, NULL, 0, 0,
-                               toolRoom, gToolbarHeight, SWP_NOZORDER);
-        defer = DeferWindowPos(defer, gFindIcon, NULL,
-                               searchLeft - 16 - kSearchGap,
-                               (gToolbarHeight - 16) / 2, 16, 16,
-                               SWP_NOZORDER);
-        defer = DeferWindowPos(defer, gSearch, NULL, searchLeft, fieldTop,
-                               kSearchWidth, fieldHeight, SWP_NOZORDER);
+        defer = DeferWindowPos(defer, bar, NULL, 0, 0, client.right,
+                               gToolbarHeight, SWP_NOZORDER);
     }
 
     x = 0;
     if (!gSidebarHidden) {
-        defer = DeferWindowPos(defer, gSidebarHeader, NULL, x, top,
-                               sidebarWidth, gHeaderHeight, SWP_NOZORDER);
-        defer = DeferWindowPos(defer, gSidebar, NULL, x, top + gHeaderHeight,
-                               sidebarWidth, height, SWP_NOZORDER);
+        defer = DeferWindowPos(defer, gSidebarPane, NULL, x, top,
+                               sidebarWidth, bottom - top, SWP_NOZORDER);
         x += sidebarWidth;
         defer = DeferWindowPos(defer, gSplitLeft, NULL, x, top,
                                kSplitterWidth, bottom - top, SWP_NOZORDER);
         x += kSplitterWidth;
     }
 
-    defer = DeferWindowPos(defer, gListHeader, NULL, x, top,
-                           gListWidth, gHeaderHeight, SWP_NOZORDER);
-    defer = DeferWindowPos(defer, gHeadlines, NULL, x, top + gHeaderHeight,
-                           gListWidth, height, SWP_NOZORDER);
+    defer = DeferWindowPos(defer, gListPane, NULL, x, top,
+                           gListWidth, bottom - top, SWP_NOZORDER);
     x += gListWidth;
 
     defer = DeferWindowPos(defer, gSplitRight, NULL, x, top,
                            kSplitterWidth, bottom - top, SWP_NOZORDER);
     x += kSplitterWidth;
 
-    /* The article column has no header: it runs from the top of the
-       content region to the status strip, level with where the other
-       two columns' headers begin. */
+    /* The article column runs from the top of the content region to the
+       status bar, level with the tops of the other two panes. */
     defer = DeferWindowPos(defer, gReader, NULL, x, top,
                            readerWidth, bottom - top, SWP_NOZORDER);
 
     EndDeferWindowPos(defer);
 
-    ShowWindow(gSidebar, gSidebarHidden ? SW_HIDE : SW_SHOW);
-    ShowWindow(gSidebarHeader, gSidebarHidden ? SW_HIDE : SW_SHOW);
+    ShowWindow(gSidebarPane, gSidebarHidden ? SW_HIDE : SW_SHOW);
     ShowWindow(gSplitLeft, gSidebarHidden ? SW_HIDE : SW_SHOW);
-
-    /* Each band's one item is exactly its pane's width, so the band reads
-       as a title over the pane and never as the first of several columns. */
-    SetHeaderItem(gSidebarHeader, 0, NULL, sidebarWidth,
-                  HDF_STRING | HDF_LEFT);
-    SetHeaderItem(gListHeader, 0, NULL, gListWidth, HDF_OWNERDRAW);
-
-    SendMessage(gHeadlines, LVM_SETCOLUMNWIDTH, 0, MAKELPARAM(gListWidth, 0));
 }
 
 void GazetteWindowMinimumSize(POINT *minimum)
@@ -1158,7 +1271,6 @@ void GazetteWindowDrawItem(const DRAWITEMSTRUCT *draw)
 
 BOOL GazetteWindowNotify(HWND frame, NMHDR *header, LRESULT *result)
 {
-    (void)frame;
 
     /*
      * Choosing a standing view renames the band over the headline list,
@@ -1177,7 +1289,13 @@ BOOL GazetteWindowNotify(HWND frame, NMHDR *header, LRESULT *result)
         item.cchTextMax = sizeof(name);
 
         if (SendMessage(gSidebar, TVM_GETITEMA, 0, (LPARAM)&item)) {
+            char title[128];
+
             SetListTitle(name, NULL);
+            /* "Today - Gazette", as Outlook Express's is "Inbox -
+               Outlook Express": the view, then the program. */
+            wsprintfA(title, "%s - Gazette", name);
+            SetWindowTextA(frame, title);
         }
         return TRUE;
     }
@@ -1302,6 +1420,66 @@ static LRESULT CALLBACK ReaderProc(HWND hwnd, UINT message,
     return DefWindowProc(hwnd, message, wParam, lParam);
 }
 
+/* ------------------------------------------------------------------ */
+/* The panes                                                           */
+/*                                                                     */
+/* A sunken well holding a header band over a list, the band inside the */
+/* edge the way a list view's own column header is. The pane lays the   */
+/* two out and passes what they say -- notifications, owner-draw -- up  */
+/* to the frame, which is where the rest of the window listens.         */
+/* ------------------------------------------------------------------ */
+
+static void LayoutPane(HWND pane)
+{
+    RECT client;
+    HWND header = (pane == gSidebarPane) ? gSidebarHeader : gListHeader;
+    HWND body   = (pane == gSidebarPane) ? gSidebar : gHeadlines;
+    int  width;
+
+    GetClientRect(pane, &client);
+    width = client.right;
+
+    if (header != NULL) {
+        MoveWindow(header, 0, 0, width, gHeaderHeight, TRUE);
+        /* One item, the band's whole width: a title over the list, never
+           the first of several columns. */
+        SetHeaderItem(header, 0, NULL, width,
+                      (pane == gSidebarPane) ? (HDF_STRING | HDF_LEFT)
+                                             : HDF_OWNERDRAW);
+    }
+    if (body != NULL) {
+        MoveWindow(body, 0, gHeaderHeight, width,
+                   client.bottom - gHeaderHeight, TRUE);
+    }
+
+    /* The headline list's one column is exactly as wide as the list's
+       client area, so there is never a horizontal scroll bar under it. */
+    if (body == gHeadlines && gHeadlines != NULL) {
+        RECT list;
+
+        GetClientRect(gHeadlines, &list);
+        SendMessage(gHeadlines, LVM_SETCOLUMNWIDTH, 0,
+                    MAKELPARAM(list.right, 0));
+    }
+}
+
+static LRESULT CALLBACK PaneProc(HWND hwnd, UINT message,
+                                 WPARAM wParam, LPARAM lParam)
+{
+    switch (message) {
+    case WM_SIZE:
+        LayoutPane(hwnd);
+        return 0;
+
+    case WM_NOTIFY:
+    case WM_DRAWITEM:
+    case WM_MEASUREITEM:
+    case WM_COMMAND:
+        return SendMessage(GetParent(hwnd), message, wParam, lParam);
+    }
+    return DefWindowProc(hwnd, message, wParam, lParam);
+}
+
 BOOL GazetteWindowRegisterClasses(HINSTANCE instance)
 {
     WNDCLASSA cls;
@@ -1324,6 +1502,17 @@ BOOL GazetteWindowRegisterClasses(HINSTANCE instance)
     cls.hCursor       = LoadCursor(NULL, IDC_ARROW);
     cls.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     cls.lpszClassName = kReaderClass;
+
+    if (!RegisterClassA(&cls)) {
+        return FALSE;
+    }
+
+    ZeroMemory(&cls, sizeof(cls));
+    cls.lpfnWndProc   = PaneProc;
+    cls.hInstance     = instance;
+    cls.hCursor       = LoadCursor(NULL, IDC_ARROW);
+    cls.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    cls.lpszClassName = kPaneClass;
 
     return RegisterClassA(&cls) != 0;
 }

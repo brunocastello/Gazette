@@ -89,8 +89,9 @@ static BOOL InitControls(void)
              GetProcAddress(comctl, "InitCommonControlsEx");
     if (initEx != NULL) {
         icc.dwSize = sizeof(icc);
+        /* ICC_COOL_CLASSES is the rebar the toolbar sits in. */
         icc.dwICC  = ICC_TREEVIEW_CLASSES | ICC_LISTVIEW_CLASSES |
-                     ICC_BAR_CLASSES;
+                     ICC_BAR_CLASSES | ICC_COOL_CLASSES;
         if (initEx(&icc)) {
             return TRUE;
         }
@@ -296,6 +297,13 @@ static void AdjustMenus(HWND hwnd)
 static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message,
                                     WPARAM wParam, LPARAM lParam)
 {
+    /* The Find dialog reports through a message Windows numbers at run
+       time, so it cannot be a case label. */
+    if (message == GazetteWindowFindMessage()) {
+        GazetteWindowFindEvent((const FINDREPLACEA *)lParam);
+        return 0;
+    }
+
     switch (message) {
     case WM_CREATE:
         gMainWindow = hwnd;
@@ -464,6 +472,10 @@ static void HandleMessage(HWND hwnd, HACCEL accelerators, MSG *message)
 {
     if (gAboutWindow != NULL && IsDialogMessage(gAboutWindow, message)) {
         return;                     /* Return and Escape close the box */
+    }
+    if (GazetteWindowFindDialog() != NULL &&
+        IsDialogMessage(GazetteWindowFindDialog(), message)) {
+        return;                     /* the Find dialog's own keys */
     }
     if (accelerators != NULL &&
         TranslateAcceleratorA(hwnd, accelerators, message)) {

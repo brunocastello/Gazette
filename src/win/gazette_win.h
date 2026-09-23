@@ -11,6 +11,7 @@
 
 #include <windows.h>
 #include <commctrl.h>
+#include <commdlg.h>
 
 /*
  * The icons, in the order tools/generate_win_assets.py lays them into
@@ -58,6 +59,17 @@ BOOL GazetteWindowNotify(HWND frame, NMHDR *header, LRESULT *result);
 /* A WM_COMMAND the window itself answers -- the toolbar's chevron. Returns
    TRUE when it was one. */
 BOOL GazetteWindowCommand(HWND frame, int id);
+
+/* The status bar's two sections: what the view holds, and what the
+   network is doing. */
+void GazetteWindowSetCount(const char *text);
+void GazetteWindowSetStatus(const char *text);
+
+/* The Find dialog, which is modeless: the loop gives it its keystrokes,
+   and the frame passes on the message it reports through. */
+HWND GazetteWindowFindDialog(void);
+UINT GazetteWindowFindMessage(void);
+void GazetteWindowFindEvent(const FINDREPLACEA *find);
 void GazetteWindowMinimumSize(POINT *minimum);
 
 #endif /* GAZETTE_WIN_H */
