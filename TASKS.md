@@ -58,7 +58,7 @@ Reuse Gateway’s Win32 networking and build patterns. Keep portable core pure.
 - [~] Win32 window + message loop that polls the network layer. Loop done (PeekMessage + MsgWaitForMultipleObjects 100 ms, `PumpNetwork` idle slice); nothing to pump until the store and refresh join.
 - [ ] Show feed list / titles from cache or a live fetch.
 - [x] Quit cleanly; basic menus. (From the windows-port skeleton: menus mirror the Mac's; Quit, About, Hide Sidebar/Toolbar wired, the rest greyed.)
-- [ ] Fix the two faults from the 86Box run (2026-09-22): the toolbar is laid out 0 px tall (created with CCS_NORESIZE, measured before sizing — use TB_GETBUTTONSIZE), and the headline header shows garbage (SetHeaderItem with HDI_TEXT and NULL text — resize with HDI_WIDTH only).
+- [~] Fix the faults from the 86Box runs (2026-09-22, 2026-09-23 — Bruno's screenshot: no toolbar; "Ü÷w" in the headline header; the Feeds and headline headers not following their panes' widths and split into extra sections; no From/Date headers wanted — one headline header, as on the Mac): the toolbar is laid out 0 px tall (created with CCS_NORESIZE, measured before sizing — use TB_GETBUTTONSIZE), and the headline header shows garbage (SetHeaderItem with HDI_TEXT and NULL text — resize with HDI_WIDTH only).
 - [ ] `gazette_win_window.c:930` unused variable `dc` (compiler warning).
 
 ### W3 – Full three-pane UI
