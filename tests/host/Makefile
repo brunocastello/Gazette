@@ -28,8 +28,12 @@ run_tests: run_tests.c $(SOURCES)
 test: run_tests
 	./run_tests
 
+# Not a test: the article path by hand, for .github/workflows/probe.yml.
+probe: probe.c $(SOURCES)
+	$(CC) $(CFLAGS) -o $@ $^
+
 clean:
-	rm -f run_tests
+	rm -f run_tests probe
 	rm -rf run_tests.dSYM
 
 .PHONY: all test clean

@@ -1,0 +1,35 @@
+# Put one article link through Gazette's full-text path — the Google News
+# resolver and the extractor, the portable C the Mac runs — and print the
+# reader pane's text in the log. Run by hand from the Actions tab, or
+# `gh workflow run probe.yml -f link=<url>`. The pages it fetched are kept
+# as an artifact, to become host-test fixtures when a rule comes of them.
+name: Probe an article
+
+on:
+  workflow_dispatch:
+    inputs:
+      link:
+        description: "Article link, Google News or direct"
+        required: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build the probe
+        run: make -C tests/host probe
+
+      - name: Probe
+        env:
+          LINK: ${{ inputs.link }}
+        run: bash tools/probe.sh "$LINK" probe-out
+
+      - name: Keep the pages
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-pages
+          path: probe-out/

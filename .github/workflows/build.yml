@@ -47,6 +47,11 @@ jobs:
       - name: Run host tests
         run: make -C tests/host
 
+      # probe.yml's tool, built here so it cannot rot between the times it
+      # is wanted.
+      - name: Build the article probe
+        run: make -C tests/host probe
+
   build:
     needs: host-tests
     runs-on: ubuntu-latest

@@ -10,6 +10,7 @@ build/
 # Host test binary and its debug bundle (tests/host/Makefile builds these).
 tests/host/run_tests
 tests/host/run_tests.dSYM/
+tests/host/probe
 
 # Python bytecode from tools/
 __pycache__/
