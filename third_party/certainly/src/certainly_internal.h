@@ -128,6 +128,12 @@ struct MacTLS_Context {
     bool            tls13_active;
     /* True once TLS 1.3 handshake has started (ClientHello sent) */
     bool            tls13_started;
+    /*
+     * True once BearSSL's TLS 1.2 handshake has opened the application data
+     * channels. Latched: from then on the connection is Connected until it
+     * closes, whatever the engine's momentary state (Gazette patch §24).
+     */
+    bool            tls12_established;
 };
 
 struct MacTLS_Config {

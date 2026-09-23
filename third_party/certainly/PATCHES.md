@@ -583,3 +583,29 @@ transport. The notifier tells connections apart by its context argument, so
 nothing about the routine is per-connection — and a single process-lifetime
 UPP settles the question of when to call `DisposeOTNotifyUPP()`, which one UPP
 per transport would have to do on every path out of `ct_transport_destroy()`.
+
+## §24 — TLS 1.2: an established connection went back to "handshaking"
+
+*Gazette's patch, and one worth carrying back to Gateway.*
+
+`MacTLS_Pump`'s TLS 1.2 path set the state from BearSSL's engine on every
+pass: `SENDAPP` or `RECVAPP` meant Connected, and only `SENDREC`/`RECVREC`
+meant Handshaking. With the single mono buffer Certainly gives BearSSL, the
+second case also happens *after* the handshake: once a request is flushed and
+the first response record is still arriving, the buffer belongs to that
+record, so neither application channel is open. The state dropped back to
+Handshaking, and `MacTLS_Read` — which only reads in Connected, Closing or
+Closed — returned -1 on a perfectly good connection.
+
+Every TLS 1.3 server takes the TLS 1.3 path and never saw it; a TLS 1.2-only
+server failed on every request. Gazette found it on www.nbcnews.com (Akamai,
+TLS 1.2 only), with a debug build reporting *"the connection failed while
+reading headers (www.nbcnews.com: TLS connected, err 0, ssl 0, OT -3162,
+alert 0)"* — no version, because the state was not Connected; no error,
+because it was not Error either; and OT's -3162 is only `kOTNoDataErr`, the
+would-block of a non-blocking read.
+
+The fix latches `tls12_established` the first time an application channel
+opens, and after that record-level-only states leave the state alone. A
+close or an engine error still moves it, through `BR_SSL_CLOSED` above.
+

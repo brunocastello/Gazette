@@ -962,9 +962,20 @@ MacTLS_State MacTLS_Pump(MacTLS_Context *ctx)
     if (st & (BR_SSL_SENDAPP | BR_SSL_RECVAPP)) {
         /* Application data channels are open — handshake is done */
         ctx->state = kMacTLS_Connected;
+        ctx->tls12_established = true;
     } else if (st & (BR_SSL_SENDREC | BR_SSL_RECVREC)) {
-        /* Only record-level I/O — still handshaking */
-        ctx->state = kMacTLS_Handshaking;
+        /*
+         * Only record-level I/O. Before the handshake completes that is the
+         * handshake; after it, it is BearSSL between records (Gazette patch
+         * §24). With one mono buffer, a request just flushed and a response
+         * record arriving leave neither SENDAPP nor RECVAPP set, and calling
+         * that "handshaking" turned an established connection into one
+         * MacTLS_Read refused -- every TLS 1.2-only server failed "while
+         * reading headers".
+         */
+        if (!ctx->tls12_established) {
+            ctx->state = kMacTLS_Handshaking;
+        }
     }
 
     return ctx->state;
