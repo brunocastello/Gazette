@@ -22,7 +22,7 @@ jobs:
 
       - name: Build brssl from the vendored BearSSL
         working-directory: third_party/certainly/bearssl
-        run: cc -O1 -w -Iinc -Isrc -o "$RUNNER_TEMP/brssl" src/*/*.c tools/*.c
+        run: cc -O1 -w -Iinc -Isrc -o "$RUNNER_TEMP/brssl" src/*.c src/*/*.c tools/*.c
 
       - name: Request
         env:
