@@ -795,19 +795,8 @@ static void CaptureByte(GazetteFeedParser *p, char c)
     } else {
         p->captureTruncated = 1;
     }
-    if (p->bodyCapturing) {
-        /* Out of room with an earlier body still held in front: this one is
-           not empty, so it is the one that will be kept, and the earlier
-           one goes now rather than cost it the room. */
-        if (p->bodyLen + 1 >= p->bodyCap && p->bodyMark > 0) {
-            memmove(p->bodyBuf, p->bodyBuf + p->bodyMark,
-                    p->bodyLen - p->bodyMark);
-            p->bodyLen -= p->bodyMark;
-            p->bodyMark = 0;
-        }
-        if (p->bodyLen + 1 < p->bodyCap) {
-            p->bodyBuf[p->bodyLen++] = c;
-        }
+    if (p->bodyCapturing && p->bodyLen + 1 < p->bodyCap) {
+        p->bodyBuf[p->bodyLen++] = c;
     }
 }
 
@@ -820,26 +809,6 @@ static void BodyBegin(GazetteFeedParser *p)
     }
     p->bodyMark      = p->bodyLen;
     p->bodyCapturing = 1;
-}
-
-/* Whether the body being captured holds anything but whitespace. A body
-   of nothing but a picture strips to no text at all, and is still the
-   article's. */
-static int BodyHasContent(const GazetteFeedParser *p)
-{
-    size_t i;
-
-    if (!p->bodyCapturing) {
-        return 0;
-    }
-    for (i = p->bodyMark; i < p->bodyLen; i++) {
-        char c = p->bodyBuf[i];
-
-        if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
-            return 1;
-        }
-    }
-    return 0;
 }
 
 /* And ends: kept, it replaces what was held; turned down, it goes. */
@@ -1302,7 +1271,7 @@ static void EndElement(GazetteFeedParser *p, const char *name)
                     gz_copy_n(p->article.body, sizeof p->article.body,
                               p->scratch, len);
                 }
-                BodyEnd(p, len > 0 || BodyHasContent(p));
+                BodyEnd(p, len > 0);
                 break;
             }
             case kFieldDate: {

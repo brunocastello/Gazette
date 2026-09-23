@@ -1469,33 +1469,7 @@ int GazetteExtractFeed(GazetteExtract *e, const char *data, size_t len)
  * Runs on the finished text, one paragraph at a time, closing each gap as
  * it goes; a photo marker is a paragraph too and never matches.
  */
-/*
- * A paragraph that is nothing but one short link — "Comments", "Read more",
- * "Continue reading" — which a feed's body ends with, pointing back at the
- * page the reader already has the address of. The feed parser's summary has
- * the same rule (kLinkLineMax there); a feed's body laid out here keeps it.
- */
-enum { kLinkOnlyMax = 48 };
-
-static int ParagraphIsLinkOnly(const char *s, size_t len)
-{
-    size_t i;
-
-    if (len < 3 || len > kLinkOnlyMax + 2 ||
-        s[0] != (char)kGazetteMarkLinkOn ||
-        s[len - 1] != (char)kGazetteMarkLinkOff) {
-        return 0;
-    }
-    for (i = 1; i + 1 < len; i++) {
-        if (s[i] == (char)kGazetteMarkLinkOn ||
-            s[i] == (char)kGazetteMarkLinkOff) {
-            return 0;               /* two links, or text between them */
-        }
-    }
-    return 1;
-}
-
-static size_t DropTrailers(char *s, size_t len, int fragment)
+static size_t DropTrailers(char *s, size_t len)
 {
     size_t in  = 0;
     size_t out = 0;
@@ -1524,10 +1498,6 @@ static size_t DropTrailers(char *s, size_t len, int fragment)
             }
             if (!drop && end > at && (ParagraphIsPlug(s + at, end - at) ||
                                       ParagraphIsNotice(s + at, end - at))) {
-                drop = 1;
-            }
-            if (!drop && fragment && end > in &&
-                ParagraphIsLinkOnly(s + in, end - in)) {
                 drop = 1;
             }
         }
@@ -1586,7 +1556,7 @@ size_t GazetteExtractFinish(GazetteExtract *e)
     len = GazetteDecodeEntities(e->out, e->outLen);
     len = gz_utf8_to_ascii(e->out, len, e->scratch, sizeof e->scratch);
     len = gz_flatten_lines(e->scratch, len);
-    len = DropTrailers(e->scratch, len, e->fragment);
+    len = DropTrailers(e->scratch, len);
 
     e->textLen = len;
 

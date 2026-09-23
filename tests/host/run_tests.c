@@ -1840,11 +1840,6 @@ static void TestFeedBodies(void)
         "<item><title>Three</title><link>https://e/3</link>"
         "<content:encoded><![CDATA[<p>Whole.</p>]]></content:encoded>"
         "<description>Less.</description></item>"
-        /* Nothing but a picture is still a body, and wins. */
-        "<item><title>Five</title><link>https://e/5</link>"
-        "<description>Words.</description>"
-        "<content:encoded><![CDATA[<img src=\"p.jpg\">]]></content:encoded>"
-        "</item>"
         /* No body at all. */
         "<item><title>Four</title><link>https://e/4</link></item>"
         "</channel></rss>";
@@ -1856,7 +1851,7 @@ static void TestFeedBodies(void)
         char what[96];
 
         ParseBodies(kDoc, chunk, buf, sizeof buf);
-        CheckLong("every item is handed over with its body", gBodyCount, 5);
+        CheckLong("every item is handed over with its body", gBodyCount, 4);
         snprintf(what, sizeof what, "content:encoded wins, as HTML%s", how);
         CheckStr(what, gBodies[0],
                  "<p>Full <b>text</b>.</p><img src=\"a.jpg\">");
@@ -1864,14 +1859,11 @@ static void TestFeedBodies(void)
         CheckStr(what, gBodies[1], "&lt;p&gt;Only a summary&lt;/p&gt;");
         snprintf(what, sizeof what, "a later summary loses%s", how);
         CheckStr(what, gBodies[2], "<p>Whole.</p>");
-        snprintf(what, sizeof what, "a picture alone is a body%s", how);
-        CheckStr(what, gBodies[3], "<img src=\"p.jpg\">");
         snprintf(what, sizeof what, "no body is empty%s", how);
-        CheckStr(what, gBodies[4], "");
+        CheckStr(what, gBodies[3], "");
     }
 
-    /* A body longer than the buffer is cut, not lost — and the summary
-       held in front of it gives up its room rather than squeeze it. */
+    /* A body longer than the buffer is cut, not lost. */
     ParseBodies(kDoc, 0, buf, 8);
     CheckStr("a long body is cut at the buffer", gBodies[0], "<p>Full");
 
@@ -1928,22 +1920,6 @@ static void TestExtractFragment(void)
     GazetteExtractFinish(&e);
     CheckTrue("as a page, the text starts at the article's block",
               strstr(GazetteExtractText(&e), "Intro line") == NULL);
-
-    /* The link back to the page a body ends with goes; a sentence with a
-       link in it stays. */
-    {
-        static const char kTrail[] =
-            "<p>Story with <a href=\"https://e/x\">a link</a> in it.</p>"
-            "<p><a href=\"https://e/1#comments\">Comments</a></p>";
-
-        GazetteExtractInitFragment(&e);
-        GazetteExtractFeed(&e, kTrail, strlen(kTrail));
-        GazetteExtractFinish(&e);
-        CheckTrue("a trailing link-only line goes",
-                  strstr(GazetteExtractText(&e), "Comments") == NULL);
-        CheckTrue("a link inside a sentence stays",
-                  strstr(GazetteExtractText(&e), "a link") != NULL);
-    }
 
     /* What is dropped by name is still dropped. */
     {
