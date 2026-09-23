@@ -66,6 +66,7 @@ static Boolean InitGazette(void);
 static Boolean BuildMenuBar(void);
 static void    InstallAppleEventHandlers(void);
 static void    RunGazette(void);
+static void    PumpNetwork(void);
 static void    DoExitGazette(void);
 
 static void    HandleEvent(const EventRecord *event);
@@ -670,21 +671,29 @@ static void RunGazette(void)
         if (WaitNextEvent(everyEvent, &event, kSleepTicks, nil)) {
             HandleEvent(&event);
         } else {
-            /* Idle. This is the one place network I/O advances, and nothing
-               it calls blocks: a pump does whatever work is available this
-               pass and returns. Blocking here would stop the whole machine
-               cooperating, not just Gazette. */
-            PumpRefresh();
-            PumpFullText();
-            ResumeFullText();
-            PumpPhotos();
-            ResumePhotos();
-            CheckAutoRefresh();
+            PumpNetwork();
         }
         /* Either way, the window has a look at where the mouse is: the
            toolbar's buttons answer it without an event of their own. */
         GazetteUIIdle();
     }
+}
+
+/*
+ * Idle. This is the one place network I/O advances, and nothing it calls
+ * blocks: a pump does whatever work is available this pass and returns.
+ * Blocking here would stop the whole machine cooperating, not just Gazette.
+ * The About window's own loop calls it too, so a picture half-fetched when
+ * About opens is not left with its connection standing still.
+ */
+static void PumpNetwork(void)
+{
+    PumpRefresh();
+    PumpFullText();
+    ResumeFullText();
+    PumpPhotos();
+    ResumePhotos();
+    CheckAutoRefresh();
 }
 
 static void HandleEvent(const EventRecord *event)
@@ -1171,9 +1180,7 @@ static void HandleAbout(void)
                 break;
         }
 
-        PumpRefresh();
-        PumpFullText();
-        ResumeFullText();
+        PumpNetwork();
     }
 
     DisposeWindow(about);
