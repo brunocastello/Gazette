@@ -41,30 +41,36 @@ Goal: release-ready quality matching the 0.1.0 release notes, with known deliber
 Reuse Gateway’s Win32 networking and build patterns. Keep portable core pure.
 
 ### W0 – Foundation
-- [ ] Audit portable core for any accidental Mac-only headers or assumptions.
-- [ ] Document Windows constraints and event/network polling model (short note in `docs/` or CLAUDE.md).
-- [ ] CI skeleton: MinGW-w64 job that builds a stub `Gazette.exe` (mirror Gateway).
+- [x] Audit portable core for any accidental Mac-only headers or assumptions.
+  2026-09-23, subagent audit spot-checked: the 17 host-tested files include only `<stddef.h>` / `<string.h>`, no Mac types, no Mac `#ifdef`s. Behaviour to carry at the seams is listed in `docs/windows.md` (CR line endings on write, local-time clock contract, `\n` paragraphs, reader marks, `Boolean` in core.h, OPML titles typed with accents are MacRoman).
+- [x] Document Windows constraints and event/network polling model — `docs/windows.md` (tracked via a .gitignore exception).
+- [x] CI skeleton: MinGW-w64 job that builds `Gazette.exe` — `windows.yml`, now network-capable (288 KB with TLS; floppy image 1.17 MB free). Fails the build on WS2_32, CryptoAPI, post-4.0 comctl32, libgcc_s or libwinpthread imports.
 
 ### W1 – Network + store adapter
-- [ ] Winsock adapter for the same non-blocking fetch API used on OS 9.
-- [ ] File I/O / cache path for Windows (prefs + cache folders beside the exe or under AppData — pick one, document it).
-- [ ] Host tests still pass; no Mac headers in portable code.
+- [x] Winsock adapter for the same non-blocking fetch API used on OS 9.
+  `src/net/` shared; `gazette_net_ot.c` / `gazette_net_win32.c` hold start-up, clock and allocation. Certainly `transport_win32.c` + `entropy_win32.c` (PATCHES §25: CryptoAPI looked up, not imported). Proved by `GazetteNetTest.exe` under Wine on CI, run 35893041987: 4/4 live fetches — Google News (TLS 1.3, 38 articles parsed), NBC feed (25), www.nbcnews.com (TLS 1.2, 1.4 MB), 9to5Mac (100).
+- [x] File I/O / cache path for Windows (prefs + cache folders beside the exe or under AppData — pick one, document it).
+  Beside `Gazette.exe` (as Gateway), falling back to `%APPDATA%\Gazette`, then `%USERPROFILE%\Gazette`; `Gazette Preferences.txt`, `Gazette Cache\`; CRLF on write. See `docs/windows.md`.
+- [ ] Win32 store: `src/store/` on Win32 files per the above, plus GetOpenFileName / GetSaveFileName for OPML.
+- [x] Host tests still pass; no Mac headers in portable code. 765/765, run 35893041948.
 
 ### W2 – Minimal shell
-- [ ] Win32 window + message loop that polls the network layer.
+- [~] Win32 window + message loop that polls the network layer. Loop done (PeekMessage + MsgWaitForMultipleObjects 100 ms, `PumpNetwork` idle slice); nothing to pump until the store and refresh join.
 - [ ] Show feed list / titles from cache or a live fetch.
-- [ ] Quit cleanly; basic menus.
+- [x] Quit cleanly; basic menus. (From the windows-port skeleton: menus mirror the Mac's; Quit, About, Hide Sidebar/Toolbar wired, the rest greyed.)
+- [ ] Fix the two faults from the 86Box run (2026-09-22): the toolbar is laid out 0 px tall (created with CCS_NORESIZE, measured before sizing — use TB_GETBUTTONSIZE), and the headline header shows garbage (SetHeaderItem with HDI_TEXT and NULL text — resize with HDI_WIDTH only).
+- [ ] `gazette_win_window.c:930` unused variable `dc` (compiler warning).
 
 ### W3 – Full three-pane UI
 - [ ] Sidebar (groups + feeds), headline list, article pane.
 - [ ] Resizable panes / splitters with classic common controls.
-- [ ] Read / starred / search / OPML import-export.
+- [ ] Read / starred / search / OPML import-export. OPML is the engine's (`gazette_opml.c`, already in the Windows build): Bruno wants to move his OS 9 feed list over with Export Feeds… / Import Feeds….
 - [ ] Full-text extract path wired.
 
 ### W4 – Polish + ship
 - [ ] Native look on 95–XP (no modern flat redesign).
-- [ ] Installer or zip distribution via CI.
-- [ ] Icon (`.ico`) derived from the same artwork.
+- [x] Installer or zip distribution via CI. (`Gazette.zip` + 1.44 MB `Gazette.img`, artifact `Gazette-win32`.)
+- [x] Icon (`.ico`) derived from the same artwork. (`Resources/win/Gazette.ico`, `tools/generate_win_assets.py`.)
 - [ ] Smoke-tested on at least one 9x/Me and one 2000/XP environment (86Box or real).
 - [ ] README section for Windows.
 
