@@ -101,7 +101,8 @@ struct GazetteFetch {
 
 static void Fail(GazetteFetch *f, const char *what)
 {
-    char detail[96];
+    char detail[112];
+    char where[112];
 
     /* The stream's own description says how far the connection got, which is
        the difference between a name that will not resolve and an address that
@@ -116,8 +117,12 @@ static void Fail(GazetteFetch *f, const char *what)
        0" — is for whoever is debugging the transport, and reads as noise to
        whoever is reading the news. It is compiled in only when asked for. */
     if (f->stream.plain != NULL || f->stream.sec != NULL) {
-        GazetteStreamDescribe(&f->stream, detail, sizeof detail);
+        /* Which host: a Google News article is four of them in a row. */
+        GazetteStreamDescribe(&f->stream, where, sizeof where);
+        snprintf(detail, sizeof detail, "%s: %s", f->url.host, where);
     }
+#else
+    (void)where;
 #endif
     if (detail[0] != '\0') {
         snprintf(f->errorText, sizeof f->errorText, "%s (%s)", what, detail);

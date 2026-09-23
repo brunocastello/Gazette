@@ -32,6 +32,14 @@ on:
       - 'tests/**'
       - '.github/workflows/build.yml'
   workflow_dispatch:
+    inputs:
+      net_debug:
+        # A build whose fetch failures name the host and the TLS layer's own
+        # error codes on the status line. For one test on the Mac; never
+        # tagged or released.
+        description: "Build with GAZETTE_NET_DEBUG"
+        type: boolean
+        default: false
 
 jobs:
   # The portable modules — the prefs grammar, the feed parsing and the ASCII
@@ -112,7 +120,7 @@ jobs:
           echo "Retro68 Rez templates:"
           ls "$RINCLUDES" | grep -i 'APPL\.r$' || echo "  (none found -- Rez will fail)"
 
-          cmake -S . -B build \
+          cmake -S . -B build ${{ inputs.net_debug && '-DGAZETTE_NET_DEBUG=ON' || '' }} \
             -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN/powerpc-apple-macos/cmake/retrocarbon.toolchain.cmake"
           cmake --build build --verbose
 

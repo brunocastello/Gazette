@@ -361,8 +361,16 @@ const char *GazetteStreamDescribe(const GazetteStream *s, char *out, size_t cap)
             snprintf(out, cap, "TLS not started");
             return out;
         }
-        snprintf(out, cap, "TLS %s, OT %ld, alert %u",
+        /* The version says whose code was running — Certainly's own for
+           1.3, BearSSL's engine for 1.2 — and the two error numbers are
+           Certainly's MacTLS_Error and BearSSL's BR_ERR_*, which between
+           them name the fault a phase alone cannot. */
+        snprintf(out, cap, "TLS%s %s, err %d, ssl %d, OT %ld, alert %u",
+                 MacTLS_GetVersion(s->sec) == kMacTLS_Version13 ? "1.3" :
+                 MacTLS_GetVersion(s->sec) == kMacTLS_Version12 ? "1.2" : "",
                  TLSPhaseText(MacTLS_GetPhase(s->sec)),
+                 (int)MacTLS_GetError(s->sec),
+                 MacTLS_GetBearSSLError(s->sec),
                  MacTLS_GetTransportError(s->sec),
                  MacTLS_GetAlert(s->sec));
         return out;
