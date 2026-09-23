@@ -151,7 +151,7 @@ jobs:
       - name: Upload disk image + app bundle
         uses: actions/upload-artifact@v4
         with:
-          name: Gazette-carbon-ppc-macos9
+          name: Gazette-carbon-ppc-macos9${{ inputs.net_debug && '-NETDEBUG' || '' }}
           path: |
             build/Gazette.dsk
             build/Gazette.APPL

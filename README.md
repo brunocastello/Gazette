@@ -12,8 +12,8 @@ An RSS and Atom reader for Mac OS 9, in the spirit of Newsstand.
 <img width="1173" height="703" alt="Screenshot 2026-09-19 at 4 25 51 PM" src="https://github.com/user-attachments/assets/8b692f8d-d942-4ac2-b796-7b7e616a5687" />
 
 Gazette is a native Carbon application for PowerPC Macs. It fetches feeds
-over modern TLS itself, shows each article as the feed carries it, with the
-pictures in it, and looks modern — the three-pane window, the toolbar, the Platinum controls are all the
+over modern TLS itself, reads the whole article rather than the summary, shows
+the pictures in it, and looks modern — the three-pane window, the toolbar, the Platinum controls are all the
 system's own.
 
 > A hobby project pointed at a 27-year-old operating system with no memory
@@ -24,10 +24,10 @@ system's own.
 - **Feeds**: RSS 2.0 and Atom, with auto-discovery from a site's address.
   Feeds live in groups; drag them to reorder. Today, All Unread and Starred
   are standing views across every feed.
-- **The article**: what the feed carries for it — the full text where the
-  feed has it, its summary where not — with headings, emphasis, lists and
-  links kept, and up to three of its pictures drawn in place. Gazette reads
-  the feed, not the website, the way NetNewsWire does.
+- **The article**: opening a headline fetches the page it links to and
+  extracts the story — headline, byline and furniture left out — with
+  headings, emphasis, lists and links kept, and up to three pictures drawn
+  in place. The feed's summary stands in when the page cannot be had.
 - **Offline**: every feed is cached, so the window is readable the moment it
   opens and works with the machine unplugged. Read and starred marks survive
   a refresh.
@@ -64,7 +64,7 @@ parts, and uploads a disk image and a StuffIt archive. Tags become releases.
 src/portable/   HTTP, URLs, prefs grammar, transliteration — no system headers
 src/prefs/      the preferences and OPML
 src/feeds/      RSS/Atom parsing, the store, Google News, photos
-src/extract/    an article's HTML laid out for the reader
+src/extract/    the article out of its page
 src/net/        Open Transport and TLS, one fetch at a time
 src/store/      the only File Manager calls
 src/ui/         the window and the dialogs
