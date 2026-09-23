@@ -8,9 +8,9 @@
 # What is deliberately absent, and why:
 #
 #   src/main.cpp, src/ui/       The Toolbox shell. src/win/ replaces it.
-#   src/store/                  The File Manager. The Win32 file seam is
-#                               the next piece of work (docs/windows.md
-#                               says where its files go).
+#   src/store/gazette_store.c   The File Manager. gazette_store_win32.c
+#                               stands in for it (docs/windows.md says
+#                               where its files go).
 #   src/feeds/gazette_feeds.c   Not in the host-tested set either: these
 #   gazette_index.c, _photos.c  reach for the Toolbox, and join with the
 #                               store.
@@ -113,10 +113,15 @@ add_library(gazette_engine STATIC
     src/net/gazette_net.c
     src/net/gazette_net_win32.c
     src/net/gazette_fetch.c
+
+    # The file store -- gazette_store.h in Win32 files, beside the
+    # executable (docs/windows.md)
+    src/store/gazette_store_win32.c
 )
 target_include_directories(gazette_engine PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_options(gazette_engine PRIVATE -Wall -Wextra -Wno-unused-parameter)
-target_link_libraries(gazette_engine PUBLIC certainly)
+# comdlg32 for the Open and Save As dialogs: on every Windows 95.
+target_link_libraries(gazette_engine PUBLIC certainly comdlg32)
 
 set(GAZETTE_WIN_SOURCES
     # The Windows shell. The split mirrors the Mac build's: _main is
@@ -194,4 +199,10 @@ target_link_options(GazetteNetTest PRIVATE
     -Wl,--major-os-version,4
     -Wl,--minor-os-version,0
 )
+
+# GazetteStoreTest: the file store the same way, run under Wine by CI.
+add_executable(GazetteStoreTest tests/win/gazette_storetest.c)
+target_link_libraries(GazetteStoreTest PRIVATE gazette_engine)
+target_link_options(GazetteStoreTest PRIVATE -static -static-libgcc
+    -Wl,--gc-sections)
 
