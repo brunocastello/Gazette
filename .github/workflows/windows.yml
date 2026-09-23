@@ -29,6 +29,7 @@ on:
       - 'src/extract/**'
       - 'src/net/**'
       - 'src/store/**'
+      - 'src/core/**'
       - 'third_party/certainly/**'
       - 'tests/win/**'
       - 'Resources/win/**'
@@ -45,6 +46,7 @@ on:
       - 'src/extract/**'
       - 'src/net/**'
       - 'src/store/**'
+      - 'src/core/**'
       - 'third_party/certainly/**'
       - 'tests/win/**'
       - 'Resources/win/**'
@@ -159,6 +161,15 @@ jobs:
         env:
           WINEDEBUG: -all
         run: wine build-win/GazetteStoreTest.exe
+
+      - name: The whole engine, under Wine (core, refresh, cache, read state)
+        env:
+          WINEDEBUG: -all
+        run: |
+          # In a folder of its own, so the first run's preferences are
+          # written fresh, as on a new machine.
+          mkdir -p enginetest && cp build-win/GazetteEngineTest.exe enginetest/
+          wine enginetest/GazetteEngineTest.exe
 
       - name: Package release assets (.zip and floppy .img)
         run: tools/make_img.sh build-win/Gazette.exe package

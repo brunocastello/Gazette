@@ -11,9 +11,8 @@
 #   src/store/gazette_store.c   The File Manager. gazette_store_win32.c
 #                               stands in for it (docs/windows.md says
 #                               where its files go).
-#   src/feeds/gazette_feeds.c   Not in the host-tested set either: these
-#   gazette_index.c, _photos.c  reach for the Toolbox, and join with the
-#                               store.
+#   src/core/gazette_sys_mac.c  NewPtr, GetDateTime and ReadLocation;
+#                               gazette_sys_win32.c stands in for it.
 #   gazette_net_ot.c,           Open Transport. gazette_net_win32.c and
 #   transport_ot.c, entropy.c   Certainly's transport_win32.c and
 #                               entropy_win32.c stand in for them.
@@ -117,6 +116,15 @@ add_library(gazette_engine STATIC
     # The file store -- gazette_store.h in Win32 files, beside the
     # executable (docs/windows.md)
     src/store/gazette_store_win32.c
+
+    # The engine above the store: the article store and its refresh, read
+    # state, pictures and the core seam -- the Mac's files, over
+    # gazette_sys_win32.c for memory, the clock and the time zone
+    src/core/gazette_core.c
+    src/core/gazette_sys_win32.c
+    src/feeds/gazette_feeds.c
+    src/feeds/gazette_index.c
+    src/feeds/gazette_photos.c
 )
 target_include_directories(gazette_engine PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_options(gazette_engine PRIVATE -Wall -Wextra -Wno-unused-parameter)
@@ -204,5 +212,11 @@ target_link_options(GazetteNetTest PRIVATE
 add_executable(GazetteStoreTest tests/win/gazette_storetest.c)
 target_link_libraries(GazetteStoreTest PRIVATE gazette_engine)
 target_link_options(GazetteStoreTest PRIVATE -static -static-libgcc
+    -Wl,--gc-sections)
+
+# GazetteEngineTest: core, refresh, cache and read state, end to end.
+add_executable(GazetteEngineTest tests/win/gazette_enginetest.c)
+target_link_libraries(GazetteEngineTest PRIVATE gazette_engine)
+target_link_options(GazetteEngineTest PRIVATE -static -static-libgcc
     -Wl,--gc-sections)
 

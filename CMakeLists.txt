@@ -47,6 +47,7 @@ set(GAZETTE_SOURCES
 
     # Core — thin C seam between the Toolbox shell and the engine
     src/core/gazette_core.c
+    src/core/gazette_sys_mac.c
 
     # UI — the Platinum three-pane window, and every Toolbox call it makes
     src/ui/platinum_window.c

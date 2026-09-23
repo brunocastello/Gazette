@@ -16,10 +16,7 @@
 #include "portable/gazette_portable.h"
 #include "store/gazette_store.h"
 
-#include <DateTimeUtils.h>      /* GetDateTime */
-#include <MacMemory.h>          /* NewPtrClear, DisposePtr */
-#include <OSUtils.h>            /* MachineLocation */
-#include <Script.h>             /* ReadLocation */
+#include "core/gazette_sys.h"       /* memory, the clock, the zone */
 
 #include <stdio.h>
 #include <string.h>
@@ -210,7 +207,7 @@ static void RememberReadPage(void)
     if (page == NULL) {
         if (gReadPages[gReadNext] == NULL) {
             gReadPages[gReadNext] =
-                (ReadPage *)NewPtrClear((Size)sizeof(ReadPage));
+                (ReadPage *)GazetteSysAlloc(sizeof(ReadPage));
             if (gReadPages[gReadNext] == NULL) {
                 return;             /* no room: read it again next time */
             }
@@ -246,13 +243,6 @@ static void RecallReadPage(const ReadPage *page, int articleIndex)
     gFullState   = kGazetteRefreshDone;
     gz_copy_n(gHeldKey, sizeof gHeldKey, page->key, strlen(page->key));
 }
-
-/*
- * Seconds between the Macintosh epoch (1904) and the Unix one (1970).
- * GetDateTime counts from the former; every date in the store counts from the
- * latter, because that is what feeds date their articles in.
- */
-enum { kMacToUnixEpoch = 2082844800L };
 
 /*
  * The first line of a cache file. The number is not only the field layout: a
@@ -294,40 +284,23 @@ static void SaveCache(const char *url, long fetchedAt);
 static int  BeginFullText(void);
 static void PauseFullText(void);
 
+/* Now, on the reader's clock -- local time. See gazette_sys.h. */
 static long UnixNow(void)
 {
-    unsigned long macNow = 0;
-
-    GetDateTime(&macNow);
-    return (long)macNow - kMacToUnixEpoch;
+    return GazetteSysLocalNow();
 }
 
 /*
- * Seconds east of GMT, as the Date & Time control panel has it. A feed
- * timestamps its articles in UTC and the Macintosh clock keeps local time, so
- * this is what stands between the two — and it lives here, beside UnixNow,
- * because this is the file that already owns Gazette's idea of the clock.
+ * Seconds east of GMT. A feed timestamps its articles in UTC and the reader's
+ * clock keeps local time, so this is what stands between the two.
  *
  * Which way it goes matters and is easy to get backwards: UnixNow is already
  * local, so it is an article's date that this is added to, never the current
  * time. Adding it to both counts it twice.
- *
- * gmtDelta shares a long with the daylight saving flag and is only three
- * bytes wide, which is why it is masked and sign-extended by hand rather than
- * read straight out. A machine that has never been told where it is answers
- * zero, which is the right answer for a machine keeping UTC.
  */
 long GazetteFeedsGMTDelta(void)
 {
-    MachineLocation loc;
-    long            delta;
-
-    ReadLocation(&loc);
-    delta = loc.u.gmtDelta & 0x00FFFFFFL;
-    if (delta >= 0x00800000L) {
-        delta -= 0x01000000L;       /* the three-byte field's sign */
-    }
-    return delta;
+    return GazetteSysGMTDelta();
 }
 
 /* An article's timestamp read on the reader's own clock. Zero means "no date"
@@ -691,11 +664,11 @@ static void ReleaseRefresh(void)
         gFetch = NULL;
     }
     if (gParser != NULL) {
-        DisposePtr((Ptr)gParser);
+        GazetteSysFree(gParser);
         gParser = NULL;
     }
     if (gDiscover != NULL) {
-        DisposePtr((Ptr)gDiscover);
+        GazetteSysFree(gDiscover);
         gDiscover = NULL;
     }
 }
@@ -729,7 +702,7 @@ int GazetteFeedsRefreshStart(int feedIndex, const char *url, long maxArticles,
     gz_copy_n(gCurrentURL, sizeof gCurrentURL, url ? url : "",
               url ? strlen(url) : 0);
 
-    gParser = (GazetteFeedParser *)NewPtrClear((Size)sizeof(GazetteFeedParser));
+    gParser = (GazetteFeedParser *)GazetteSysAlloc(sizeof(GazetteFeedParser));
     if (gParser == NULL) {
         snprintf(gError, sizeof gError, "Not enough memory to read the feed.");
         gState = kGazetteRefreshFailed;
@@ -742,7 +715,7 @@ int GazetteFeedsRefreshStart(int feedIndex, const char *url, long maxArticles,
         /* Failing to allocate this is not a reason to fail the refresh: the
            feed may well parse, and then discovery was never needed. */
         gDiscover = (GazetteFeedParser *)
-                        NewPtrClear((Size)sizeof(GazetteFeedParser));
+                        GazetteSysAlloc(sizeof(GazetteFeedParser));
         if (gDiscover != NULL) {
             GazetteFeedParserInitDiscovery(gDiscover);
         }
@@ -867,11 +840,11 @@ static void ReleaseFullText(void)
         gFullFetch = NULL;
     }
     if (gExtract != NULL) {
-        DisposePtr((Ptr)gExtract);
+        GazetteSysFree(gExtract);
         gExtract = NULL;
     }
     if (gResolve != NULL) {
-        DisposePtr((Ptr)gResolve);
+        GazetteSysFree(gResolve);
         gResolve = NULL;
     }
     gFullStage = kFullStageArticle;
@@ -1008,7 +981,7 @@ static void FailFullText(const char *why)
 /* The story's own page, into the extractor. */
 static int BeginArticleStage(void)
 {
-    gExtract = (GazetteExtract *)NewPtrClear((Size)sizeof(GazetteExtract));
+    gExtract = (GazetteExtract *)GazetteSysAlloc(sizeof(GazetteExtract));
     if (gExtract == NULL) {
         FailFullText("Not enough memory to read the article.");
         return 0;
@@ -1036,7 +1009,7 @@ static int BeginFullText(void)
     gFullState          = kGazetteRefreshRunning;
 
     if (gz_contains_ci(gWantURL, strlen(gWantURL), "news.google.com/")) {
-        gResolve = (GNewsResolve *)NewPtrClear((Size)sizeof(GNewsResolve));
+        gResolve = (GNewsResolve *)GazetteSysAlloc(sizeof(GNewsResolve));
         if (gResolve == NULL) {
             FailFullText("Not enough memory to read the article.");
             return 0;
@@ -1044,7 +1017,7 @@ static int BeginFullText(void)
         if (!GazetteGNewsArticleToken(gWantURL, gResolve->token,
                                       sizeof gResolve->token)) {
             /* On Google, but not a story link: read it as it is. */
-            DisposePtr((Ptr)gResolve);
+            GazetteSysFree(gResolve);
             gResolve = NULL;
             return BeginArticleStage();
         }
@@ -1175,7 +1148,7 @@ GazetteRefreshState GazetteFeedsFullTextPump(void)
                   strlen(gResolve->url));
         GazetteFetchDestroy(gFullFetch);
         gFullFetch = NULL;
-        DisposePtr((Ptr)gResolve);
+        GazetteSysFree(gResolve);
         gResolve = NULL;
         (void)BeginArticleStage();
         return gFullState;
@@ -1636,8 +1609,8 @@ int GazetteFeedsLoadSmart(int which, long maxArticles)
     gSmartWhich = which;
 
     /*
-     * UnixNow is already local — GetDateTime reads the Macintosh clock, and
-     * the Macintosh clock keeps local time — so it is the *article* that has
+     * UnixNow is already local — the reader's clock keeps local time on
+     * both systems — so it is the *article* that has
      * to be converted and not the other way round. Putting the offset on both
      * sides counts it twice, which on this side of the Atlantic quietly moves
      * "Today" by an hour and at the ends of the day by a whole one.

@@ -10,9 +10,16 @@
 #ifndef GAZETTE_CORE_H
 #define GAZETTE_CORE_H
 
-/* MacTypes.h is the seam's one permitted system header — it is what makes
-   Boolean/true/false mean the same thing on both sides. */
+/* MacTypes.h is the seam's one permitted system header on the Mac — it is
+   what makes Boolean/true/false mean the same thing on both sides. Windows
+   has no Boolean, so the build (GAZETTE_WIN32) says the same thing in C:
+   one byte, as MacTypes.h has it, and C99's true and false. */
+#ifdef GAZETTE_WIN32
+#include <stdbool.h>
+typedef unsigned char Boolean;
+#else
 #include <MacTypes.h>
+#endif
 
 #include <stddef.h>
 

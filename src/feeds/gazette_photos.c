@@ -11,7 +11,7 @@
 #include "portable/gazette_portable.h"
 #include "portable/gazette_url.h"
 
-#include <MacMemory.h>          /* NewPtrClear, DisposePtr */
+#include "core/gazette_sys.h"       /* GazetteSysAlloc, GazetteSysFree */
 
 #include <string.h>
 
@@ -193,7 +193,7 @@ int GazettePhotosStart(int articleIndex, const char *baseURL,
         count = kGazetteMaxPhotos;
     }
 
-    gBlock = (Block *)NewPtrClear((Size)sizeof(Block));
+    gBlock = (Block *)GazetteSysAlloc(sizeof(Block));
     if (gBlock == NULL ||
         !GazetteURLSplit(baseURL, strlen(baseURL), &gBlock->base)) {
         GazettePhotosCancel();
@@ -254,7 +254,7 @@ void GazettePhotosCancel(void)
 {
     DropLine();
     if (gBlock != NULL) {
-        DisposePtr((Ptr)gBlock);
+        GazetteSysFree(gBlock);
         gBlock = NULL;
     }
     memset(gPhotos, 0, sizeof gPhotos);
