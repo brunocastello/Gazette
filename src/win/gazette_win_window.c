@@ -904,6 +904,14 @@ BOOL GazetteWindowCreate(HWND frame, HINSTANCE instance)
      * row on every version of comctl32 there is.
      */
     gRowSpacer = ImageList_Create(1, gRowHeight, ILC_COLOR, 1, 1);
+    /* White, said outright: every pane on Windows is the window colour,
+       and a list view with no rows yet is otherwise at the mercy of
+       whatever last painted under it. comctl32 4.0 has both messages. */
+    SendMessage(gHeadlines, LVM_SETBKCOLOR, 0,
+                (LPARAM)GetSysColor(COLOR_WINDOW));
+    SendMessage(gHeadlines, LVM_SETTEXTBKCOLOR, 0,
+                (LPARAM)GetSysColor(COLOR_WINDOW));
+
     SendMessage(gHeadlines, LVM_SETIMAGELIST, LVSIL_SMALL,
                 (LPARAM)gRowSpacer);
 
@@ -1500,6 +1508,8 @@ static void LayoutPane(HWND pane)
     if (body != NULL) {
         MoveWindow(body, 0, gHeaderHeight, width,
                    client.bottom - gHeaderHeight, TRUE);
+        /* Paint the list afresh, background and all, wherever it moved. */
+        InvalidateRect(body, NULL, TRUE);
     }
 
     /* The headline list's one column is exactly as wide as the list's

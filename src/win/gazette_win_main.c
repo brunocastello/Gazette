@@ -446,7 +446,12 @@ static HWND CreateMainWindow(int showCommand)
         }
     }
 
-    hwnd = CreateWindowExA(0, kMainClass, "Gazette", WS_OVERLAPPEDWINDOW,
+    /* WS_CLIPCHILDREN: the frame paints its own grey -- the edge round the
+       toolbar strip, the gaps -- and never over the panes, whose white is
+       theirs to draw. Without it a frame repaint left the headline list
+       grey until something made the list paint again. */
+    hwnd = CreateWindowExA(0, kMainClass, "Gazette",
+                           WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                            CW_USEDEFAULT, CW_USEDEFAULT, width, height,
                            NULL, NULL, gInstance, NULL);
     if (hwnd == NULL) {
