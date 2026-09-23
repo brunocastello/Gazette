@@ -14,71 +14,18 @@
 #include <certainly.h>
 #include <certainly_transport.h>
 
-#include <OpenTransport.h>      /* InitOpenTransport / CloseOpenTransport */
-#include <Events.h>             /* TickCount */
-
 #include <stdio.h>
 #include <string.h>
 
 #include "gazette_net.h"
 
-static int gNetUp = 0;
-
-/* ------------------------------------------------------------------ */
-/* Library lifecycle                                                   */
-/* ------------------------------------------------------------------ */
-
-int GazetteNetInit(void)
-{
-    OSStatus err;
-
-    if (gNetUp) {
-        return 1;
-    }
-
-    /*
-     * Under Carbon this is a macro for
-     * InitOpenTransportInContext(kInitOTForApplicationMask, NULL) — the plain
-     * entry point is "CarbonLib: not available". See PATCHES.md §22 for why
-     * that redirection needs OTCARBONAPPLICATION=1 from the build.
-     *
-     * Certainly never calls this itself; it assumes the application has. On
-     * a machine with no TCP/IP configured it fails here rather than at
-     * connect time, which is the useful place for it to fail.
-     */
-    err = InitOpenTransport();
-    if (err != noErr) {
-        return 0;
-    }
-
-    if (MacTLS_Init() != kMacTLS_OK) {
-        CloseOpenTransport();
-        return 0;
-    }
-
-    gNetUp = 1;
-    return 1;
-}
-
-void GazetteNetShutdown(void)
-{
-    if (!gNetUp) {
-        return;
-    }
-    MacTLS_Shutdown();
-    CloseOpenTransport();
-    gNetUp = 0;
-}
-
-int GazetteNetIsUp(void)
-{
-    return gNetUp;
-}
-
-unsigned long GazetteNetTicks(void)
-{
-    return (unsigned long)TickCount();
-}
+/*
+ * The streams below speak only Certainly — MacTLS_* and ct_transport_* —
+ * which is the same interface over Open Transport on Mac OS 9 and over
+ * Winsock on Windows. What differs between the two systems is starting the
+ * network, the clock and the allocator, and those live in
+ * gazette_net_ot.c and gazette_net_win32.c.
+ */
 
 /* ------------------------------------------------------------------ */
 /* Streams                                                            */
@@ -103,7 +50,7 @@ int GazetteStreamConnect(GazetteStream *s, const char *host,
     GazetteStreamInit(s);
     s->startTicks = GazetteNetTicks();
 
-    if (!gNetUp) {
+    if (!GazetteNetIsUp()) {
         s->state = kGazetteStreamError;
         return 0;
     }

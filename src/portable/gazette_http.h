@@ -24,7 +24,13 @@ extern "C" {
  * names itself honestly is easier for an operator to interpret in a log than
  * one pretending to be Netscape.
  */
+#ifdef GAZETTE_WIN32
+/* The Windows build says so: set by cmake/GazetteWindows.cmake, never by
+   the host tests, so what they check is the Mac's. */
+#define kGazetteUserAgent "Gazette/0.1.0 (Windows; Win32)"
+#else
 #define kGazetteUserAgent "Gazette/0.1.0 (Macintosh; Mac OS 9; PowerPC)"
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Requests                                                            */

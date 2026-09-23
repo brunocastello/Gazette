@@ -8,28 +8,90 @@
 # What is deliberately absent, and why:
 #
 #   src/main.cpp, src/ui/       The Toolbox shell. src/win/ replaces it.
-#   src/net/, src/store/        Open Transport and the File Manager. The
-#                               Winsock and Win32 file seams are the next
-#                               two pieces of work.
+#   src/store/                  The File Manager. The Win32 file seam is
+#                               the next piece of work (docs/windows.md
+#                               says where its files go).
 #   src/feeds/gazette_feeds.c   Not in the host-tested set either: these
-#   gazette_index.c, _photos.c  reach for the Toolbox.
-#   third_party/certainly       Ships transport_win32.c, so TLS has a
-#                               Windows transport waiting. It joins the
-#                               build with src/net/, not before.
+#   gazette_index.c, _photos.c  reach for the Toolbox, and join with the
+#                               store.
+#   gazette_net_ot.c,           Open Transport. gazette_net_win32.c and
+#   transport_ot.c, entropy.c   Certainly's transport_win32.c and
+#                               entropy_win32.c stand in for them.
 #
-# Everything that is here is exactly the set tests/host already compiles
-# with a plain cc, which is the same claim of portability made twice: if
-# a module builds on Linux and under MinGW and on Retro68, it really does
-# carry no system headers.
+# The engine below is one static library, linked by the application and by
+# GazetteNetTest, the console program CI runs under Wine to prove the
+# network path against live servers.
 
 enable_language(RC)
 
-set(GAZETTE_WIN_SOURCES
-    # The Windows shell. The split mirrors the Mac build's: _main is
-    # src/main.cpp and _window is src/ui/platinum_window.c.
-    src/win/gazette_win_main.c
-    src/win/gazette_win_window.c
+# Everything, everywhere in this build:
+#
+#   0x0400 is Windows 95 / NT 4.0, so the headers offer nothing later.
+#   __USE_MINGW_ANSI_STDIO gives the C99 snprintf family from libmingwex.
+#   msvcrt's _snprintf does not terminate on truncation and returns -1
+#   rather than the length wanted, and the engine's snprintf calls rely on
+#   both -- the same reason Gateway's Makefile.win32 sets it.
+#   -Os and section garbage collection: the program has to fit on a floppy
+#   with room to spare, and TLS is most of it.
+add_compile_definitions(
+    _WIN32_WINNT=0x0400
+    WINVER=0x0400
+    __USE_MINGW_ANSI_STDIO=1
+    GAZETTE_WIN32=1        # the user-agent says Windows; see gazette_http.h
+)
+set(CMAKE_C_FLAGS_RELEASE "-Os -DNDEBUG")
+add_compile_options(-ffunction-sections -fdata-sections)
 
+# ------------------------------------------------------------------ #
+# TLS: BearSSL + Certainly, vendored from Gateway, as on the Mac      #
+# ------------------------------------------------------------------ #
+
+set(CERTAINLY_DIR ${CMAKE_SOURCE_DIR}/third_party/certainly)
+
+file(GLOB BEARSSL_SOURCES
+    ${CERTAINLY_DIR}/bearssl/src/*/*.c
+    ${CERTAINLY_DIR}/bearssl/src/settings.c
+)
+add_library(bearssl STATIC ${BEARSSL_SOURCES})
+target_include_directories(bearssl
+    PUBLIC  ${CERTAINLY_DIR}/bearssl/inc
+    PRIVATE ${CERTAINLY_DIR}/bearssl/src
+)
+# BearSSL's inner.h compiles a CryptGenRandom seeder for any _WIN32
+# target. Certainly seeds every engine from its own pool, so that seeder
+# is never used -- and it would put CryptoAPI in the import table, which a
+# Windows 95 without OSR2 or IE 3.02 refuses to load. Gateway turns it
+# off for the same reason; PATCHES.md §25 is the rest of that story.
+target_compile_definitions(bearssl PRIVATE BR_USE_WIN32_RAND=0)
+target_compile_options(bearssl PRIVATE -w)
+
+# No CERTAINLY_OPEN_TRANSPORT: its absence is what selects the Winsock
+# types and certainly_compat.h's calloc / free / GetTickCount.
+add_library(certainly STATIC
+    ${CERTAINLY_DIR}/src/certainly.c
+    ${CERTAINLY_DIR}/src/transport_win32.c
+    ${CERTAINLY_DIR}/src/entropy_win32.c
+    ${CERTAINLY_DIR}/src/ca_roots.c
+    ${CERTAINLY_DIR}/src/tls13_keysched.c
+    ${CERTAINLY_DIR}/src/tls13_record.c
+    ${CERTAINLY_DIR}/src/tls13_handshake.c
+)
+target_include_directories(certainly
+    PUBLIC  ${CERTAINLY_DIR}/include
+    PUBLIC  ${CERTAINLY_DIR}/src         # certainly_transport.h
+    PRIVATE ${CERTAINLY_DIR}/bearssl/inc
+)
+target_compile_definitions(certainly PRIVATE BR_USE_WIN32_RAND=0)
+target_compile_options(certainly PRIVATE -Wall -Wno-unused-parameter)
+# Winsock 1.1: WSOCK32, on every Windows 95. WS2_32 was a separate
+# download there, and nothing here needs it.
+target_link_libraries(certainly PRIVATE bearssl PUBLIC wsock32)
+
+# ------------------------------------------------------------------ #
+# The engine: host-tested portable code, and the network over it      #
+# ------------------------------------------------------------------ #
+
+add_library(gazette_engine STATIC
     # Portable helpers -- pure C, host-tested (tests/host)
     src/portable/gazette_portable.c
     src/portable/gazette_url.c
@@ -44,6 +106,23 @@ set(GAZETTE_WIN_SOURCES
     src/feeds/gazette_googlenews.c
     src/feeds/gazette_gnews_topics.c
     src/extract/gazette_extract.c
+
+    # Networking -- the Mac's streams and fetch, unchanged, over
+    # Certainly's Winsock transport; gazette_net_win32.c is the only
+    # Windows file among them
+    src/net/gazette_net.c
+    src/net/gazette_net_win32.c
+    src/net/gazette_fetch.c
+)
+target_include_directories(gazette_engine PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_compile_options(gazette_engine PRIVATE -Wall -Wextra -Wno-unused-parameter)
+target_link_libraries(gazette_engine PUBLIC certainly)
+
+set(GAZETTE_WIN_SOURCES
+    # The Windows shell. The split mirrors the Mac build's: _main is
+    # src/main.cpp and _window is src/ui/platinum_window.c.
+    src/win/gazette_win_main.c
+    src/win/gazette_win_window.c
 )
 
 add_executable(Gazette WIN32
@@ -71,7 +150,7 @@ target_compile_options(Gazette PRIVATE -Wall -Wextra -Wno-unused-parameter)
 # for this list is the version, not the library: nothing newer than
 # comctl32 4.0 may appear in the import table, which the workflow checks
 # by printing it on every build.
-target_link_libraries(Gazette PRIVATE user32 gdi32 comctl32)
+target_link_libraries(Gazette PRIVATE gazette_engine user32 gdi32 comctl32)
 
 # Static everything: no libgcc, no libstdc++, no pthread DLL. What is
 # copied onto the disk image has to be the whole application.
@@ -83,6 +162,7 @@ target_link_libraries(Gazette PRIVATE user32 gdi32 comctl32)
 target_link_options(Gazette PRIVATE
     -static
     -static-libgcc
+    -Wl,--gc-sections
     -mwindows
     -Wl,--major-subsystem-version,4
     -Wl,--minor-subsystem-version,0
@@ -94,3 +174,24 @@ target_link_options(Gazette PRIVATE
 # make_img.sh is what puts it there. Stripping is the difference between
 # comfortably and not.
 target_link_options(Gazette PRIVATE $<$<CONFIG:Release>:-s>)
+
+# ------------------------------------------------------------------ #
+# GazetteNetTest: the network path as a console program               #
+#                                                                    #
+# Not shipped. windows.yml runs it under Wine against live feeds, over #
+# TLS 1.3 and TLS 1.2 servers, which is the only way to see the Winsock #
+# path work without a Windows machine. Same engine, same flags.        #
+# ------------------------------------------------------------------ #
+
+add_executable(GazetteNetTest tests/win/gazette_nettest.c)
+target_link_libraries(GazetteNetTest PRIVATE gazette_engine)
+target_link_options(GazetteNetTest PRIVATE
+    -static
+    -static-libgcc
+    -Wl,--gc-sections
+    -Wl,--major-subsystem-version,4
+    -Wl,--minor-subsystem-version,0
+    -Wl,--major-os-version,4
+    -Wl,--minor-os-version,0
+)
+

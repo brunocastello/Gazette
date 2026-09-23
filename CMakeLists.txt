@@ -55,6 +55,7 @@ set(GAZETTE_SOURCES
     # Networking — stream over Certainly's Open Transport client + TLS,
     # and the non-blocking HTTP GET driven from the event loop
     src/net/gazette_net.c
+    src/net/gazette_net_ot.c
     src/net/gazette_fetch.c
 
     # Feed engine — RSS/Atom parser, Google News maps, article store

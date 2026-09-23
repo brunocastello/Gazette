@@ -62,8 +62,9 @@ typedef struct {
 /* Library lifecycle                                                   */
 /* ------------------------------------------------------------------ */
 
-/* Open Transport and Certainly, once each, before any stream is opened.
-   Returns 1 on success. Safe to call more than once. */
+/* The system's TCP/IP (Open Transport, or Winsock) and Certainly, once each,
+   before any stream is opened. Returns 1 on success. Safe to call more than
+   once. */
 int  GazetteNetInit(void);
 void GazetteNetShutdown(void);
 
@@ -72,8 +73,20 @@ void GazetteNetShutdown(void);
    configured rather than anything Gazette did. */
 int  GazetteNetIsUp(void);
 
-/* Ticks, for timeouts kept by the layers above this one. */
+/* Ticks — sixtieths of a second, as TickCount counts them — for the
+   timeouts kept by the layers above this one. */
 unsigned long GazetteNetTicks(void);
+
+/* Zeroed memory for the layers above, and its release: NewPtrClear and
+   DisposePtr on Mac OS 9, calloc and free on Windows. */
+void *GazetteNetAlloc(size_t size);
+void  GazetteNetFree(void *p);
+
+/*
+ * The four functions above and the two before them are the whole of what
+ * differs between the systems: gazette_net_ot.c is Open Transport's,
+ * gazette_net_win32.c is Winsock's. Everything else in src/net/ is shared.
+ */
 
 /* ------------------------------------------------------------------ */
 /* Streams                                                            */

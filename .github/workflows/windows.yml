@@ -27,6 +27,9 @@ on:
       - 'src/prefs/**'
       - 'src/feeds/**'
       - 'src/extract/**'
+      - 'src/net/**'
+      - 'third_party/certainly/**'
+      - 'tests/win/**'
       - 'Resources/win/**'
       - 'cmake/**'
       - 'CMakeLists.txt'
@@ -39,6 +42,9 @@ on:
       - 'src/prefs/**'
       - 'src/feeds/**'
       - 'src/extract/**'
+      - 'src/net/**'
+      - 'third_party/certainly/**'
+      - 'tests/win/**'
       - 'Resources/win/**'
       - 'cmake/**'
       - 'CMakeLists.txt'
@@ -51,7 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install the MinGW cross-toolchain
         run: |
@@ -102,13 +108,56 @@ jobs:
           i686-w64-mingw32-objdump -p build-win/Gazette.exe \
             | grep -i 'DLL Name'
 
+          # And what must never be imported, now that TLS and Winsock are
+          # in: Winsock 2 (a separate download on Windows 95), CryptoAPI
+          # (OSR2 / IE 3.02 and later -- PATCHES.md §25), and the comctl32
+          # entry point after 4.0. Any of them and a plain Windows 95
+          # refuses to load the file.
+          imports="$(i686-w64-mingw32-objdump -p build-win/Gazette.exe)"
+          for banned in WS2_32 CryptAcquireContext CryptGenRandom \
+                        InitCommonControlsEx libwinpthread libgcc_s; do
+            if echo "$imports" | grep -qi "$banned"; then
+              echo "::error::Gazette.exe imports $banned"
+              exit 1
+            fi
+          done
+          echo "No import newer than Windows 95 found."
+
           ls -l build-win/Gazette.exe
+
+      - name: Install Wine (32-bit)
+        run: |
+          set -euo pipefail
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wine32:i386 wine
+
+      - name: Fetch live feeds through the Windows network path
+        env:
+          WINEDEBUG: -all
+          WINEDLLOVERRIDES: "mscoree,mshtml="
+        run: |
+          set -euo pipefail
+          # GazetteNetTest is the application's own fetch over Winsock and
+          # Certainly, run under Wine against real servers:
+          #   news.google.com  -- TLS 1.3, Certainly's own handshake, and a
+          #                        feed that parses
+          #   feeds.nbcnews.com -- a second RSS host
+          #   www.nbcnews.com  -- TLS 1.2 only, BearSSL's engine
+          #                        (PATCHES.md §24)
+          #   9to5mac.com/feed -- chunked, redirects
+          wineboot --init >/dev/null 2>&1 || true
+          wine build-win/GazetteNetTest.exe \
+            "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en" \
+            "https://feeds.nbcnews.com/nbcnews/public/news" \
+            "https://www.nbcnews.com/" \
+            "https://9to5mac.com/feed/"
 
       - name: Package release assets (.zip and floppy .img)
         run: tools/make_img.sh build-win/Gazette.exe package
 
       - name: Upload executable, archive and disk image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: Gazette-win32
           path: |

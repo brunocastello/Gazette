@@ -14,8 +14,10 @@ set -euo pipefail
 LINK="$1"
 WORK="${2:-probe-out}"
 PROBE="$(dirname "$0")/../tests/host/probe"
+# The Mac's user-agent: the last of the definitions, the one outside
+# GAZETTE_WIN32.
 UA="$(sed -n 's/^#define kGazetteUserAgent "\(.*\)"$/\1/p' \
-      "$(dirname "$0")/../src/portable/gazette_http.h")"
+      "$(dirname "$0")/../src/portable/gazette_http.h" | tail -1)"
 ACCEPT="application/rss+xml, application/atom+xml, application/xml, text/xml, */*"
 
 mkdir -p "$WORK"

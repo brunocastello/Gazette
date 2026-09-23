@@ -28,6 +28,7 @@
 #include "gazette_win.h"
 #include "gazette_win_res.h"
 #include "gazette_version.h"
+#include "net/gazette_net.h"
 
 static const char kMainClass[]  = "GazetteMainWindow";
 static const char kAboutClass[] = "GazetteAboutWindow";
@@ -437,6 +438,38 @@ static HWND CreateMainWindow(int showCommand)
     return hwnd;
 }
 
+/*
+ * How long the loop sleeps when no message is waiting: 100 ms, the Mac's
+ * kSleepTicks of 6 at sixty to the second. The same number on both systems
+ * means the network advances at the same pace on both, and the pumps above
+ * were tuned against it.
+ */
+enum { kSleepMs = 100 };
+
+/*
+ * The idle branch: the one place network I/O advances, as in the Mac's
+ * RunGazette. Nothing it calls may block. The refresh, full-text and photo
+ * pumps join it as the Windows shell grows the engine's store; until then
+ * it has nothing to turn.
+ */
+static void PumpNetwork(void)
+{
+}
+
+/* One message, through the About box and the accelerators first. */
+static void HandleMessage(HWND hwnd, HACCEL accelerators, MSG *message)
+{
+    if (gAboutWindow != NULL && IsDialogMessage(gAboutWindow, message)) {
+        return;                     /* Return and Escape close the box */
+    }
+    if (accelerators != NULL &&
+        TranslateAcceleratorA(hwnd, accelerators, message)) {
+        return;
+    }
+    TranslateMessage(message);
+    DispatchMessage(message);
+}
+
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
                    LPSTR commandLine, int showCommand)
 {
@@ -471,18 +504,29 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
     accelerators = LoadAcceleratorsA(instance,
                                      MAKEINTRESOURCEA(IDR_ACCELERATORS));
 
-    while (GetMessage(&message, NULL, 0, 0) > 0) {
-        if (gAboutWindow != NULL &&
-            IsDialogMessage(gAboutWindow, &message)) {
-            continue;               /* Return and Escape close the box */
-        }
-        if (accelerators != NULL &&
-            TranslateAcceleratorA(hwnd, accelerators, &message)) {
-            continue;
-        }
-        TranslateMessage(&message);
-        DispatchMessage(&message);
-    }
+    /* Winsock and Certainly, once. A machine without TCP/IP still opens
+       the window and reads its cache; the status line says why nothing
+       refreshes, as the Mac's does when Open Transport will not open. */
+    (void)GazetteNetInit();
 
-    return (int)message.wParam;
+    /*
+     * The message loop is the Mac's WaitNextEvent loop in Win32's words.
+     * GetMessage would sleep until the next message and starve the network
+     * whenever the user sat still, so: take every message that is waiting,
+     * give the network its slice, then sleep until either a message arrives
+     * or kSleepMs passes. MsgWaitForMultipleObjects with no handles is
+     * exactly that wait, and is in USER32 from Windows 95 and NT 3.1 on.
+     */
+    for (;;) {
+        while (PeekMessageA(&message, NULL, 0, 0, PM_REMOVE)) {
+            if (message.message == WM_QUIT) {
+                GazetteNetShutdown();
+                return (int)message.wParam;
+            }
+            HandleMessage(hwnd, accelerators, &message);
+        }
+        PumpNetwork();
+        (void)MsgWaitForMultipleObjects(0, NULL, FALSE, kSleepMs,
+                                        QS_ALLINPUT);
+    }
 }

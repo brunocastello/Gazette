@@ -609,3 +609,22 @@ The fix latches `tls12_established` the first time an application channel
 opens, and after that record-level-only states leave the state alone. A
 close or an engine error still moves it, through `BR_SSL_CLOSED` above.
 
+## §25 — Windows: CryptoAPI looked up, not imported
+
+*Gazette's patch. Gateway's floor is Windows 95 OSR2, where the static
+import is harmless; Gazette's is the original Windows 95.*
+
+`entropy_win32.c` called `CryptAcquireContextA`, `CryptGenRandom` and
+`CryptReleaseContext` directly, which puts all three in the executable's
+import table under ADVAPI32. ADVAPI32 is on every Windows, but those entry
+points came with Windows 95 OSR2 and Internet Explorer 3.02. On a Windows 95
+without either, the loader refuses the program outright — no message worth
+reading, and nothing of Gazette's runs to explain it.
+
+The file's own comment already treats CryptoAPI as one source among several
+("used when it works and mixed with the rest either way"), so the fix only
+makes the code match: the three are found with `GetProcAddress` on a
+`LoadLibraryA("ADVAPI32.DLL")`, and when any is missing that source is
+skipped. The pool still gets QueryPerformanceCounter, the tick count, the
+system time, the cursor, the process and thread ids and the memory status.
+

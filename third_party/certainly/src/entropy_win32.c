@@ -45,21 +45,42 @@ void entropy_add(const void *data, size_t len)
     }
 }
 
+/*
+ * The three CryptoAPI calls, looked up rather than imported (Gazette patch
+ * §25). ADVAPI32 is on every Windows, but these entry points arrived with
+ * Windows 95 OSR2 and Internet Explorer 3.02; a static import of them stops
+ * the whole program loading on a Windows 95 that has neither, before a line
+ * of it runs. Looked up, their absence is one weak source fewer in a pool
+ * that never relied on them alone.
+ */
+typedef BOOL (WINAPI *AcquireFn)(HCRYPTPROV *, LPCSTR, LPCSTR, DWORD, DWORD);
+typedef BOOL (WINAPI *GenRandomFn)(HCRYPTPROV, DWORD, BYTE *);
+typedef BOOL (WINAPI *ReleaseFn)(HCRYPTPROV, DWORD);
+
 static void add_crypt_api(void)
 {
-    HCRYPTPROV prov = 0;
+    HCRYPTPROV    prov = 0;
     unsigned char buf[32];
+    HMODULE       advapi = LoadLibraryA("ADVAPI32.DLL");
+    AcquireFn     acquire;
+    GenRandomFn   genRandom;
+    ReleaseFn     release;
+
+    if (advapi == NULL)
+        return;
+    acquire   = (AcquireFn)GetProcAddress(advapi, "CryptAcquireContextA");
+    genRandom = (GenRandomFn)GetProcAddress(advapi, "CryptGenRandom");
+    release   = (ReleaseFn)GetProcAddress(advapi, "CryptReleaseContext");
 
     /* VERIFYCONTEXT: no key container is created or needed, which is what
      * makes this work on a machine that has never had one. */
-    if (!CryptAcquireContextA(&prov, NULL, NULL, PROV_RSA_FULL,
-                              CRYPT_VERIFYCONTEXT))
-        return;
-
-    if (CryptGenRandom(prov, sizeof(buf), buf))
-        entropy_add(buf, sizeof(buf));
-
-    CryptReleaseContext(prov, 0);
+    if (acquire != NULL && genRandom != NULL && release != NULL &&
+        acquire(&prov, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) {
+        if (genRandom(prov, sizeof(buf), buf))
+            entropy_add(buf, sizeof(buf));
+        release(prov, 0);
+    }
+    FreeLibrary(advapi);
 }
 
 static void add_timing(void)

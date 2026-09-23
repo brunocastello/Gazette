@@ -24,6 +24,7 @@ __pycache__/
 # notes are the one file in there that is.
 docs/*
 !docs/release-notes.md
+!docs/windows.md
 
 # Working notes for driving Claude Code sessions: the prompt book and the
 # pack's own readme. Kept beside the repo, not in it.

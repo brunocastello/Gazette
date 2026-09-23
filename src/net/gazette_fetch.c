@@ -15,7 +15,6 @@
 #include "portable/gazette_portable.h"
 #include "portable/gazette_url.h"
 
-#include <MacMemory.h>          /* NewPtrClear, DisposePtr */
 
 #include <stdio.h>
 #include <string.h>
@@ -297,13 +296,13 @@ GazetteFetch *GazetteFetchStartPost(const char *url, const char *contentType,
         return NULL;
     }
 
-    f = (GazetteFetch *)NewPtrClear((Size)sizeof(GazetteFetch));
+    f = (GazetteFetch *)GazetteNetAlloc(sizeof(GazetteFetch));
     if (f == NULL) {
         return NULL;
     }
 
     if (!GazetteURLSplit(url, strlen(url), &f->url)) {
-        DisposePtr((Ptr)f);
+        GazetteNetFree(f);
         return NULL;
     }
 
@@ -336,7 +335,7 @@ void GazetteFetchDestroy(GazetteFetch *f)
         return;
     }
     GazetteStreamDestroy(&f->stream);
-    DisposePtr((Ptr)f);
+    GazetteNetFree(f);
 }
 
 /* ------------------------------------------------------------------ */
