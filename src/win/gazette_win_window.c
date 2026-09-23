@@ -57,7 +57,9 @@ enum {
     kRowIndent      = 4,        /* pane edge to icon */
 
     kBandMargin     = 12,       /* what the rebar's band keeps for itself */
-    kEtchedEdge     = 2         /* the etched edge round the toolbar strip */
+    kEtchedEdge     = 2,        /* the etched edge round the toolbar strip */
+    kToolbarGap     = 3         /* window grey between the strip and the panes:
+                                   measured off Outlook Express 5, 2026-09-24 */
 };
 
 /* ------------------------------------------------------------------ */
@@ -1110,7 +1112,7 @@ void GazetteWindowLayout(HWND frame)
         }
     }
 
-    top    = gToolbarHidden ? 0 : gToolbarHeight;
+    top    = gToolbarHidden ? 0 : gToolbarHeight + kToolbarGap;
     bottom = client.bottom - gStatusHeight;
     if (bottom < top) {
         bottom = top;
@@ -1200,7 +1202,8 @@ void GazetteWindowMinimumSize(POINT *minimum)
 
     minimum->x = kMinSidebar + kMinList + kMinReader +
                  kSplitterWidth * 2 + frame;
-    minimum->y = gToolbarHeight + gHeaderHeight + gRowHeight * 3 +
+    minimum->y = gToolbarHeight + kToolbarGap + gHeaderHeight +
+                 gRowHeight * 3 +
                  gStatusHeight + GetSystemMetrics(SM_CYCAPTION) + 8;
 }
 
