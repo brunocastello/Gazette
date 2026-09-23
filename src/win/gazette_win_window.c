@@ -447,7 +447,9 @@ static int ToolbarWidth(void)
 
 /*
  * A window narrower than its toolbar, in two steps (Bruno's choice,
- * 2026-09-23: the Mac's rule, then Outlook Express 5's).
+ * 2026-09-23: the Mac's rule, then Outlook Express 5's). A button that
+ * loses its caption keeps its icon and gets narrower; the row keeps its
+ * height, measured with every caption on.
  *
  * First the Mac's: every button keeps its icon and captions go one at a
  * time from the right-hand end. On comctl32 4.70 and later each button is
@@ -558,19 +560,20 @@ static BOOL MakeToolbar(HWND parent)
     int i;
 
     /*
-     * TBSTYLE_LIST puts the caption beside the icon rather than under
-     * it, and TBSTYLE_FLAT makes a button flat until the mouse is over
-     * it -- which is the Mac toolbar's behaviour exactly, and Outlook
-     * Express's before it. Both arrived with comctl32 4.70, so on an
-     * original Windows 95 with no Internet Explorer ever installed the
-     * bar comes out raised with its captions underneath. That is the
-     * one place this window looks its age, and it is the version's, not
-     * ours: an unknown style bit is ignored rather than refused.
+     * Outlook Express 5's toolbar, which is Bruno's call for the Windows
+     * build (2026-09-23): flat buttons, each caption under its icon and
+     * wrapped to two lines at most, etched rules between the groups. The
+     * icons are his own sixteen-pixel drawings, kept as drawn.
+     *
+     * TBSTYLE_FLAT arrived with comctl32 4.70; on an original Windows 95
+     * with no Internet Explorer ever installed the buttons come out raised
+     * instead. An unknown style bit is ignored rather than refused, so that
+     * is the version's look, not a failure.
      */
     gToolbar = CreateWindowExA(
         0, TOOLBARCLASSNAMEA, NULL,
         WS_CHILD | WS_VISIBLE | TBSTYLE_TOOLTIPS | TBSTYLE_FLAT |
-        TBSTYLE_LIST | CCS_NODIVIDER | CCS_NORESIZE | CCS_NOPARENTALIGN,
+        CCS_NODIVIDER | CCS_NORESIZE | CCS_NOPARENTALIGN,
         0, 0, 0, 0, parent, (HMENU)IDC_TOOLBAR, gInstance, NULL);
 
     if (gToolbar == NULL) {
@@ -582,6 +585,15 @@ static BOOL MakeToolbar(HWND parent)
        DLL knows what it was handed. */
     SendMessage(gToolbar, TB_BUTTONSTRUCTSIZE, sizeof(TBBUTTON), 0);
     SendMessage(gToolbar, TB_SETIMAGELIST, 0, (LPARAM)gIcons);
+
+    /* Two lines of caption, and no wider than five lines are tall, so
+       "Hide Read Articles" wraps to "Hide Read / Articles" the way
+       OE's "Compose / Message" does. TB_SETMAXTEXTROWS is in 4.0;
+       TB_SETBUTTONWIDTH is 4.71, and before it a caption stays on one
+       line and its button is as wide as it needs. */
+    SendMessage(gToolbar, TB_SETMAXTEXTROWS, 2, 0);
+    SendMessage(gToolbar, TB_SETBUTTONWIDTH, 0,
+                MAKELPARAM(0, gLineHeight * 5));
 
     AddToolStrings();
     for (i = 0; i < kToolbarButtons; i++) {
@@ -704,13 +716,13 @@ BOOL GazetteWindowCreate(HWND frame, HINSTANCE instance)
     /*
      * The three panes are sunken wells, WS_EX_CLIENTEDGE, which is how a
      * list sits in a window on 95 to 2000 and what XP themes. The sidebar
-     * has buttons to open a group but no dotted lines: the Mac's has its
-     * disclosure triangles and nothing joining the rows.
+     * is a standard tree, dotted lines and all -- Windows' own way of
+     * showing groups, as Outlook Express's folder list does.
      */
     gSidebar = CreateWindowExA(
         WS_EX_CLIENTEDGE, WC_TREEVIEWA, NULL,
         WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-        TVS_HASBUTTONS | TVS_LINESATROOT | TVS_SHOWSELALWAYS,
+        TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS,
         0, 0, 0, 0, frame, (HMENU)IDC_SIDEBAR, instance, NULL);
 
     /*
