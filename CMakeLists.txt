@@ -18,6 +18,27 @@ set(CMAKE_C_EXTENSIONS ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_EXTENSIONS ON)
 
+# ------------------------------------------------------------------ #
+# Two shells, one engine                                             #
+#                                                                    #
+# Gazette is built for Mac OS 9 with Retro68 and for Windows 95       #
+# through XP with MinGW, from the same tree. The two builds share the #
+# engine below src/ and nothing else: the Windows one has no resource #
+# fork, no Rez pass and no add_application, so it is its own file     #
+# rather than a chain of if(WIN32) through the Carbon build.          #
+#                                                                    #
+#   cmake -S . -B build-win \
+#     -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-i686.toolchain.cmake \
+#     -DCMAKE_BUILD_TYPE=Release
+#                                                                    #
+# Everything below this block is the Carbon build and is only read    #
+# when the target is not Windows.                                    #
+# ------------------------------------------------------------------ #
+if(WIN32)
+    include(${CMAKE_SOURCE_DIR}/cmake/GazetteWindows.cmake)
+    return()
+endif()
+
 # Source files. Phase 0 is complete through main.cpp, the core seam, the
 # portable helpers, the preferences and the file store; the rest are still
 # the placeholders their comments say they are.
