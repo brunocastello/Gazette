@@ -232,12 +232,6 @@ void GazetteAppShowPhotos(void)
     }
 }
 
-/*
- * The Preferences window. Two numbers: how often the clock refreshes, and
- * how much of a feed is kept. Saved on OK, and the view shown again with
- * the new limit; the clock starts over, so a shorter interval is not
- * already overdue.
-
 /* ------------------------------------------------------------------ */
 /* OPML                                                                */
 /*                                                                     */
@@ -287,7 +281,7 @@ void GazetteAppImportOPML(void)
     GazetteCoreSavePrefs();
     GazetteUIFeedsChanged();
     snprintf(message, sizeof message, "%d feed%s added.", added,
-             (added == 1) ? : "s");
+             (added == 1) ? "" : "s");
     GazetteUISetStatus(message);
 }
 
@@ -729,7 +723,7 @@ void GazetteAppReloadView(void)
         GazetteAppShowSmart(GazetteFeedsCurrentSmart());
     } else if (GazetteUISelection(&kind, &selection) &&
                kind == kGazetteRowGroup) {
-        ShowGroup(selection);
+        GazetteAppShowGroup(selection);
     } else {
         GazetteAppShowFeed(GazetteUISelectedFeed());
     }

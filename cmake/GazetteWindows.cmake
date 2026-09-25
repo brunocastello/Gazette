@@ -138,7 +138,8 @@ target_link_libraries(gazette_engine PUBLIC certainly comdlg32)
 # every build meanwhile, so nothing Mac-only creeps into it.
 add_library(gazette_app STATIC src/app/gazette_app.c)
 target_link_libraries(gazette_app PUBLIC gazette_engine)
-target_compile_options(gazette_app PRIVATE -Wall -Wextra -Wno-unused-parameter)
+target_compile_options(gazette_app PRIVATE -Wall -Wextra -Wno-unused-parameter
+    -Werror=implicit-function-declaration -Werror=int-conversion)
 
 set(GAZETTE_WIN_SOURCES
     # The Windows shell. The split mirrors the Mac build's: _main is
