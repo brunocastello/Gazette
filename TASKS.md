@@ -55,6 +55,15 @@ Reuse Gateway’s Win32 networking and build patterns. Keep portable core pure.
 - [x] Host tests still pass; no Mac headers in portable code. 765/765, run 35893041948.
 
 ### W2 – Minimal shell
+
+> **Resume here (saved 2026-09-26, end of session).** Last commit `dd389a0`, both builds green (Win32 run 36199799353, 429 KB; Carbon green on the last shared change, host tests 767/767). Bruno: **"The UI is ok in the meantime"** -- the Windows window's look is accepted for now; the OLE32 blank-sheet icon still wants a glance on 86Box. The window fills from the engine (live Google News, full articles). Next, in order:
+> 1. Dialogs on Windows, in Windows' own controls with the Mac's fields: New Feed (URL, title, group), New Group, Edit Feed / Edit Group, Preferences (refresh minutes, articles kept) -- then ungrey New Feed / New Group / Edit / Preferences, and the toolbar's New button (a menu of Feed / Group, as on the Mac).
+> 2. Edit > Copy: a text selection in `gazette_win_reader.c` (drag to select, Ctrl+C, the clipboard).
+> 3. Contextual menus on sidebar rows and headlines (the Mac's kMenuCtx* sets); Tab between the three panes.
+> 4. A way to clear a search (Find cannot send empty text).
+> 5. Photos: decide the JPEG path (OleLoadPicture vs a small decoder) before building (step 4 below).
+> 6. Bruno's check on 86Box and XP.
+> Rules to keep: Windows styling is Windows-only (the Mac stays as in its last release, 0.3.6); nothing from 0x80-0x9F in Windows text; title is just "Gazette"; ask before touching anything outside the repo (never his VM disk images).
 - [~] Win32 window + message loop that polls the network layer. Loop done (PeekMessage + MsgWaitForMultipleObjects 100 ms, `PumpNetwork` idle slice); nothing to pump until the store and refresh join.
 - [~] Show feed list / titles from cache or a live fetch. Engine now builds for Windows: `gazette_sys.h` seam (memory, local clock, GMT delta) with `gazette_sys_mac.c` / `gazette_sys_win32.c`; core, feeds, index and photos in the Windows engine library; `Boolean` for Windows in core.h. `GazetteEngineTest.exe` under Wine, run 35901331809: first run writes default prefs with Google News; refresh fetched and cached 38 articles; cache reloads; read state kept; second launch reads the prefs. **Next: wire the window to it**, by the decided method (2026-09-22): lift main.cpp's platform-free logic into `src/app/` piece by piece, the Mac shell calling it too, Carbon green at every step. The pieces, in order:
     1. [x] A shared window interface, `src/app/gazette_ui.h`: the `GazetteUI*` calls `platinum_window.h` already declares (ArticlesChanged, ArticleTextChanged, SetStatus, FeedsChanged, Selection, SelectedFeed, KeepPlace, …), implemented by `platinum_window.c` on the Mac and `gazette_win_window.c` on Windows.
