@@ -49,6 +49,8 @@ BOOL  GazetteWindowCreate(HWND frame, HINSTANCE instance);
 void  GazetteWindowLayout(HWND frame);
 void  GazetteWindowDestroy(void);
 HFONT GazetteWindowFont(void);
+/* The light grey of the date bands and the rules between things. */
+COLORREF GazetteWindowLightTone(void);
 
 /* What to call when a row or a headline is chosen, and when Find asks for
    a search -- the Mac's GazetteUIOpen arguments. Before the window opens. */
@@ -85,6 +87,7 @@ HWND GazetteWindowFindDialog(void);
 UINT GazetteWindowFindMessage(void);
 void GazetteWindowFindEvent(const FINDREPLACEA *find);
 void GazetteWindowMinimumSize(POINT *minimum);
+void GazetteWindowColumnWidths(int *sidebar, int *list);
 
 /* The article pane, gazette_win_reader.c: the window class's procedure,
    and the text composed for an article (-1 for none) and laid out. */

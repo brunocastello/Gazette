@@ -713,7 +713,7 @@ static void Paint(HDC dc, const RECT *client, const RECT *dirty)
     /* The rule between the byline and the article, travelling with the
        text as the Mac's does. */
     if (gRuleY >= 0) {
-        HPEN pen = CreatePen(PS_SOLID, 1, GetSysColor(COLOR_BTNSHADOW));
+        HPEN pen = CreatePen(PS_SOLID, 1, GazetteWindowLightTone());
         HPEN old = (HPEN)SelectObject(dc, pen);
         int  y   = gRuleY - gScroll;
 

@@ -332,9 +332,47 @@ static int Matches(const GazetteArticle *a)
 }
 
 /*
- * Build the view. The store is held newest first — that is the order every
- * feed worth reading sends its items in, and the order the cache keeps — so
- * "Oldest on Top" is the same walk backwards rather than a sort.
+ * Put the store newest first, keeping the feed's own order among articles
+ * of the same moment, and anything undated at the end -- the rule the group
+ * merge (EmitMerge) inserts by. Feeds do not all send their items by date:
+ * Google News orders Top Stories by importance, and the headline list's day
+ * headings then came out as Today, Yesterday, Today again (Bruno, 2026-09-26).
+ *
+ * An insertion sort, one article moved at a time through a single spare: a
+ * feed is nearly in order already, so this is close to a single pass, and it
+ * needs no second store the size of the first.
+ */
+static GazetteArticle gSortSpare;
+
+static void SortByDate(void)
+{
+    int i;
+
+    for (i = 1; i < gArticleCount; i++) {
+        long date = gArticles[i].date;
+        int  at   = i;
+
+        if (date == 0) {
+            continue;               /* undated stays behind the dated */
+        }
+        while (at > 0 && (gArticles[at - 1].date == 0 ||
+                          gArticles[at - 1].date < date)) {
+            at--;
+        }
+        if (at == i) {
+            continue;
+        }
+        gSortSpare = gArticles[i];
+        memmove(&gArticles[at + 1], &gArticles[at],
+                (size_t)(i - at) * sizeof gArticles[0]);
+        gArticles[at] = gSortSpare;
+    }
+}
+
+/*
+ * Build the view. The store is held newest first (SortByDate, as it is
+ * filled) and the cache keeps it that way, so "Oldest on Top" is the same
+ * walk backwards rather than a sort.
  *
  * An article the reader has open is not dropped by "Hide Read Articles"
  * simply because opening it marked it read: this runs when the view changes,
@@ -805,6 +843,7 @@ GazetteRefreshState GazetteFeedsRefreshPump(void)
      * parse would be read back on the next launch as though it were real.
      */
     gFetchedAt = UnixNow();
+    SortByDate();
     SaveCache(gCurrentURL, gFetchedAt);
     PublishCounts();
     Refilter();
@@ -1478,6 +1517,7 @@ int GazetteFeedsLoadCache(int feedIndex, const char *url, long maxArticles)
     }
 
     gArticleCount = ctx.count;
+    SortByDate();                   /* caches written before it was sorted */
     gCurrentFeed  = feedIndex;
     gCurrentGroup = -1;
     gCurrentSmart = -1;

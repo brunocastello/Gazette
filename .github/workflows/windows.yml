@@ -186,9 +186,10 @@ jobs:
       - name: The window itself, under Wine, photographed
         # Not a gate: Wine draws its own common controls, not Windows 95's,
         # so this is for seeing what the window holds -- live headlines, the
-        # tree, the reader -- before a real machine does. A first run in a
-        # folder of its own: no preferences, so the default Google News feed
-        # is fetched, and its first article opened and its page read.
+        # tree, the reader -- before a real machine does. In a folder of its
+        # own, with a feed list that has a group in it (its folder icon, a
+        # feed inside it, one switched off): Google News is fetched, its
+        # first article opened and its page read.
         continue-on-error: true
         env:
           WINEDEBUG: -all
@@ -197,6 +198,12 @@ jobs:
           set -eu
           sudo apt-get install -y --no-install-recommends xvfb imagemagick
           mkdir -p shot && cp build-win/Gazette.exe shot/
+          printf '%s\r\n' \
+            'feed     = https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en | Google News - Top Stories' \
+            'group        = Technology' \
+            'feed     = https://9to5mac.com/feed/ | 9to5Mac' \
+            'feed-off = https://feeds.nbcnews.com/nbcnews/public/news | NBC News' \
+            'group-end    = 1' > "shot/Gazette Preferences.txt"
           Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 &
           export DISPLAY=:99
           sleep 3

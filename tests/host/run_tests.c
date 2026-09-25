@@ -491,7 +491,7 @@ static void TestPrefsParse(void)
        negative left is a second monitor to the left of the first. */
     {
         static const char window_ok[] =
-            "window = -200 60 700 480\rcolumns = 150 320\r";
+            "window = -200 60 700 480\rwindow-max = 1\rcolumns = 150 320\r";
         static const char window_short[] = "window = 40 48 620\r";
         static const char window_flat[]  =
             "window = 40 48 0 420\rcolumns = 150 0\r";
@@ -504,9 +504,11 @@ static void TestPrefsParse(void)
         CheckLong("window's height", q.windowHeight, 480);
         CheckLong("sidebar width", q.sidebarWidth, 150);
         CheckLong("headline column width", q.listWidth, 320);
+        CheckLong("window was maximized", q.windowMaximized, 1);
 
         GazettePrefsParse(window_short, sizeof window_short - 1, &q);
         CheckLong("three numbers place no window", q.windowWidth, 0);
+        CheckLong("no window-max line, not maximized", q.windowMaximized, 0);
 
         GazettePrefsParse(window_flat, sizeof window_flat - 1, &q);
         CheckLong("a window with no width is no window", q.windowWidth, 0);

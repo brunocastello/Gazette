@@ -264,6 +264,7 @@ void GazettePrefsSetDefaults(GazettePrefs *p)
     p->windowTop    = 0;
     p->windowWidth  = 0;
     p->windowHeight = 0;
+    p->windowMaximized = 0;
     p->sidebarWidth = 0;
     p->listWidth    = 0;
 
@@ -1051,6 +1052,8 @@ int GazettePrefsParse(const char *text, size_t len, GazettePrefs *p)
             p->windowWidth  = nums[2];
             p->windowHeight = nums[3];
         }
+        p->windowMaximized =
+            gz_prefs_get_num(text, len, "window-max", 0) ? 1 : 0;
         if (gz_prefs_get(text, len, "columns", value, sizeof value) &&
             ParseNums(value, nums, 2) == 2) {
             p->sidebarWidth = nums[0] > 0 ? nums[0] : 0;
@@ -1281,6 +1284,11 @@ size_t GazettePrefsSerialize(const GazettePrefs *p, char *out, size_t cap)
             Append(out, cap, &len, " ");
             AppendNum(out, cap, &len, p->windowHeight);
             Append(out, cap, &len, "\r");
+            /* Only when it was: the Mac has no such state, and a line that
+               always said 0 would be noise in its file. */
+            if (p->windowMaximized) {
+                Append(out, cap, &len, "window-max = 1\r");
+            }
         }
         if (haveColumns) {
             Append(out, cap, &len, "columns = ");

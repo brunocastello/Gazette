@@ -37,6 +37,13 @@
 #include "feeds/gazette_photos.h"
 #include "portable/gazette_portable.h"
 
+/* TVS_NOHSCROLL is comctl32 5.80's (IE5): no horizontal scroll bar in
+   the tree. An older tree ignores the bit, and the labels are fitted to
+   the width anyway (FitLabel), so none is ever needed. */
+#ifndef TVS_NOHSCROLL
+#define TVS_NOHSCROLL 0x8000
+#endif
+
 /* I_IMAGENONE is declared for _WIN32_IE 0x0501 and up; the value is what
    comctl32 4.70 already understood as "this button has no image". */
 #ifndef I_IMAGENONE
@@ -59,7 +66,8 @@ enum {
     kDefaultSidebar = 168,
     kDefaultList    = 280,
 
-    kHeadlinePad    = 3,        /* air above and below a headline block */
+    kHeadlinePad    = 6,        /* air above and below a headline block */
+    kBandPad        = 5,        /* and above and below a date band's words */
     kHeadlineLines  = 2,        /* a headline is always exactly two rows */
     kRowIconGap     = 4,        /* icon to text */
     kRowIndent      = 4,        /* pane edge to icon */
@@ -145,8 +153,15 @@ static HWND       gStatus;
 static HIMAGELIST gIcons;        /* every 16x16 icon, in kIcon* order */
 static HFONT      gUIFont;
 
+/* The widths the user chose, which are what is remembered, and the widths
+   shown, which are those fitted to the window as it is now. Two, so that a
+   narrow window -- or a minimized one, which is no width at all -- shows
+   narrower columns without forgetting the ones asked for (Bruno, 86Box,
+   2026-09-26: widths were lost on minimize and maximize). */
 static int  gSidebarWidth = kDefaultSidebar;
 static int  gListWidth    = kDefaultList;
+static int  gShownSidebar = kDefaultSidebar;
+static int  gShownList    = kDefaultList;
 static BOOL gSidebarHidden;
 static BOOL gToolbarHidden;
 
@@ -257,7 +272,7 @@ static void MeasureFonts(HWND frame)
      * number of rows.
      */
     gRowHeight = kHeadlinePad + gLineHeight * kHeadlineLines + kHeadlinePad;
-    gHeadingHeight = gLineHeight + 4;
+    gHeadingHeight = kBandPad + gLineHeight + kBandPad;
 
     /* The same face, bold: a headline not yet read. */
     {
@@ -890,11 +905,12 @@ BOOL GazetteWindowCreate(HWND frame, HINSTANCE instance)
     }
 
     /* And Windows' own: shell32's closed folder (3), open folder (4) and
-       document (1), which are the same numbers on every version from 95
-       to XP. ExtractIconEx is in the 95 shell. */
+       blank page (0) -- the plain sheet with its corner turned, not the
+       lined one (1) WordPad's documents wear. The same numbers on every
+       version from 95 to XP; ExtractIconEx is in the 95 shell. */
     gFolderIcon     = AddShellIcon(3);
     gOpenFolderIcon = AddShellIcon(4);
-    gDocIcon        = AddShellIcon(1);
+    gDocIcon        = AddShellIcon(0);
 
     if (!MakeToolbar(frame)) {
         return FALSE;
@@ -935,7 +951,8 @@ BOOL GazetteWindowCreate(HWND frame, HINSTANCE instance)
     gSidebar = CreateWindowExA(
         0, WC_TREEVIEWA, NULL,
         WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-        TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS,
+        TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS |
+        TVS_NOHSCROLL,
         0, 0, 0, 0, gSidebarPane, (HMENU)IDC_SIDEBAR, instance, NULL);
 
     /*
@@ -993,6 +1010,14 @@ BOOL GazetteWindowCreate(HWND frame, HINSTANCE instance)
        showing at all. */
     gSidebarHidden = GazetteCoreHideSidebar() ? TRUE : FALSE;
     gToolbarHidden = GazetteCoreHideToolbar() ? TRUE : FALSE;
+    {
+        long sidebar, list;
+
+        if (GazetteCoreColumnWidths(&sidebar, &list)) {
+            gSidebarWidth = (int)sidebar;
+            gListWidth    = (int)list;
+        }
+    }
     SyncSidebarRows();
 
     {
@@ -1106,26 +1131,28 @@ static void ClampWidths(int available)
     /* The sidebar gives way first and the article last -- the article
        is what the window is for. With the sidebar put away its width is
        left exactly as it was: hiding a column is not resizing it. */
+    gShownSidebar = gSidebarWidth;
     if (!gSidebarHidden) {
         int most = room - kMinList - kMinReader;
 
-        if (gSidebarWidth > most) {
-            gSidebarWidth = most;
+        if (gShownSidebar > most) {
+            gShownSidebar = most;
         }
-        if (gSidebarWidth < kMinSidebar) {
-            gSidebarWidth = kMinSidebar;
+        if (gShownSidebar < kMinSidebar) {
+            gShownSidebar = kMinSidebar;
         }
     }
 
+    gShownList = gListWidth;
     {
-        int used = gSidebarHidden ? 0 : gSidebarWidth;
+        int used = gSidebarHidden ? 0 : gShownSidebar;
         int most = room - used - kMinReader;
 
-        if (gListWidth > most) {
-            gListWidth = most;
+        if (gShownList > most) {
+            gShownList = most;
         }
-        if (gListWidth < kMinList) {
-            gListWidth = kMinList;
+        if (gShownList < kMinList) {
+            gShownList = kMinList;
         }
     }
 }
@@ -1169,6 +1196,12 @@ void GazetteWindowLayout(HWND frame)
 
     GetClientRect(frame, &client);
 
+    /* Minimized, the client area is nothing, and laying the panes out in
+       it would be laying them out for no one. */
+    if (IsIconic(frame) || client.right <= 0 || client.bottom <= 0) {
+        return;
+    }
+
     SendMessage(gStatus, WM_SIZE, 0, 0);
     LayoutStatus(client.right);
     ShowWindow(bar, gToolbarHidden ? SW_HIDE : SW_SHOW);
@@ -1193,8 +1226,8 @@ void GazetteWindowLayout(HWND frame)
 
     ClampWidths(client.right);
 
-    sidebarWidth = gSidebarHidden ? 0 : gSidebarWidth;
-    readerWidth  = client.right - sidebarWidth - gListWidth -
+    sidebarWidth = gSidebarHidden ? 0 : gShownSidebar;
+    readerWidth  = client.right - sidebarWidth - gShownList -
                    (gSidebarHidden ? kSplitterWidth : kSplitterWidth * 2);
     if (readerWidth < 0) {
         readerWidth = 0;
@@ -1224,8 +1257,8 @@ void GazetteWindowLayout(HWND frame)
     }
 
     defer = DeferWindowPos(defer, gListPane, NULL, x, top,
-                           gListWidth, bottom - top, SWP_NOZORDER);
-    x += gListWidth;
+                           gShownList, bottom - top, SWP_NOZORDER);
+    x += gShownList;
 
     defer = DeferWindowPos(defer, gSplitRight, NULL, x, top,
                            kSplitterWidth, bottom - top, SWP_NOZORDER);
@@ -1267,6 +1300,13 @@ void GazetteWindowPaint(HWND frame, HDC dc)
     GetClientRect(frame, &client);
     SetRect(&strip, 0, 0, client.right, gToolbarHeight);
     DrawEdge(dc, &strip, EDGE_ETCHED, BF_RECT);
+}
+
+/* The columns as the user last set them, for the preferences. */
+void GazetteWindowColumnWidths(int *sidebar, int *list)
+{
+    *sidebar = gSidebarWidth;
+    *list    = gListWidth;
 }
 
 void GazetteWindowMinimumSize(POINT *minimum)
@@ -1316,31 +1356,71 @@ void GazetteWindowMeasureItem(MEASUREITEMSTRUCT *measure)
     }
 }
 
-/* The headline band's one item: the view's name, and its count at the
-   right-hand end. The control has drawn the band; this is the words. */
+/*
+ * A light grey halfway between the face colour and the window's: the date
+ * bands and the rules between headlines, and the rule under the reader's
+ * byline. The face colour itself read too heavy against white (Bruno,
+ * 2026-09-26). Worked out from the scheme, so it follows the user's
+ * colours as every other grey here does.
+ */
+COLORREF GazetteWindowLightTone(void)
+{
+    COLORREF face   = GetSysColor(COLOR_BTNFACE);
+    COLORREF window = GetSysColor(COLOR_WINDOW);
+
+    return RGB((GetRValue(face) + GetRValue(window)) / 2,
+               (GetGValue(face) + GetGValue(window)) / 2,
+               (GetBValue(face) + GetBValue(window)) / 2);
+}
+
+/* The headline band's one item: the view's name with its count straight
+   after it, as the Mac's header has them -- the count in grey, and kept
+   whole when the name has to be shortened. */
 static void DrawListHeader(const DRAWITEMSTRUCT *draw)
 {
     RECT  text = draw->rcItem;
     HFONT previous = (HFONT)SelectObject(draw->hDC, gUIFont);
+    SIZE  title, count;
+    int   gap = 4;
 
     SetBkMode(draw->hDC, TRANSPARENT);
-    SetTextColor(draw->hDC, GetSysColor(COLOR_BTNTEXT));
     InflateRect(&text, -6, 0);
 
+    count.cx = 0;
     if (gListCount[0] != '\0') {
-        RECT count = text;
-        SIZE extent;
-
-        DrawTextA(draw->hDC, gListCount, -1, &count,
-                  DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        if (GetTextExtentPoint32A(draw->hDC, gListCount,
-                                  lstrlenA(gListCount), &extent)) {
-            text.right -= extent.cx + 8;
+        GetTextExtentPoint32A(draw->hDC, gListCount, lstrlenA(gListCount),
+                              &count);
+        if (count.cx + gap > text.right - text.left) {
+            count.cx = 0;           /* no room for the number at all */
         }
     }
-    DrawTextA(draw->hDC, gListTitle, -1, &text,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX |
-              DT_END_ELLIPSIS);
+    if (!GetTextExtentPoint32A(draw->hDC, gListTitle, lstrlenA(gListTitle),
+                               &title)) {
+        title.cx = 0;
+    }
+
+    {
+        RECT name  = text;
+        int  most  = text.right - text.left - (count.cx ? count.cx + gap : 0);
+
+        if (title.cx > most) {
+            title.cx = most;
+        }
+        name.right = name.left + title.cx;
+        SetTextColor(draw->hDC, GetSysColor(COLOR_BTNTEXT));
+        DrawTextA(draw->hDC, gListTitle, -1, &name,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX |
+                  DT_END_ELLIPSIS);
+
+        if (count.cx > 0) {
+            RECT number = text;
+
+            number.left = name.right + gap;
+            SetTextColor(draw->hDC, GetSysColor(COLOR_GRAYTEXT));
+            DrawTextA(draw->hDC, gListCount, -1, &number,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        }
+    }
     SelectObject(draw->hDC, previous);
 }
 
@@ -1384,16 +1464,21 @@ static void DrawDateBand(HDC dc, const RECT *row, int article)
     RECT                  text = *row;
     char                  label[32];
 
-    /* A shade darker than the rows, as the Mac's band is: the face
-       colour, which is what every Windows scheme calls a band. */
-    FillRect(dc, row, (HBRUSH)(COLOR_BTNFACE + 1));
+    /* A shade darker than the rows, as the Mac's band is -- the light
+       tone, halfway to the face colour. */
+    {
+        HBRUSH band = CreateSolidBrush(GazetteWindowLightTone());
+
+        FillRect(dc, row, band);
+        DeleteObject(band);
+    }
     if (a == NULL) {
         return;
     }
     GazetteRelativeDay(GazetteFeedsLocalTime(a->date), GazetteSysLocalNow(),
                        label, sizeof label);
     SelectObject(dc, gUIFont);
-    SetTextColor(dc, GetSysColor(COLOR_BTNTEXT));
+    SetTextColor(dc, GetSysColor(COLOR_GRAYTEXT));
     text.left += kRowIndent + 2;
     DrawTextA(dc, label, -1, &text,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX |
@@ -1413,7 +1498,7 @@ static void DrawHeadline(HDC dc, const RECT *row, int article, BOOL selected)
     /* The rule under a headline, the way the Mac's white line parts
        them -- before the text, so a selected row covers it. */
     if (!selected) {
-        HPEN pen = CreatePen(PS_SOLID, 1, GetSysColor(COLOR_BTNFACE));
+        HPEN pen = CreatePen(PS_SOLID, 1, GazetteWindowLightTone());
         HPEN old = (HPEN)SelectObject(dc, pen);
 
         MoveToEx(dc, row->left, row->bottom - 1, NULL);
@@ -1637,11 +1722,19 @@ static LRESULT CALLBACK SplitterProc(HWND hwnd, UINT message,
             gSidebarWidth = pt.x - gDragOffset;
         } else {
             int listLeft = gSidebarHidden ? 0
-                                          : gSidebarWidth + kSplitterWidth;
+                                          : gShownSidebar + kSplitterWidth;
             gListWidth = pt.x - gDragOffset - listLeft;
         }
 
         GazetteWindowLayout(parent);
+
+        /* A drag is a choice of what is on screen: what it asked for past
+           the limit is not kept. */
+        if (id == IDC_SPLIT_LEFT) {
+            gSidebarWidth = gShownSidebar;
+        } else {
+            gListWidth = gShownList;
+        }
         UpdateWindow(parent);
         return 0;
     }
@@ -1828,7 +1921,7 @@ static int LabelRoom(int level)
     if (indent <= 0) {
         indent = 19;
     }
-    return client.right - indent * (level + 1) - 16 - 3 - 6;
+    return client.right - indent * (level + 1) - 16 - 3 - 10;
 }
 
 /*

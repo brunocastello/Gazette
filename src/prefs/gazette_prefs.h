@@ -155,6 +155,8 @@ typedef struct {
     long windowTop;
     long windowWidth;
     long windowHeight;
+    long windowMaximized;   /* 1 = it filled the screen (Windows' Maximize);
+                               the rectangle is then where Restore goes */
     long sidebarWidth;      /* 0 = the window's own default */
     long listWidth;         /* the headline column, divider to divider */
 } GazettePrefs;

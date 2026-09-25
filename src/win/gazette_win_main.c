@@ -53,6 +53,7 @@ static HWND      gAboutWindow;
 
 static LRESULT CALLBACK MainWndProc(HWND, UINT, WPARAM, LPARAM);
 static LRESULT CALLBACK AboutWndProc(HWND, UINT, WPARAM, LPARAM);
+static void RememberWindowLayout(HWND hwnd);
 
 /* ------------------------------------------------------------------ */
 /* The common controls                                                 */
@@ -281,18 +282,24 @@ static void Enable(HMENU menu, UINT id, BOOL on)
     EnableMenuItem(menu, id, MF_BYCOMMAND | (on ? MF_ENABLED : MF_GRAYED));
 }
 
+/*
+ * A new name for an item, found by its command anywhere under the bar.
+ * ModifyMenu, not SetMenuItemInfo: looked up by command from the bar, the
+ * latter did not reach into the drop-down menus on Windows 95, so Hide
+ * Sidebar never became Show Sidebar (Bruno, 86Box, 2026-09-26). ModifyMenu
+ * searches every submenu on every version, but sets the item's state
+ * afresh -- so the state is read first and handed back with the text.
+ */
 static void Retitle(HMENU menu, UINT id, const char *text)
 {
-    MENUITEMINFOA info;
+    UINT state = GetMenuState(menu, id, MF_BYCOMMAND);
+    UINT keep;
 
-    /* SetMenuItemInfo keeps the item's state, which ModifyMenu resets --
-       and it is in USER32 on 95 and NT 4. */
-    ZeroMemory(&info, sizeof(info));
-    info.cbSize     = sizeof(info);
-    info.fMask      = MIIM_TYPE;
-    info.fType      = MFT_STRING;
-    info.dwTypeData = (char *)text;
-    SetMenuItemInfoA(menu, id, FALSE, &info);
+    if (state == (UINT)-1) {
+        return;                     /* no such item */
+    }
+    keep = state & (MF_GRAYED | MF_DISABLED | MF_CHECKED);
+    ModifyMenuA(menu, id, MF_BYCOMMAND | MF_STRING | keep, id, text);
 }
 
 /*
@@ -332,6 +339,8 @@ static void AdjustMenus(HMENU menu)
                   (GazetteCoreHideReadArticles() ? MF_CHECKED : MF_UNCHECKED));
     CheckMenuItem(menu, IDM_VIEW_HIDE_FEEDS, MF_BYCOMMAND |
                   (GazetteCoreHideReadFeeds() ? MF_CHECKED : MF_UNCHECKED));
+    Retitle(menu, IDM_VIEW_SHOW_PHOTOS,
+            GazetteCoreShowPhotos() ? "Hide &Photos" : "Show &Photos");
     Retitle(menu, IDM_VIEW_SIDEBAR,
             GazetteCoreHideSidebar() ? "Show &Sidebar\tCtrl+S"
                                      : "Hide &Sidebar\tCtrl+S");
@@ -354,6 +363,8 @@ static void AdjustMenus(HMENU menu)
                 : "&Mark All as Read\tCtrl+K");
     Retitle(menu, IDM_FEEDS_DELETE,
             groupSelected ? "&Delete Group" : "&Delete Feed");
+    Retitle(menu, IDM_FEEDS_EDIT,
+            groupSelected ? "&Edit Group..." : "&Edit Feed...");
     Enable(menu, IDM_FEEDS_DELETE, (BOOL)(feedSelected || groupSelected));
     Enable(menu, IDM_FEEDS_TURN_OFF, (BOOL)(feedSelected || groupSelected));
     {
@@ -606,6 +617,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message,
         break;
 
     case WM_DESTROY:
+        RememberWindowLayout(hwnd);
         /* Everything in flight stopped, and what was read written, before
            the window it would report to goes. */
         GazetteAppShutdown();
@@ -615,6 +627,82 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message,
     }
 
     return DefWindowProc(hwnd, message, wParam, lParam);
+}
+
+/*
+ * Where the window stood and how wide its columns were, for the next
+ * launch: the Mac's RememberWindowLayout. The rectangle is the restored
+ * one whatever state the window is in -- GetWindowPlacement keeps it for a
+ * maximized or minimized window -- and whether it was maximized goes
+ * alongside, so the next launch comes up the same way and Restore still
+ * goes back to the size the user chose.
+ */
+static void RememberWindowLayout(HWND hwnd)
+{
+    WINDOWPLACEMENT place;
+    int             sidebar, list;
+
+    ZeroMemory(&place, sizeof(place));
+    place.length = sizeof(place);
+    if (GetWindowPlacement(hwnd, &place)) {
+        const RECT *r = &place.rcNormalPosition;
+        BOOL maximized = (place.showCmd == SW_SHOWMAXIMIZED) ||
+                         (place.showCmd == SW_SHOWMINIMIZED &&
+                          (place.flags & WPF_RESTORETOMAXIMIZED));
+
+        (void)GazetteCoreSetWindowBounds(r->left, r->top,
+                                         r->right - r->left,
+                                         r->bottom - r->top);
+        (void)GazetteCoreSetWindowMaximized(maximized ? true : false);
+    }
+    GazetteWindowColumnWidths(&sidebar, &list);
+    (void)GazetteCoreSetColumnWidths(sidebar, list);
+    /* Written by GazetteCoreShutdown, after the loop ends. */
+}
+
+/*
+ * Put the window back where it was, before it is first shown. A rectangle
+ * that no longer reaches the screen -- a second monitor since unplugged, a
+ * smaller resolution -- is dropped for the default, as the Mac drops one:
+ * a window off the edge is a window nobody can reach.
+ */
+static void RestoreWindowLayout(HWND hwnd, int showCommand)
+{
+    WINDOWPLACEMENT place;
+    RECT            work, meet;
+    long            left, top, width, height;
+
+    if (!GazetteCoreWindowBounds(&left, &top, &width, &height)) {
+        ShowWindow(hwnd, showCommand);
+        return;
+    }
+
+    ZeroMemory(&place, sizeof(place));
+    place.length = sizeof(place);
+    GetWindowPlacement(hwnd, &place);
+    SetRect(&place.rcNormalPosition, (int)left, (int)top,
+            (int)(left + width), (int)(top + height));
+
+    if (SystemParametersInfoA(SPI_GETWORKAREA, 0, &work, 0)) {
+        OffsetRect(&work, -work.left, -work.top);  /* workspace coordinates */
+        if (!IntersectRect(&meet, &work, &place.rcNormalPosition) ||
+            meet.right - meet.left < 100 || meet.bottom - meet.top < 60) {
+            ShowWindow(hwnd, showCommand);
+            return;
+        }
+    }
+
+    /* Launched minimized from a shortcut stays minimized; otherwise the
+       window comes up the way it was left. */
+    if (showCommand == SW_SHOWMINIMIZED || showCommand == SW_MINIMIZE ||
+        showCommand == SW_SHOWMINNOACTIVE) {
+        place.showCmd = (UINT)showCommand;
+    } else if (GazetteCoreWindowMaximized()) {
+        place.showCmd = SW_SHOWMAXIMIZED;
+    } else {
+        place.showCmd = SW_SHOWNORMAL;
+    }
+    SetWindowPlacement(hwnd, &place);
 }
 
 static BOOL RegisterClasses(void)
@@ -685,7 +773,7 @@ static HWND CreateMainWindow(int showCommand)
         return NULL;
     }
 
-    ShowWindow(hwnd, showCommand);
+    RestoreWindowLayout(hwnd, showCommand);
     UpdateWindow(hwnd);
     return hwnd;
 }

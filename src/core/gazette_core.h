@@ -150,6 +150,11 @@ Boolean GazetteCoreWindowBounds(long *left, long *top, long *width,
                                 long *height);
 Boolean GazetteCoreColumnWidths(long *sidebar, long *list);
 
+/* Whether the window was maximized (Windows); the bounds above are then the
+   restored rectangle. The Mac never sets it. */
+Boolean GazetteCoreWindowMaximized(void);
+Boolean GazetteCoreSetWindowMaximized(Boolean maximized);
+
 /* Record them. Each returns true when something actually changed, so the
    caller can save only when there is something to save. */
 Boolean GazetteCoreSetWindowBounds(long left, long top, long width,

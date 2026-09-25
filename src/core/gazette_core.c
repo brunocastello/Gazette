@@ -412,6 +412,23 @@ Boolean GazetteCoreSetWindowBounds(long left, long top, long width,
     return true;
 }
 
+Boolean GazetteCoreWindowMaximized(void)
+{
+    return (Boolean)(gInited && gPrefs.windowMaximized != 0);
+}
+
+Boolean GazetteCoreSetWindowMaximized(Boolean maximized)
+{
+    long wanted = maximized ? 1 : 0;
+
+    if (!gInited || gPrefs.windowMaximized == wanted) {
+        return false;
+    }
+    gPrefs.windowMaximized = wanted;
+    gPrefsDirty            = true;
+    return true;
+}
+
 Boolean GazetteCoreSetColumnWidths(long sidebar, long list)
 {
     if (!gInited || sidebar <= 0 || list <= 0) {
