@@ -129,6 +129,15 @@ jobs:
 
           ls -l build-win/Gazette.exe
 
+          # Where the bytes are: the section table, and the largest
+          # symbols in what was linked. Gazette has to fit a 1.44 MB
+          # floppy (tools/make_img.sh), and this is the first place to
+          # look when it stops fitting.
+          i686-w64-mingw32-objdump -h build-win/Gazette.exe
+          find build-win -name '*.a' -o -name '*.obj' \
+            | xargs i686-w64-mingw32-nm -S --size-sort 2>/dev/null \
+            | tail -25
+
       - name: Install Wine (32-bit)
         run: |
           set -euo pipefail
