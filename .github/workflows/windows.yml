@@ -183,6 +183,38 @@ jobs:
           wine enginetest/GazetteEngineTest.exe | tee second.txt
           grep -q "read from the file" second.txt
 
+      - name: The window itself, under Wine, photographed
+        # Not a gate: Wine draws its own common controls, not Windows 95's,
+        # so this is for seeing what the window holds -- live headlines, the
+        # tree, the reader -- before a real machine does. A first run in a
+        # folder of its own: no preferences, so the default Google News feed
+        # is fetched, and its first article opened and its page read.
+        continue-on-error: true
+        env:
+          WINEDEBUG: -all
+          WINEDLLOVERRIDES: "mscoree,mshtml="
+        run: |
+          set -eu
+          sudo apt-get install -y --no-install-recommends xvfb imagemagick
+          mkdir -p shot && cp build-win/Gazette.exe shot/
+          Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 &
+          export DISPLAY=:99
+          sleep 3
+          (cd shot && wine Gazette.exe >/dev/null 2>&1 &)
+          sleep 45
+          import -window root shot/window.png
+          wineserver -k || true
+          ls -l shot
+
+      - name: Upload the photograph
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: Gazette-win32-screenshot
+          path: shot/window.png
+          if-no-files-found: ignore
+
       - name: Package release assets (.zip and floppy .img)
         run: tools/make_img.sh build-win/Gazette.exe package
 
