@@ -68,6 +68,7 @@ enum {
 
     kHeadlinePad    = 6,        /* air above and below a headline block */
     kBandPad        = 5,        /* and above and below a date band's words */
+    kTitleLeading   = 2,        /* between a headline's two lines */
     kHeadlineLines  = 2,        /* a headline is always exactly two rows */
     kRowIconGap     = 4,        /* icon to text */
     kRowIndent      = 4,        /* pane edge to icon */
@@ -166,6 +167,7 @@ static BOOL gSidebarHidden;
 static BOOL gToolbarHidden;
 
 static int  gLineHeight;         /* one line of the interface font */
+static int  gTitleLine;          /* one line of a headline: that, and air */
 static int  gRowHeight;          /* a headline block: two lines and its air */
 static int  gHeaderHeight;
 static int  gStatusHeight;
@@ -271,7 +273,8 @@ static void MeasureFonts(HWND frame)
      * the reason the Mac file gives for not wrapping to a variable
      * number of rows.
      */
-    gRowHeight = kHeadlinePad + gLineHeight * kHeadlineLines + kHeadlinePad;
+    gTitleLine = gLineHeight + kTitleLeading;
+    gRowHeight = kHeadlinePad + gTitleLine * kHeadlineLines + kHeadlinePad;
     gHeadingHeight = kBandPad + gLineHeight + kBandPad;
 
     /* The same face, bold: a headline not yet read. */
@@ -862,17 +865,42 @@ static BOOL MakeToolbar(HWND parent)
     return TRUE;
 }
 
-static int AddShellIcon(int index)
+static int AddIconFrom(const char *file, int index)
 {
     HICON small = NULL;
     int   at    = -1;
 
-    if (ExtractIconExA("shell32.dll", index, NULL, &small, 1) > 0 &&
+    if (ExtractIconExA(file, index, NULL, &small, 1) > 0 &&
         small != NULL) {
         at = ImageList_AddIcon(gIcons, small);
         DestroyIcon(small);
     }
     return at;
+}
+
+static int AddShellIcon(int index)
+{
+    return AddIconFrom("shell32.dll", index);
+}
+
+/*
+ * The blank sheet: a plain page with its corner turned and nothing on it.
+ * shell32 has none -- its first page wears the Windows flag, its second
+ * WordPad's lines -- but OLE32.DLL's one icon is exactly that, the same on
+ * 95, 98 and XP (read off Bruno's 86Box disks, 2026-09-26), and OLE32 is
+ * part of every installation. By its full path in the system folder.
+ */
+static int AddBlankSheet(void)
+{
+    char path[MAX_PATH];
+    UINT len = GetSystemDirectoryA(path, sizeof(path) - 12);
+    int  at  = -1;
+
+    if (len > 0 && len < sizeof(path) - 12) {
+        lstrcatA(path, "\\OLE32.DLL");
+        at = AddIconFrom(path, 0);
+    }
+    return (at >= 0) ? at : AddShellIcon(0);
 }
 
 BOOL GazetteWindowCreate(HWND frame, HINSTANCE instance)
@@ -904,13 +932,12 @@ BOOL GazetteWindowCreate(HWND frame, HINSTANCE instance)
         DeleteObject(strip);
     }
 
-    /* And Windows' own: shell32's closed folder (3), open folder (4) and
-       blank page (0) -- the plain sheet with its corner turned, not the
-       lined one (1) WordPad's documents wear. The same numbers on every
-       version from 95 to XP; ExtractIconEx is in the 95 shell. */
+    /* And Windows' own: shell32's closed folder (3) and open folder (4),
+       the same numbers on every version from 95 to XP, and the blank sheet
+       (AddBlankSheet). ExtractIconEx is in the 95 shell. */
     gFolderIcon     = AddShellIcon(3);
     gOpenFolderIcon = AddShellIcon(4);
-    gDocIcon        = AddShellIcon(0);
+    gDocIcon        = AddBlankSheet();
 
     if (!MakeToolbar(frame)) {
         return FALSE;
@@ -1374,8 +1401,8 @@ COLORREF GazetteWindowLightTone(void)
 }
 
 /* The headline band's one item: the view's name with its count straight
-   after it, as the Mac's header has them -- the count in grey, and kept
-   whole when the name has to be shortened. */
+   after it, as the Mac's header has them -- all in the text colour, and
+   the count kept whole when the name has to be shortened. */
 static void DrawListHeader(const DRAWITEMSTRUCT *draw)
 {
     RECT  text = draw->rcItem;
@@ -1416,7 +1443,6 @@ static void DrawListHeader(const DRAWITEMSTRUCT *draw)
             RECT number = text;
 
             number.left = name.right + gap;
-            SetTextColor(draw->hDC, GetSysColor(COLOR_GRAYTEXT));
             DrawTextA(draw->hDC, gListCount, -1, &number,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
@@ -1477,7 +1503,7 @@ static void DrawDateBand(HDC dc, const RECT *row, int article)
     }
     GazetteRelativeDay(GazetteFeedsLocalTime(a->date), GazetteSysLocalNow(),
                        label, sizeof label);
-    SelectObject(dc, gUIFont);
+    SelectObject(dc, gBoldFont);
     SetTextColor(dc, GetSysColor(COLOR_GRAYTEXT));
     text.left += kRowIndent + 2;
     DrawTextA(dc, label, -1, &text,
@@ -1517,13 +1543,13 @@ static void DrawHeadline(HDC dc, const RECT *row, int article, BOOL selected)
     textRight = row->right - kRowIndent;
     if (gDocIcon >= 0) {
         ImageList_Draw(gIcons, gDocIcon, dc, row->left + kRowIndent,
-                       row->top + kHeadlinePad + (gLineHeight - 16) / 2,
+                       row->top + kHeadlinePad + (gTitleLine - 16) / 2,
                        ILD_TRANSPARENT);
     }
     if (a->starred) {
         textRight -= 16;
         ImageList_Draw(gIcons, kIconStarredArticle, dc, textRight,
-                       row->top + kHeadlinePad + (gLineHeight - 16) / 2,
+                       row->top + kHeadlinePad + (gTitleLine - 16) / 2,
                        ILD_TRANSPARENT);
         textRight -= kRowIconGap;
     }
@@ -1537,7 +1563,7 @@ static void DrawHeadline(HDC dc, const RECT *row, int article, BOOL selected)
     first = FirstLine(dc, a->title, len, textRight - textLeft);
 
     SetRect(&line, textLeft, row->top + kHeadlinePad, textRight,
-            row->top + kHeadlinePad + gLineHeight);
+            row->top + kHeadlinePad + gTitleLine);
     DrawTextA(dc, a->title, first, &line,
               DT_LEFT | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
 
@@ -1548,9 +1574,9 @@ static void DrawHeadline(HDC dc, const RECT *row, int article, BOOL selected)
         rest++;
     }
     if (*rest != '\0') {
-        SetRect(&line, textLeft, row->top + kHeadlinePad + gLineHeight,
+        SetRect(&line, textLeft, row->top + kHeadlinePad + gTitleLine,
                 row->right - kRowIndent,
-                row->top + kHeadlinePad + gLineHeight * 2);
+                row->top + kHeadlinePad + gTitleLine * 2);
         DrawTextA(dc, rest, -1, &line,
                   DT_LEFT | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
     }

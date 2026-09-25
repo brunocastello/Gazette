@@ -42,6 +42,9 @@ enum {
     kMargin      = 8,       /* the Mac's kReaderMargin and kTextInset, near
                                enough, in Windows' larger pixels */
     kRuleAir     = 4,       /* the Mac's kReaderRuleAir */
+    kTitleLeading = 3,      /* extra height on each line of the headline */
+    kTitleGap    = 4,       /* between the headline and the byline */
+    kBodyLeading = 3,       /* extra height on each line of the article */
     kMaxRuns     = 1024,
     kMaxPieces   = 8192,
     kMaxLines    = 4096,
@@ -55,7 +58,7 @@ enum {
     kFaceItalic    = 2,
     kFaceUnderline = 4,
     kFaceTitle     = 8,     /* the headline: the UI font, bold, larger */
-    kFaceByline    = 16,    /* under it, in grey */
+    kFaceByline    = 16,    /* under it: the date and who wrote it */
     kFaceCount     = 32
 };
 
@@ -90,6 +93,7 @@ static Line  gLines[kMaxLines];
 static int   gLineCount;
 
 static int   gRuleY = -1;   /* where the rule under the byline goes, or -1 */
+static int   gLeading;      /* extra height on each line of this paragraph */
 static int   gTextHeight;
 static int   gScroll;
 static int   gLaidWidth = -1;
@@ -439,8 +443,10 @@ static void EndLine(HDC dc, int *y, int firstPiece, int emptyFace)
         }
     }
     line->top      = *y;
-    line->baseline = ascent;
-    line->height   = ascent + descent;
+    /* The paragraph's leading, half above the words and half below, so
+       lines stand further apart without the text sliding in its line. */
+    line->baseline = ascent + gLeading / 2;
+    line->height   = ascent + descent + gLeading;
     *y += line->height;
     gLineCount++;
 }
@@ -578,11 +584,25 @@ static void LayoutWidth(HDC dc, int width)
             break;
         }
 
+        /* The headline, the byline and the article each set their own line
+           height (Bruno, 2026-09-26): a little air in the headline's lines
+           and the body's, none added to the byline's one. */
+        if (gBodyStart > 0 && start == 0) {
+            gLeading = kTitleLeading;
+        } else if (gBodyStart > 0 && end + 1 == gBodyStart) {
+            gLeading = 0;
+        } else {
+            gLeading = kBodyLeading;
+        }
+
         LayoutParagraph(dc, start, end, kMargin, width, &y);
 
-        /* After the headline and the byline, the rule and its air; after a
-           body paragraph, one blank line, as the Mac's two returns make. */
-        if (end + 1 == gBodyStart && gBodyStart > 0) {
+        /* After the headline, a little space before the byline; after the
+           byline, the rule and its air; after a body paragraph, one blank
+           line, as the Mac's two returns make. */
+        if (gBodyStart > 0 && start == 0) {
+            y += kTitleGap;
+        } else if (end + 1 == gBodyStart && gBodyStart > 0) {
             MeasureFace(dc, 0);
             y += kRuleAir;
             gRuleY = y;
@@ -702,9 +722,7 @@ static void Paint(HDC dc, const RECT *client, const RECT *dirty)
             const Piece *piece = &gPieces[k];
 
             SelectObject(dc, FaceFont(piece->face));
-            SetTextColor(dc, GetSysColor((piece->face & kFaceByline)
-                                             ? COLOR_GRAYTEXT
-                                             : COLOR_WINDOWTEXT));
+            SetTextColor(dc, GetSysColor(COLOR_WINDOWTEXT));
             TextOutA(dc, piece->x, top + line->baseline,
                      gText + piece->start, piece->len);
         }
