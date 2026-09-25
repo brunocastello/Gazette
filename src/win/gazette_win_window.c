@@ -2040,8 +2040,11 @@ static void SyncSidebarRows(void)
         return;
     }
 
+    /* No WM_SETREDRAW round this: a tree told not to redraw while items
+       go in was left laying them out with no room for the icon or the
+       lines (seen under Wine, 2026-09-25), and a sidebar is a few dozen
+       rows at most. */
     gSyncingTree = TRUE;
-    SendMessage(gSidebar, WM_SETREDRAW, FALSE, 0);
     SendMessage(gSidebar, TVM_DELETEITEM, 0, (LPARAM)TVI_ROOT);
 
     for (i = 0; i < kGazetteSmartCount; i++) {
@@ -2086,7 +2089,6 @@ static void SyncSidebarRows(void)
         }
     }
 
-    SendMessage(gSidebar, WM_SETREDRAW, TRUE, 0);
     gSyncingTree = FALSE;
     ShowSelectionInTree();
     InvalidateRect(gSidebar, NULL, TRUE);
