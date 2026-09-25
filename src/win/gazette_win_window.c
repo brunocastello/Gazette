@@ -24,10 +24,18 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <commdlg.h>
+#include <shellapi.h>
 #include <string.h>
 
 #include "gazette_win.h"
 #include "gazette_win_res.h"
+#include "core/gazette_core.h"
+#include "core/gazette_sys.h"
+#include "feeds/gazette_feed_parse.h"
+#include "feeds/gazette_feeds.h"
+#include "feeds/gazette_index.h"
+#include "feeds/gazette_photos.h"
+#include "portable/gazette_portable.h"
 
 /* I_IMAGENONE is declared for _WIN32_IE 0x0501 and up; the value is what
    comctl32 4.70 already understood as "this button has no image". */
@@ -135,7 +143,6 @@ static HWND       gSplitRight;
 static HWND       gStatus;
 
 static HIMAGELIST gIcons;        /* every 16x16 icon, in kIcon* order */
-static HIMAGELIST gRowSpacer;    /* nothing but a height, see below */
 static HFONT      gUIFont;
 
 static int  gSidebarWidth = kDefaultSidebar;
@@ -149,9 +156,63 @@ static int  gHeaderHeight;
 static int  gStatusHeight;
 static int  gToolbarHeight;
 static int  gDragOffset;
+static HFONT gBoldFont;          /* an unread headline */
+static int  gHeadingHeight;      /* a date band: one line and its air */
+
+/* Windows' own small icons, from shell32 at run time, appended to gIcons:
+   the folder a group is, open when selected, and the document a feed and a
+   headline are -- the Mac asks the Icon Services for the same three. */
+static int  gFolderIcon     = -1;
+static int  gOpenFolderIcon = -1;
+static int  gDocIcon        = -1;
+
+/* What the application said to call when a row or a headline is chosen,
+   and when the Find dialog asks for a search: the Mac's GazetteUIOpen
+   callbacks, so the dependency runs one way, shell to window. */
+static GazetteUIFeedChosen    gOnFeedChosen;
+static GazetteUIArticleChosen gOnArticleChosen;
+static GazetteUIGroupChosen   gOnGroupChosen;
+static GazetteUISmartChosen   gOnSmartChosen;
+static GazetteUICommandChosen gOnCommand;
+
+/* The selection, as platinum_window.c keeps it: one of a standing view, a
+   group or a feed, and the article open in the reader. */
+static int  gSelectedFeed    = 0;
+static int  gSelectedGroup   = -1;
+static int  gSelectedSmart   = -1;
+static int  gSelectedArticle = -1;
+static int  gSmartCount[kGazetteSmartCount];
+
+/* True while the tree is being filled or its selection set from here, so
+   what it reports back is not taken for a click. */
+static BOOL gSyncingTree;
+
+/*
+ * The headline list's rows, as the Mac's: a day's articles gathered under
+ * a band naming the day, so the date comes off the rows. Here a headline
+ * is one row two lines tall, where the Mac's List Manager needs a row a
+ * line.
+ */
+enum {
+    kHeadlineDate    = 0,
+    kHeadlineArticle = 1
+};
+
+typedef struct {
+    int kind;
+    int article;
+} HeadlineRow;
+
+static HeadlineRow gHeadRows[kGazetteMaxArticles * 2];
+static int         gHeadRowCount;
+
+static int  RowKind(LPARAM param);
+static int  RowIndex(LPARAM param);
+static void ChooseRow(int kind, int index);
+static void HeadlineRowChosen(void);
 
 static LRESULT CALLBACK SplitterProc(HWND, UINT, WPARAM, LPARAM);
-static LRESULT CALLBACK ReaderProc(HWND, UINT, WPARAM, LPARAM);
+static void SyncSidebarRows(void);
 static void AdjustToolbarState(void);
 static void MeasureToolbar(void);
 
@@ -196,6 +257,20 @@ static void MeasureFonts(HWND frame)
      * number of rows.
      */
     gRowHeight = kHeadlinePad + gLineHeight * kHeadlineLines + kHeadlinePad;
+    gHeadingHeight = gLineHeight + 4;
+
+    /* The same face, bold: a headline not yet read. */
+    {
+        LOGFONTA face;
+
+        if (GetObjectA(gUIFont, sizeof(face), &face) != 0) {
+            face.lfWeight = FW_BOLD;
+            gBoldFont = CreateFontIndirectA(&face);
+        }
+        if (gBoldFont == NULL) {
+            gBoldFont = gUIFont;
+        }
+    }
 }
 
 static void ApplyFont(HWND control)
@@ -664,22 +739,30 @@ void GazetteWindowFindEvent(const FINDREPLACEA *find)
         gFindDialog = NULL;
         return;
     }
-    if (find->Flags & FR_FINDNEXT) {
-        char status[192];
-
-        wsprintfA(status, "Looking for \"%s\"", find->lpstrFindWhat);
-        GazetteWindowSetStatus(status);
+    /* Find Next is the Mac's Return in the search field: the application
+       reads what was typed out through GazetteUISearchText. */
+    if ((find->Flags & FR_FINDNEXT) && gOnCommand != NULL) {
+        gOnCommand(kGazetteCmdSearch);
     }
 }
 
-BOOL GazetteWindowCommand(HWND frame, int id)
+BOOL GazetteWindowCommand(HWND frame, WPARAM wParam, LPARAM lParam)
 {
+    int id = LOWORD(wParam);
+
+    (void)lParam;
     if (id == IDC_TOOL_CHEVRON) {
         ShowToolChevron(frame);
         return TRUE;
     }
     if (id == IDM_EDIT_FIND) {
         ShowFind(frame);
+        return TRUE;
+    }
+    if (id == IDC_HEADLINES) {
+        if (HIWORD(wParam) == LBN_SELCHANGE) {
+            HeadlineRowChosen();
+        }
         return TRUE;
     }
     return FALSE;
@@ -764,19 +847,17 @@ static BOOL MakeToolbar(HWND parent)
     return TRUE;
 }
 
-static void AddSmartView(const char *name, int icon)
+static int AddShellIcon(int index)
 {
-    TV_INSERTSTRUCTA item;
+    HICON small = NULL;
+    int   at    = -1;
 
-    ZeroMemory(&item, sizeof(item));
-    item.hParent      = TVI_ROOT;
-    item.hInsertAfter = TVI_LAST;
-    item.item.mask    = TVIF_TEXT | TVIF_IMAGE | TVIF_SELECTEDIMAGE;
-    item.item.pszText = (char *)name;
-    item.item.iImage  = icon;
-    item.item.iSelectedImage = icon;
-
-    SendMessage(gSidebar, TVM_INSERTITEMA, 0, (LPARAM)&item);
+    if (ExtractIconExA("shell32.dll", index, NULL, &small, 1) > 0 &&
+        small != NULL) {
+        at = ImageList_AddIcon(gIcons, small);
+        DestroyIcon(small);
+    }
+    return at;
 }
 
 BOOL GazetteWindowCreate(HWND frame, HINSTANCE instance)
@@ -807,6 +888,13 @@ BOOL GazetteWindowCreate(HWND frame, HINSTANCE instance)
         ImageList_AddMasked(gIcons, strip, RGB(255, 0, 255));
         DeleteObject(strip);
     }
+
+    /* And Windows' own: shell32's closed folder (3), open folder (4) and
+       document (1), which are the same numbers on every version from 95
+       to XP. ExtractIconEx is in the 95 shell. */
+    gFolderIcon     = AddShellIcon(3);
+    gOpenFolderIcon = AddShellIcon(4);
+    gDocIcon        = AddShellIcon(1);
 
     if (!MakeToolbar(frame)) {
         return FALSE;
@@ -857,12 +945,16 @@ BOOL GazetteWindowCreate(HWND frame, HINSTANCE instance)
      * has no column header either: it is one list of headlines, not a
      * table of fields, and the header it does have is the band above
      * the pane naming the view.
+     *
+     * A list box rather than a list view: a date band is one line and a
+     * headline two, and a list box with LBS_OWNERDRAWVARIABLE asks the
+     * height of every item, on every version of Windows. A list view's
+     * rows are all one height.
      */
     gHeadlines = CreateWindowExA(
-        0, WC_LISTVIEWA, NULL,
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-        LVS_REPORT | LVS_NOCOLUMNHEADER | LVS_OWNERDRAWFIXED |
-        LVS_SINGLESEL | LVS_SHOWSELALWAYS,
+        0, "LISTBOX", NULL,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL |
+        LBS_OWNERDRAWVARIABLE | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
         0, 0, 0, 0, gListPane, (HMENU)IDC_HEADLINES, instance, NULL);
 
     /* The article's pane: a sunken well with no header -- its headline and
@@ -896,58 +988,19 @@ BOOL GazetteWindowCreate(HWND frame, HINSTANCE instance)
 
     SendMessage(gSidebar, TVM_SETIMAGELIST, TVSIL_NORMAL, (LPARAM)gIcons);
 
-    /*
-     * A list view in report mode takes its row height from its own
-     * image list and not from WM_MEASUREITEM, whatever the
-     * documentation says about owner-drawn lists. An image list of the
-     * right height with nothing in it is the way to ask for a taller
-     * row on every version of comctl32 there is.
-     */
-    gRowSpacer = ImageList_Create(1, gRowHeight, ILC_COLOR, 1, 1);
-    /* White, said outright: every pane on Windows is the window colour,
-       and a list view with no rows yet is otherwise at the mercy of
-       whatever last painted under it. comctl32 4.0 has both messages. */
-    SendMessage(gHeadlines, LVM_SETBKCOLOR, 0,
-                (LPARAM)GetSysColor(COLOR_WINDOW));
-    SendMessage(gHeadlines, LVM_SETTEXTBKCOLOR, 0,
-                (LPARAM)GetSysColor(COLOR_WINDOW));
-
-    SendMessage(gHeadlines, LVM_SETIMAGELIST, LVSIL_SMALL,
-                (LPARAM)gRowSpacer);
-
-    /* One column, the width of the pane: the rows are drawn here, so
-       the column is only what the list measures its rows against. */
-    {
-        LV_COLUMNA column;
-
-        ZeroMemory(&column, sizeof(column));
-        column.mask = LVCF_WIDTH;
-        column.cx   = kDefaultList;
-        SendMessage(gHeadlines, LVM_INSERTCOLUMNA, 0, (LPARAM)&column);
-    }
-
-    /* The three standing views, above the feed list, as on the Mac --
-       each with the icon Gazette drew for it. */
-    AddSmartView("Today", kIconToday);
-    AddSmartView("All Unread", kIconAllUnread);
-    AddSmartView("Starred", kIconStarred);
-
-    /* Today is the view the window opens on, so it is the row selected --
-       the band over the headlines says "Today" and the sidebar agrees. */
-    {
-        HTREEITEM today = (HTREEITEM)SendMessage(gSidebar, TVM_GETNEXTITEM,
-                                                 TVGN_ROOT, 0);
-        if (today != NULL) {
-            SendMessage(gSidebar, TVM_SELECTITEM, TVGN_CARET, (LPARAM)today);
-        }
-    }
+    /* The sidebar's rows come from the preferences, which are read before
+       the window opens; so do whether the sidebar and the toolbar are
+       showing at all. */
+    gSidebarHidden = GazetteCoreHideSidebar() ? TRUE : FALSE;
+    gToolbarHidden = GazetteCoreHideToolbar() ? TRUE : FALSE;
+    SyncSidebarRows();
 
     {
         RECT bar;
         GetWindowRect(gStatus, &bar);
         gStatusHeight = bar.bottom - bar.top;
     }
-    GazetteWindowSetCount("0 article(s)");
+    GazetteWindowSetCount("");
 
     AdjustToolbarState();
     return TRUE;
@@ -959,10 +1012,10 @@ void GazetteWindowDestroy(void)
         ImageList_Destroy(gIcons);
         gIcons = NULL;
     }
-    if (gRowSpacer != NULL) {
-        ImageList_Destroy(gRowSpacer);
-        gRowSpacer = NULL;
+    if (gBoldFont != NULL && gBoldFont != gUIFont) {
+        DeleteObject(gBoldFont);
     }
+    gBoldFont = NULL;
     if (gUIFont != NULL &&
         gUIFont != (HFONT)GetStockObject(DEFAULT_GUI_FONT)) {
         DeleteObject(gUIFont);
@@ -981,40 +1034,52 @@ void GazetteWindowDestroy(void)
 /* the same state.                                                     */
 /* ------------------------------------------------------------------ */
 
-static void SetToolState(int button, BOOL enabled, BOOL other)
+/* Returns whether anything moved, so an unchanged row is left alone:
+   rebuilding the toolbar is a flash of every button. */
+static BOOL SetToolState(int button, BOOL enabled, BOOL other)
 {
+    BOOL changed = (gToolEnabled[button] != enabled ||
+                    gToolOther[button] != other);
+
     gToolEnabled[button] = enabled;
     gToolOther[button]   = other;
+    return changed;
 }
 
 static void AdjustToolbarState(void)
 {
-    /*
-     * Feeds, articles and the open article are the engine's business
-     * and the engine is not wired to this shell yet, so the counts are
-     * all zero here. Written as the Mac writes it, with the conditions
-     * in place, so that wiring the store up is a matter of answering
-     * these three questions rather than of rewriting the function.
-     */
-    int  feedCount    = 0;
-    int  articleCount = 0;
-    BOOL unread       = FALSE;
-    BOOL articleOpen  = FALSE;
+    const GazetteArticle *open = GazetteFeedsArticleAt(gSelectedArticle);
+    int  feedCount    = GazetteCoreFeedCount();
+    int  articleCount = GazetteFeedsArticleCount();
+    BOOL unread       = (BOOL)(GazetteFeedsUnreadCount() > 0);
+    BOOL articleOpen  = (BOOL)(open != NULL);
+    BOOL changed      = FALSE;
+    static BOOL built;
 
     if (gToolbar == NULL) {
         return;
     }
 
-    SetToolState(kTBNew,        TRUE,                     FALSE);
-    SetToolState(kTBSidebar,    TRUE,                     gSidebarHidden);
-    SetToolState(kTBRefresh,    (BOOL)(feedCount > 0),    FALSE);
-    SetToolState(kTBMarkAll,    (BOOL)(articleCount > 0), !unread);
-    SetToolState(kTBHideRead,   TRUE,                     FALSE);
-    SetToolState(kTBMarkRead,   articleOpen,              FALSE);
-    SetToolState(kTBStar,       articleOpen,              FALSE);
-    SetToolState(kTBNextUnread, unread,                   FALSE);
-    SetToolState(kTBBrowser,    articleOpen,              FALSE);
-    SetToolState(kTBFind,       TRUE,                     FALSE);
+    changed |= SetToolState(kTBNew,        TRUE,                     FALSE);
+    changed |= SetToolState(kTBSidebar,    TRUE,                     gSidebarHidden);
+    changed |= SetToolState(kTBRefresh,    (BOOL)(feedCount > 0),    FALSE);
+    changed |= SetToolState(kTBMarkAll,    (BOOL)(articleCount > 0), !unread);
+    changed |= SetToolState(kTBHideRead,   TRUE,
+                            GazetteCoreHideReadArticles() ? TRUE : FALSE);
+    changed |= SetToolState(kTBMarkRead,   articleOpen,
+                            (BOOL)(open != NULL && open->read));
+    changed |= SetToolState(kTBStar,       articleOpen,
+                            (BOOL)(open != NULL && open->starred));
+    changed |= SetToolState(kTBNextUnread, unread,                   FALSE);
+    changed |= SetToolState(kTBBrowser,
+                            (BOOL)(open != NULL && open->link[0] != '\0'),
+                            FALSE);
+    changed |= SetToolState(kTBFind,       TRUE,                     FALSE);
+
+    if (!changed && built) {
+        return;
+    }
+    built = TRUE;
 
     /* A caption that changed can change the row's width, so the fit is
        done again rather than the buttons merely re-enabled. */
@@ -1219,19 +1284,7 @@ void GazetteWindowMinimumSize(POINT *minimum)
 /* View menu                                                           */
 /* ------------------------------------------------------------------ */
 
-void GazetteWindowToggleSidebar(HWND frame)
-{
-    gSidebarHidden = !gSidebarHidden;
-    AdjustToolbarState();
-    GazetteWindowLayout(frame);
-}
-
-void GazetteWindowToggleToolbar(HWND frame)
-{
-    gToolbarHidden = !gToolbarHidden;
-    GazetteWindowLayout(frame);
-}
-
+/* The frame's menu reads these to word Hide / Show. */
 BOOL GazetteWindowSidebarHidden(void)
 {
     return gSidebarHidden;
@@ -1255,7 +1308,11 @@ BOOL GazetteWindowToolbarHidden(void)
 void GazetteWindowMeasureItem(MEASUREITEMSTRUCT *measure)
 {
     if (measure->CtlID == IDC_HEADLINES) {
-        measure->itemHeight = (UINT)gRowHeight;
+        int row = (int)measure->itemData;
+
+        measure->itemHeight = (UINT)((row >= 0 && row < gHeadRowCount &&
+                                      gHeadRows[row].kind == kHeadlineDate)
+                                         ? gHeadingHeight : gRowHeight);
     }
 }
 
@@ -1287,41 +1344,168 @@ static void DrawListHeader(const DRAWITEMSTRUCT *draw)
     SelectObject(draw->hDC, previous);
 }
 
+/*
+ * How much of a headline goes on its first line: the longest run of whole
+ * words that fits, or -- for one word longer than the line -- as many of
+ * its letters as do. The rest goes on the second line, which ends in an
+ * ellipsis when even that is not enough: the Mac's WrapTitle and
+ * DrawTruncated, with the measuring done by GDI.
+ */
+static int FirstLine(HDC dc, const char *text, int len, int width)
+{
+    SIZE size;
+    int  best = 0;
+    int  i;
+
+    for (i = 1; i <= len; i++) {
+        if (i < len && text[i] != ' ') {
+            continue;
+        }
+        if (!GetTextExtentPoint32A(dc, text, i, &size) || size.cx > width) {
+            break;
+        }
+        best = i;
+    }
+    if (best == 0) {
+        for (i = 1; i <= len; i++) {
+            if (!GetTextExtentPoint32A(dc, text, i, &size) ||
+                size.cx > width) {
+                break;
+            }
+            best = i;
+        }
+    }
+    return best;
+}
+
+static void DrawDateBand(HDC dc, const RECT *row, int article)
+{
+    const GazetteArticle *a = GazetteFeedsArticleAt(article);
+    RECT                  text = *row;
+    char                  label[32];
+
+    /* A shade darker than the rows, as the Mac's band is: the face
+       colour, which is what every Windows scheme calls a band. */
+    FillRect(dc, row, (HBRUSH)(COLOR_BTNFACE + 1));
+    if (a == NULL) {
+        return;
+    }
+    GazetteRelativeDay(GazetteFeedsLocalTime(a->date), GazetteSysLocalNow(),
+                       label, sizeof label);
+    SelectObject(dc, gUIFont);
+    SetTextColor(dc, GetSysColor(COLOR_BTNTEXT));
+    text.left += kRowIndent + 2;
+    DrawTextA(dc, label, -1, &text,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX |
+              DT_END_ELLIPSIS);
+}
+
+static void DrawHeadline(HDC dc, const RECT *row, int article, BOOL selected)
+{
+    const GazetteArticle *a = GazetteFeedsArticleAt(article);
+    RECT  line;
+    int   textLeft, textRight, first, len;
+    const char *rest;
+
+    FillRect(dc, row, (HBRUSH)(selected ? COLOR_HIGHLIGHT + 1
+                                        : COLOR_WINDOW + 1));
+
+    /* The rule under a headline, the way the Mac's white line parts
+       them -- before the text, so a selected row covers it. */
+    if (!selected) {
+        HPEN pen = CreatePen(PS_SOLID, 1, GetSysColor(COLOR_BTNFACE));
+        HPEN old = (HPEN)SelectObject(dc, pen);
+
+        MoveToEx(dc, row->left, row->bottom - 1, NULL);
+        LineTo(dc, row->right, row->bottom - 1);
+        SelectObject(dc, old);
+        DeleteObject(pen);
+    }
+    if (a == NULL) {
+        return;
+    }
+
+    /* The document on the first line only, the star at that line's end
+       when the article has one; the second line lines up under the words
+       rather than sliding under the icon. */
+    textLeft  = row->left + kRowIndent + 16 + kRowIconGap;
+    textRight = row->right - kRowIndent;
+    if (gDocIcon >= 0) {
+        ImageList_Draw(gIcons, gDocIcon, dc, row->left + kRowIndent,
+                       row->top + kHeadlinePad + (gLineHeight - 16) / 2,
+                       ILD_TRANSPARENT);
+    }
+    if (a->starred) {
+        textRight -= 16;
+        ImageList_Draw(gIcons, kIconStarredArticle, dc, textRight,
+                       row->top + kHeadlinePad + (gLineHeight - 16) / 2,
+                       ILD_TRANSPARENT);
+        textRight -= kRowIconGap;
+    }
+
+    /* Bold while unread, plain once opened; always the text colour. */
+    SelectObject(dc, a->read ? gUIFont : gBoldFont);
+    SetTextColor(dc, GetSysColor(selected ? COLOR_HIGHLIGHTTEXT
+                                          : COLOR_WINDOWTEXT));
+
+    len   = lstrlenA(a->title);
+    first = FirstLine(dc, a->title, len, textRight - textLeft);
+
+    SetRect(&line, textLeft, row->top + kHeadlinePad, textRight,
+            row->top + kHeadlinePad + gLineHeight);
+    DrawTextA(dc, a->title, first, &line,
+              DT_LEFT | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+
+    /* The second line runs full width -- the star is the first line's --
+       from the next word to the end, and ends in "..." past the edge. */
+    rest = a->title + first;
+    while (*rest == ' ') {
+        rest++;
+    }
+    if (*rest != '\0') {
+        SetRect(&line, textLeft, row->top + kHeadlinePad + gLineHeight,
+                row->right - kRowIndent,
+                row->top + kHeadlinePad + gLineHeight * 2);
+        DrawTextA(dc, rest, -1, &line,
+                  DT_LEFT | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+    }
+}
+
 void GazetteWindowDrawItem(const DRAWITEMSTRUCT *draw)
 {
-    RECT  row;
     HFONT previous;
-    BOOL  selected;
+    int   row;
 
     if (draw->CtlID == IDC_LIST_HEADER) {
         DrawListHeader(draw);
         return;
     }
-    if (draw->CtlID != IDC_HEADLINES || draw->itemID == (UINT)-1) {
+    if (draw->CtlID != IDC_HEADLINES) {
         return;
     }
 
-    row = draw->rcItem;
-    selected = (draw->itemState & ODS_SELECTED) != 0;
-
-    FillRect(draw->hDC, &row,
-             (HBRUSH)(selected ? COLOR_HIGHLIGHT + 1 : COLOR_WINDOW + 1));
+    row = (int)draw->itemID;
+    if (row < 0 || row >= gHeadRowCount) {
+        return;
+    }
+    /* The dotted focus rectangle is the list box's to toggle; a whole
+       redraw puts it back when the list has the focus. */
+    if (draw->itemAction == ODA_FOCUS) {
+        DrawFocusRect(draw->hDC, &draw->rcItem);
+        return;
+    }
 
     previous = (HFONT)SelectObject(draw->hDC, gUIFont);
     SetBkMode(draw->hDC, TRANSPARENT);
-    SetTextColor(draw->hDC,
-                 GetSysColor(selected ? COLOR_HIGHLIGHTTEXT : COLOR_WINDOWTEXT));
 
-    /* The rule between one headline and the next, the way the sidebar's
-       white line separates the Mac's. */
-    {
-        HPEN pen = CreatePen(PS_SOLID, 1, GetSysColor(COLOR_BTNFACE));
-        HPEN old = (HPEN)SelectObject(draw->hDC, pen);
-
-        MoveToEx(draw->hDC, row.left, row.bottom - 1, NULL);
-        LineTo(draw->hDC, row.right, row.bottom - 1);
-        SelectObject(draw->hDC, old);
-        DeleteObject(pen);
+    if (gHeadRows[row].kind == kHeadlineDate) {
+        DrawDateBand(draw->hDC, &draw->rcItem, gHeadRows[row].article);
+    } else {
+        DrawHeadline(draw->hDC, &draw->rcItem, gHeadRows[row].article,
+                     (BOOL)(gHeadRows[row].article == gSelectedArticle));
+        if (draw->itemState & ODS_FOCUS) {
+            DrawFocusRect(draw->hDC, &draw->rcItem);
+        }
     }
 
     SelectObject(draw->hDC, previous);
@@ -1329,32 +1513,56 @@ void GazetteWindowDrawItem(const DRAWITEMSTRUCT *draw)
 
 BOOL GazetteWindowNotify(HWND frame, NMHDR *header, LRESULT *result)
 {
-
-    /*
-     * Choosing a standing view renames the band over the headline list,
-     * as choosing one does on the Mac. It is the only thing the sidebar
-     * can say yet.
-     */
+    /* A row chosen in the sidebar -- by the mouse or the arrow keys, which
+       is how a tree reports both. */
     if (header->hwndFrom == gSidebar && header->code == TVN_SELCHANGEDA) {
         NM_TREEVIEWA *tree = (NM_TREEVIEWA *)header;
-        TV_ITEMA item;
-        char     name[64];
 
-        ZeroMemory(&item, sizeof(item));
-        item.mask       = TVIF_TEXT;
-        item.hItem      = tree->itemNew.hItem;
-        item.pszText    = name;
-        item.cchTextMax = sizeof(name);
-
-        if (SendMessage(gSidebar, TVM_GETITEMA, 0, (LPARAM)&item)) {
-            char title[128];
-
-            SetListTitle(name, NULL);
-            /* "Today - Gazette", as Outlook Express's is "Inbox -
-               Outlook Express": the view, then the program. */
-            wsprintfA(title, "%s - Gazette", name);
-            SetWindowTextA(frame, title);
+        if (!gSyncingTree && tree->itemNew.hItem != NULL) {
+            ChooseRow(RowKind(tree->itemNew.lParam),
+                      RowIndex(tree->itemNew.lParam));
         }
+        return TRUE;
+    }
+
+    /* A group opened or shut: remembered, as the Mac's triangle is. */
+    if (header->hwndFrom == gSidebar && header->code == TVN_ITEMEXPANDEDA) {
+        NM_TREEVIEWA *tree = (NM_TREEVIEWA *)header;
+
+        if (!gSyncingTree &&
+            RowKind(tree->itemNew.lParam) == kGazetteRowGroup) {
+            GazetteCoreSetGroupCollapsed(RowIndex(tree->itemNew.lParam),
+                                         (tree->action & TVE_COLLAPSE)
+                                             ? true : false);
+        }
+        return TRUE;
+    }
+
+    /* A feed or a group that is switched off is drawn grey, as on the Mac.
+       Custom draw is comctl32 4.70's; 4.0 never sends it, and there the
+       row is drawn as any other. */
+    if (header->hwndFrom == gSidebar && header->code == NM_CUSTOMDRAW) {
+        NMTVCUSTOMDRAW *draw = (NMTVCUSTOMDRAW *)header;
+
+        if (draw->nmcd.dwDrawStage == CDDS_PREPAINT) {
+            *result = CDRF_NOTIFYITEMDRAW;
+            return TRUE;
+        }
+        if (draw->nmcd.dwDrawStage == CDDS_ITEMPREPAINT) {
+            int kind  = RowKind(draw->nmcd.lItemlParam);
+            int index = RowIndex(draw->nmcd.lItemlParam);
+            BOOL off  = (kind == kGazetteRowFeed &&
+                         !GazetteCoreFeedEnabled(index)) ||
+                        (kind == kGazetteRowGroup &&
+                         !GazetteCoreGroupEnabled(index));
+
+            if (off && !(draw->nmcd.uItemState & CDIS_SELECTED)) {
+                draw->clrText = GetSysColor(COLOR_GRAYTEXT);
+            }
+            *result = CDRF_DODEFAULT;
+            return TRUE;
+        }
+        *result = CDRF_DODEFAULT;
         return TRUE;
     }
 
@@ -1449,34 +1657,8 @@ static LRESULT CALLBACK SplitterProc(HWND hwnd, UINT message,
 }
 
 /* ------------------------------------------------------------------ */
-/* The article pane                                                    */
-/*                                                                     */
-/* Its own class from the start rather than an edit control: what goes  */
-/* here is the Mac reader's laid-out text with its photographs, which   */
-/* no stock Windows control draws. Empty until the store is ported.     */
+/* The article pane is gazette_win_reader.c's.                         */
 /* ------------------------------------------------------------------ */
-
-static LRESULT CALLBACK ReaderProc(HWND hwnd, UINT message,
-                                   WPARAM wParam, LPARAM lParam)
-{
-    switch (message) {
-    case WM_ERASEBKGND: {
-        RECT client;
-        GetClientRect(hwnd, &client);
-        FillRect((HDC)wParam, &client, (HBRUSH)(COLOR_WINDOW + 1));
-        return TRUE;
-    }
-
-    case WM_PAINT: {
-        PAINTSTRUCT ps;
-        BeginPaint(hwnd, &ps);
-        EndPaint(hwnd, &ps);
-        return 0;
-    }
-    }
-
-    return DefWindowProc(hwnd, message, wParam, lParam);
-}
 
 /* ------------------------------------------------------------------ */
 /* The panes                                                           */
@@ -1512,15 +1694,8 @@ static void LayoutPane(HWND pane)
         InvalidateRect(body, NULL, TRUE);
     }
 
-    /* The headline list's one column is exactly as wide as the list's
-       client area, so there is never a horizontal scroll bar under it. */
-    if (body == gHeadlines && gHeadlines != NULL) {
-        RECT list;
-
-        GetClientRect(gHeadlines, &list);
-        SendMessage(gHeadlines, LVM_SETCOLUMNWIDTH, 0,
-                    MAKELPARAM(list.right, 0));
-    }
+    /* The headlines wrap to the list's width as they are drawn, so a new
+       width is the repaint above and nothing more. */
 }
 
 static LRESULT CALLBACK PaneProc(HWND hwnd, UINT message,
@@ -1557,7 +1732,7 @@ BOOL GazetteWindowRegisterClasses(HINSTANCE instance)
 
     ZeroMemory(&cls, sizeof(cls));
     cls.style         = CS_HREDRAW | CS_VREDRAW;
-    cls.lpfnWndProc   = ReaderProc;
+    cls.lpfnWndProc   = GazetteWinReaderProc;
     cls.hInstance     = instance;
     cls.hCursor       = LoadCursor(NULL, IDC_ARROW);
     cls.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
@@ -1575,4 +1750,864 @@ BOOL GazetteWindowRegisterClasses(HINSTANCE instance)
     cls.lpszClassName = kPaneClass;
 
     return RegisterClassA(&cls) != 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* The sidebar's rows                                                  */
+/*                                                                     */
+/* A standard tree: the three standing views, then the groups with      */
+/* their feeds inside them and the feeds at the top level, in the       */
+/* order the preferences keep. Each item carries what it is -- its      */
+/* kind and index -- the Mac's GazetteSidebarRow, packed into the       */
+/* item's lParam.                                                       */
+/* ------------------------------------------------------------------ */
+
+static LPARAM RowParam(int kind, int index)
+{
+    return (LPARAM)(((kind & 0xFF) << 16) | (index & 0xFFFF));
+}
+
+static int RowKind(LPARAM param)
+{
+    return (int)((param >> 16) & 0xFF);
+}
+
+static int RowIndex(LPARAM param)
+{
+    return (int)(param & 0xFFFF);
+}
+
+static int FeedUnread(int feed)
+{
+    if (feed == GazetteFeedsCurrentFeed()) {
+        return GazetteFeedsUnreadCount();
+    }
+    return GazetteIndexFeedUnread(GazetteCoreFeedURL(feed));
+}
+
+static int GroupUnread(int group)
+{
+    int total = 0;
+    int i;
+
+    for (i = 0; i < GazetteCoreFeedCount(); i++) {
+        if (GazetteCoreFeedGroup(i) == group && GazetteCoreFeedEnabled(i)) {
+            total += FeedUnread(i);
+        }
+    }
+    return total;
+}
+
+/*
+ * A row's words and weight. Outlook Express's folder list is the model:
+ * a folder with something unread in it is bold, with the count after its
+ * name in brackets. The standing views carry their count the same way,
+ * never bold -- Today's is how many, not how many unread.
+ */
+static void RowLabel(int kind, int index, char *out, int cap, BOOL *bold)
+{
+    const char *name  = "";
+    int         count = 0;
+
+    *bold = FALSE;
+    switch (kind) {
+    case kGazetteRowSmart:
+        name  = GazetteCoreSmartName(index);
+        count = gSmartCount[index];
+        break;
+    case kGazetteRowGroup:
+        name  = GazetteCoreGroupName(index);
+        count = GroupUnread(index);
+        *bold = (BOOL)(count > 0);
+        break;
+    default:
+        name  = GazetteCoreFeedTitle(index);
+        count = FeedUnread(index);
+        *bold = (BOOL)(count > 0);
+        break;
+    }
+    if (count > 0) {
+        char number[16];
+
+        wsprintfA(number, " (%d)", count);
+        lstrcpynA(out, name, cap - lstrlenA(number));
+        lstrcatA(out, number);
+    } else {
+        lstrcpynA(out, name, cap);
+    }
+}
+
+static void SetRowItem(HTREEITEM item, int kind, int index)
+{
+    TV_ITEMA tv;
+    char     label[kGazetteTitleLen + 16];
+    BOOL     bold;
+
+    RowLabel(kind, index, label, sizeof(label), &bold);
+    ZeroMemory(&tv, sizeof(tv));
+    tv.mask      = TVIF_TEXT | TVIF_STATE;
+    tv.hItem     = item;
+    tv.pszText   = label;
+    tv.state     = bold ? TVIS_BOLD : 0;
+    tv.stateMask = TVIS_BOLD;
+    SendMessage(gSidebar, TVM_SETITEMA, 0, (LPARAM)&tv);
+}
+
+static HTREEITEM InsertRow(HTREEITEM parent, int kind, int index)
+{
+    TV_INSERTSTRUCTA insert;
+    char             label[kGazetteTitleLen + 16];
+    BOOL             bold;
+    int              icon, open;
+
+    RowLabel(kind, index, label, sizeof(label), &bold);
+    switch (kind) {
+    case kGazetteRowSmart:
+        icon = open = kIconToday + index;   /* Today, All Unread, Starred */
+        break;
+    case kGazetteRowGroup:
+        icon = gFolderIcon;
+        open = (gOpenFolderIcon >= 0) ? gOpenFolderIcon : gFolderIcon;
+        break;
+    default:
+        icon = open = gDocIcon;
+        break;
+    }
+
+    ZeroMemory(&insert, sizeof(insert));
+    insert.hParent        = parent;
+    insert.hInsertAfter   = TVI_LAST;
+    insert.item.mask      = TVIF_TEXT | TVIF_PARAM | TVIF_STATE |
+                            TVIF_IMAGE | TVIF_SELECTEDIMAGE;
+    insert.item.pszText   = label;
+    insert.item.lParam    = RowParam(kind, index);
+    insert.item.state     = bold ? TVIS_BOLD : 0;
+    insert.item.stateMask = TVIS_BOLD;
+    insert.item.iImage         = (icon >= 0) ? icon : 0;
+    insert.item.iSelectedImage = (open >= 0) ? open : 0;
+    return (HTREEITEM)SendMessage(gSidebar, TVM_INSERTITEMA, 0,
+                                  (LPARAM)&insert);
+}
+
+/* The item showing a row, found by walking the tree: a hundred feeds at
+   most, so a walk is cheaper than keeping a second index in step. */
+static HTREEITEM FindRow(HTREEITEM from, LPARAM param)
+{
+    HTREEITEM item = from;
+
+    while (item != NULL) {
+        TV_ITEMA  tv;
+        HTREEITEM child;
+
+        ZeroMemory(&tv, sizeof(tv));
+        tv.mask  = TVIF_PARAM;
+        tv.hItem = item;
+        if (SendMessage(gSidebar, TVM_GETITEMA, 0, (LPARAM)&tv) &&
+            tv.lParam == param) {
+            return item;
+        }
+        child = (HTREEITEM)SendMessage(gSidebar, TVM_GETNEXTITEM,
+                                       TVGN_CHILD, (LPARAM)item);
+        if (child != NULL) {
+            HTREEITEM found = FindRow(child, param);
+
+            if (found != NULL) {
+                return found;
+            }
+        }
+        item = (HTREEITEM)SendMessage(gSidebar, TVM_GETNEXTITEM, TVGN_NEXT,
+                                      (LPARAM)item);
+    }
+    return NULL;
+}
+
+/* Put the tree's highlight on what is selected, without that reading as a
+   click. A feed inside a shut group has no item to highlight; it stays the
+   selection, as on the Mac. */
+static void ShowSelectionInTree(void)
+{
+    HTREEITEM root, item = NULL;
+
+    if (gSidebar == NULL) {
+        return;
+    }
+    root = (HTREEITEM)SendMessage(gSidebar, TVM_GETNEXTITEM, TVGN_ROOT, 0);
+    if (gSelectedSmart >= 0) {
+        item = FindRow(root, RowParam(kGazetteRowSmart, gSelectedSmart));
+    } else if (gSelectedGroup >= 0) {
+        item = FindRow(root, RowParam(kGazetteRowGroup, gSelectedGroup));
+    } else if (gSelectedFeed >= 0) {
+        item = FindRow(root, RowParam(kGazetteRowFeed, gSelectedFeed));
+    }
+    gSyncingTree = TRUE;
+    SendMessage(gSidebar, TVM_SELECTITEM, TVGN_CARET, (LPARAM)item);
+    if (item != NULL) {
+        SendMessage(gSidebar, TVM_ENSUREVISIBLE, 0, (LPARAM)item);
+    }
+    gSyncingTree = FALSE;
+}
+
+/* Every item's words again: the unread counts have moved. */
+static void RelabelRows(HTREEITEM item)
+{
+    while (item != NULL) {
+        TV_ITEMA  tv;
+        HTREEITEM child;
+
+        ZeroMemory(&tv, sizeof(tv));
+        tv.mask  = TVIF_PARAM;
+        tv.hItem = item;
+        if (SendMessage(gSidebar, TVM_GETITEMA, 0, (LPARAM)&tv)) {
+            SetRowItem(item, RowKind(tv.lParam), RowIndex(tv.lParam));
+        }
+        child = (HTREEITEM)SendMessage(gSidebar, TVM_GETNEXTITEM, TVGN_CHILD,
+                                       (LPARAM)item);
+        if (child != NULL) {
+            RelabelRows(child);
+        }
+        item = (HTREEITEM)SendMessage(gSidebar, TVM_GETNEXTITEM, TVGN_NEXT,
+                                      (LPARAM)item);
+    }
+}
+
+static void RelabelSidebar(void)
+{
+    if (gSidebar != NULL) {
+        RelabelRows((HTREEITEM)SendMessage(gSidebar, TVM_GETNEXTITEM,
+                                           TVGN_ROOT, 0));
+    }
+}
+
+/* Which rows "Hide Read Feeds" leaves standing: platinum_window.c's
+   ApplyFeedVisibility, word for word. */
+static void ApplyFeedVisibility(void)
+{
+    int i;
+    int g;
+
+    if (!GazetteCoreHideReadFeeds()) {
+        GazetteCoreShowAllRows();
+        return;
+    }
+    for (g = 0; g < GazetteCoreGroupCount(); g++) {
+        GazetteCoreSetGroupHidden(g, true);
+    }
+    for (i = 0; i < GazetteCoreFeedCount(); i++) {
+        Boolean keep = (Boolean)(i == gSelectedFeed || FeedUnread(i) > 0);
+        int     group;
+
+        GazetteCoreSetFeedHidden(i, (Boolean)!keep);
+        group = GazetteCoreFeedGroup(i);
+        if (keep && group >= 0) {
+            GazetteCoreSetGroupHidden(group, false);
+        }
+    }
+    if (gSelectedGroup >= 0) {
+        GazetteCoreSetGroupHidden(gSelectedGroup, false);
+    }
+}
+
+/* The numbers beside the standing views; Today's reads every cache, so it
+   is counted here, when the rows are rebuilt, and not on every repaint. */
+static void CountSmartRows(void)
+{
+    int total = 0;
+    int i;
+
+    for (i = 0; i < GazetteCoreFeedCount(); i++) {
+        if (GazetteCoreFeedEnabled(i)) {
+            total += FeedUnread(i);
+        }
+    }
+    gSmartCount[kGazetteSmartToday]   = GazetteFeedsCountToday();
+    gSmartCount[kGazetteSmartUnread]  = total;
+    gSmartCount[kGazetteSmartStarred] = GazetteIndexStarredCount();
+}
+
+/* The whole tree made again from the preferences: after a refresh, a
+   feed added or removed, or Hide Read Feeds. */
+static void SyncSidebarRows(void)
+{
+    static GazetteSidebarRow sequence[kGazetteMaxFeeds + kGazetteMaxGroups];
+    HTREEITEM                groupItem[kGazetteMaxGroups];
+    const GazettePrefs      *prefs = GazetteCoreGetPrefs();
+    int                      count, i;
+
+    ApplyFeedVisibility();
+    CountSmartRows();
+
+    if (gSidebar == NULL || prefs == NULL) {
+        return;
+    }
+
+    gSyncingTree = TRUE;
+    SendMessage(gSidebar, WM_SETREDRAW, FALSE, 0);
+    SendMessage(gSidebar, TVM_DELETEITEM, 0, (LPARAM)TVI_ROOT);
+
+    for (i = 0; i < kGazetteSmartCount; i++) {
+        (void)InsertRow(TVI_ROOT, kGazetteRowSmart, i);
+    }
+    for (i = 0; i < kGazetteMaxGroups; i++) {
+        groupItem[i] = NULL;
+    }
+
+    count = GazetteCoreSequence(sequence);
+    for (i = 0; i < count; i++) {
+        int index = sequence[i].index;
+
+        if (sequence[i].kind == kGazetteRowGroup) {
+            if (index >= 0 && index < prefs->groupCount &&
+                !prefs->groups[index].hidden) {
+                groupItem[index] = InsertRow(TVI_ROOT, kGazetteRowGroup,
+                                             index);
+            }
+        } else if (index >= 0 && index < prefs->feedCount &&
+                   !prefs->feeds[index].hidden) {
+            int       group  = GazetteCoreFeedGroup(index);
+            HTREEITEM parent = TVI_ROOT;
+
+            if (group >= 0) {
+                parent = (group < kGazetteMaxGroups) ? groupItem[group]
+                                                     : NULL;
+                if (parent == NULL) {
+                    continue;       /* its group is hidden */
+                }
+            }
+            (void)InsertRow(parent, kGazetteRowFeed, index);
+        }
+    }
+
+    /* Open what was open. After the children are in: an item with none
+       has nothing to expand. */
+    for (i = 0; i < kGazetteMaxGroups; i++) {
+        if (groupItem[i] != NULL && !GazetteCoreGroupCollapsed(i)) {
+            SendMessage(gSidebar, TVM_EXPAND, TVE_EXPAND,
+                        (LPARAM)groupItem[i]);
+        }
+    }
+
+    SendMessage(gSidebar, WM_SETREDRAW, TRUE, 0);
+    gSyncingTree = FALSE;
+    ShowSelectionInTree();
+    InvalidateRect(gSidebar, NULL, TRUE);
+}
+
+/* Do what a click on this row would do: platinum_window.c's ChooseRow. */
+static void ChooseRow(int kind, int index)
+{
+    if (kind == kGazetteRowSmart) {
+        if (index == gSelectedSmart) {
+            return;
+        }
+        gSelectedSmart = index;
+        gSelectedGroup = -1;
+        if (gOnSmartChosen != NULL) {
+            gOnSmartChosen(index);
+        }
+        return;
+    }
+
+    if (kind == kGazetteRowGroup) {
+        if (index == gSelectedGroup && gSelectedSmart < 0) {
+            return;
+        }
+        gSelectedGroup = index;
+        gSelectedSmart = -1;
+        if (gOnGroupChosen != NULL) {
+            gOnGroupChosen(index);
+        }
+        return;
+    }
+
+    if (index != gSelectedFeed || gSelectedGroup >= 0 ||
+        gSelectedSmart >= 0) {
+        gSelectedFeed  = index;
+        gSelectedGroup = -1;
+        gSelectedSmart = -1;
+        if (gOnFeedChosen != NULL) {
+            gOnFeedChosen(index);
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* The headline list                                                   */
+/* ------------------------------------------------------------------ */
+
+static void BuildHeadlineRows(void)
+{
+    long last  = 0;
+    int  have  = 0;
+    int  count = GazetteFeedsArticleCount();
+    int  room  = (int)(sizeof gHeadRows / sizeof gHeadRows[0]);
+    int  i;
+
+    gHeadRowCount = 0;
+    for (i = 0; i < count && gHeadRowCount + 2 <= room; i++) {
+        const GazetteArticle *a = GazetteFeedsArticleAt(i);
+        long                  day;
+
+        if (a == NULL) {
+            break;
+        }
+        /* The day the reader's clock would call it, as on the Mac. */
+        day = GazetteDayNumber(GazetteFeedsLocalTime(a->date));
+        if (!have || day != last) {
+            gHeadRows[gHeadRowCount].kind    = kHeadlineDate;
+            gHeadRows[gHeadRowCount].article = i;
+            gHeadRowCount++;
+            last = day;
+            have = 1;
+        }
+        gHeadRows[gHeadRowCount].kind    = kHeadlineArticle;
+        gHeadRows[gHeadRowCount].article = i;
+        gHeadRowCount++;
+    }
+}
+
+static int RowForArticle(int article)
+{
+    int i;
+
+    for (i = 0; i < gHeadRowCount; i++) {
+        if (gHeadRows[i].kind == kHeadlineArticle &&
+            gHeadRows[i].article == article) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int ArticleAtRow(int row)
+{
+    if (row < 0 || row >= gHeadRowCount ||
+        gHeadRows[row].kind == kHeadlineDate) {
+        return -1;
+    }
+    return gHeadRows[row].article;
+}
+
+/* The list box holds a row number per item and nothing else; each item's
+   height is asked for as it goes in (WM_MEASUREITEM). */
+static void FillHeadlines(void)
+{
+    int i;
+
+    if (gHeadlines == NULL) {
+        return;
+    }
+    SendMessage(gHeadlines, WM_SETREDRAW, FALSE, 0);
+    SendMessage(gHeadlines, LB_RESETCONTENT, 0, 0);
+    for (i = 0; i < gHeadRowCount; i++) {
+        SendMessage(gHeadlines, LB_ADDSTRING, 0, (LPARAM)i);
+    }
+    SendMessage(gHeadlines, WM_SETREDRAW, TRUE, 0);
+    InvalidateRect(gHeadlines, NULL, TRUE);
+}
+
+static void ShowArticleRow(BOOL reveal)
+{
+    int row = RowForArticle(gSelectedArticle);
+
+    if (gHeadlines == NULL) {
+        return;
+    }
+    SendMessage(gHeadlines, LB_SETCURSEL, (WPARAM)row, 0);
+    if (!reveal && row >= 0) {
+        /* A new list opens at its top, whatever is selected in it. */
+        SendMessage(gHeadlines, LB_SETTOPINDEX, 0, 0);
+    }
+    InvalidateRect(gHeadlines, NULL, FALSE);
+}
+
+/*
+ * The headline band and the window's title: the view's name, and how many
+ * are unread -- or, while a search is on, how many matched. The Mac's
+ * GazetteUIUpdate works these out the same way.
+ */
+static void UpdateHeader(void)
+{
+    char        header[kGazetteFeedTitleLen + 96];
+    char        count[48];
+    char        caption[kGazetteFeedTitleLen + 32];
+    const char *title = GazetteFeedsTitle();
+
+    if (title[0] == '\0') {
+        title = GazetteCoreFeedTitle(gSelectedFeed);
+    }
+    count[0] = '\0';
+    if (GazetteFeedsTotalCount() > 0) {
+        int unread = GazetteFeedsUnreadCount();
+
+        if (GazetteFeedsFilter()[0] != '\0') {
+            wsprintfA(header, "%s - \223%s\224", title, GazetteFeedsFilter());
+            wsprintfA(count, "(%d)", GazetteFeedsArticleCount());
+        } else if (unread > 0) {
+            lstrcpynA(header, title, sizeof(header));
+            wsprintfA(count, "(%d unread)", unread);
+        } else {
+            lstrcpynA(header, title, sizeof(header));
+            wsprintfA(count, "(%d)", GazetteFeedsTotalCount());
+        }
+    } else {
+        lstrcpynA(header, title, sizeof(header));
+    }
+    SetListTitle(header, count);
+
+    /* "Today - Gazette", as Outlook Express's is "Inbox - Outlook
+       Express": the view, then the program. */
+    if (gFrame != NULL) {
+        wsprintfA(caption, "%s - Gazette", title[0] ? title : "Gazette");
+        SetWindowTextA(gFrame, caption);
+    }
+
+    /* And the status bar's left-hand section: what the view holds. */
+    if (GazetteFeedsTotalCount() > 0) {
+        char holds[64];
+
+        wsprintfA(holds, "%d articles, %d unread",
+                  GazetteFeedsArticleCount(), GazetteFeedsUnreadCount());
+        GazetteWindowSetCount(holds);
+    } else {
+        GazetteWindowSetCount("");
+    }
+}
+
+static void SelectArticle(int index)
+{
+    int count = GazetteFeedsArticleCount();
+
+    if (count == 0) {
+        gSelectedArticle = -1;
+    } else {
+        if (index < 0)      index = 0;
+        if (index >= count) index = count - 1;
+        gSelectedArticle = index;
+    }
+
+    /* Opening it is what makes it read. */
+    if (gSelectedArticle >= 0) {
+        GazetteFeedsMarkRead(gSelectedArticle, 1);
+    }
+    ShowArticleRow(TRUE);
+
+    /* The shell first, then the text: SelectArticle's order on the Mac,
+       so a page on its way is waited for rather than the summary laid
+       out and replaced. */
+    if (gSelectedArticle >= 0 && gOnArticleChosen != NULL) {
+        gOnArticleChosen(gSelectedArticle);
+    }
+    GazetteWinReaderCompose(gSelectedArticle);
+    GazetteUIUpdate();
+}
+
+/*
+ * The list box moved its selection. A date band is not a place to stop:
+ * coming down onto one goes on to the headline under it, and coming up
+ * onto one goes on to the headline over it.
+ */
+static void HeadlineRowChosen(void)
+{
+    int row     = (int)SendMessage(gHeadlines, LB_GETCURSEL, 0, 0);
+    int article = ArticleAtRow(row);
+
+    if (article < 0 && row >= 0) {
+        int was = RowForArticle(gSelectedArticle);
+
+        article = ArticleAtRow((was > row && row > 0) ? row - 1 : row + 1);
+        if (article < 0) {
+            article = gSelectedArticle;
+        }
+    }
+    if (article < 0) {
+        return;
+    }
+    if (article == gSelectedArticle) {
+        ShowArticleRow(TRUE);
+        return;
+    }
+    SelectArticle(article);
+}
+
+/* ------------------------------------------------------------------ */
+/* app/gazette_ui.h                                                    */
+/* ------------------------------------------------------------------ */
+
+void GazetteWindowSetCallbacks(GazetteUIFeedChosen onFeedChosen,
+                               GazetteUIArticleChosen onArticleChosen,
+                               GazetteUIGroupChosen onGroupChosen,
+                               GazetteUISmartChosen onSmartChosen,
+                               GazetteUICommandChosen onCommand)
+{
+    gOnFeedChosen    = onFeedChosen;
+    gOnArticleChosen = onArticleChosen;
+    gOnGroupChosen   = onGroupChosen;
+    gOnSmartChosen   = onSmartChosen;
+    gOnCommand       = onCommand;
+}
+
+static char gStatusText[256];
+
+void GazetteUISetStatus(const char *text)
+{
+    if (text == NULL) {
+        text = "";
+    }
+    if (strcmp(gStatusText, text) == 0) {
+        return;
+    }
+    lstrcpynA(gStatusText, text, sizeof(gStatusText));
+    GazetteWindowSetStatus(gStatusText);
+}
+
+void GazetteUIUpdate(void)
+{
+    if (gFrame == NULL) {
+        return;
+    }
+    UpdateHeader();
+    RelabelSidebar();
+    AdjustToolbarState();
+    if (gHeadlines != NULL) {
+        InvalidateRect(gHeadlines, NULL, FALSE);
+    }
+}
+
+static char gKeepLink[kGazetteArticleLinkLen];
+static int  gKeepOffset;
+
+void GazetteUIKeepPlace(void)
+{
+    const GazetteArticle *a = GazetteFeedsArticleAt(gSelectedArticle);
+
+    gKeepLink[0] = '\0';
+    gKeepOffset  = 0;
+    if (a != NULL && a->link[0] != '\0') {
+        lstrcpynA(gKeepLink, a->link, sizeof(gKeepLink));
+        gKeepOffset = GazetteWinReaderOffset();
+    }
+}
+
+void GazetteUIArticlesChanged(void)
+{
+    int kept = -1;
+
+    if (gFrame == NULL) {
+        return;
+    }
+
+    if (gKeepLink[0] != '\0') {
+        int i;
+
+        for (i = 0; i < GazetteFeedsArticleCount(); i++) {
+            const GazetteArticle *a = GazetteFeedsArticleAt(i);
+
+            if (a != NULL && strcmp(a->link, gKeepLink) == 0) {
+                kept = i;
+                break;
+            }
+        }
+        gKeepLink[0] = '\0';
+    }
+
+    if (kept >= 0) {
+        gSelectedArticle = kept;
+    } else {
+        gSelectedArticle = (GazetteFeedsArticleCount() > 0) ? 0 : -1;
+    }
+
+    SyncSidebarRows();
+    BuildHeadlineRows();
+    FillHeadlines();
+    ShowArticleRow((BOOL)(kept >= 0));
+
+    if (gSelectedArticle >= 0) {
+        GazetteFeedsMarkRead(gSelectedArticle, 1);
+    }
+    if (gSelectedArticle >= 0 && gOnArticleChosen != NULL) {
+        gOnArticleChosen(gSelectedArticle);
+    }
+
+    GazetteWinReaderCompose(gSelectedArticle);
+    if (kept >= 0 && gKeepOffset > 0) {
+        GazetteWinReaderScrollTo(gKeepOffset);
+    }
+    gKeepOffset = 0;
+    GazetteUIUpdate();
+}
+
+void GazetteUIArticleTextChanged(void)
+{
+    GazetteWinReaderCompose(gSelectedArticle);
+}
+
+/* Windows draws no photographs yet (TASKS.md W2 step 4); when it does, a
+   picture landing recomposes the article where the reader has it. */
+void GazetteUIPhotosChanged(void)
+{
+    int was;
+
+    if (GazettePhotosArticle() != gSelectedArticle) {
+        return;
+    }
+    was = GazetteWinReaderOffset();
+    GazetteWinReaderCompose(gSelectedArticle);
+    GazetteWinReaderScrollTo(was);
+}
+
+void GazetteUIViewChanged(void)
+{
+    char                  link[kGazetteArticleLinkLen];
+    const GazetteArticle *was = GazetteFeedsArticleAt(gSelectedArticle);
+
+    if (gFrame == NULL) {
+        return;
+    }
+    link[0] = '\0';
+    if (was != NULL) {
+        lstrcpynA(link, was->link, sizeof(link));
+    }
+
+    GazetteFeedsRebuildView();
+
+    gSelectedArticle = -1;
+    if (link[0] != '\0') {
+        int i;
+
+        for (i = 0; i < GazetteFeedsArticleCount(); i++) {
+            const GazetteArticle *a = GazetteFeedsArticleAt(i);
+
+            if (a != NULL && strcmp(a->link, link) == 0) {
+                gSelectedArticle = i;
+                break;
+            }
+        }
+    }
+    if (gSelectedArticle < 0 && GazetteFeedsArticleCount() > 0) {
+        gSelectedArticle = 0;
+    }
+
+    /* Hide Sidebar and Hide Toolbar are View menu moves too. */
+    gSidebarHidden = GazetteCoreHideSidebar() ? TRUE : FALSE;
+    gToolbarHidden = GazetteCoreHideToolbar() ? TRUE : FALSE;
+
+    SyncSidebarRows();
+    BuildHeadlineRows();
+    FillHeadlines();
+    ShowArticleRow(TRUE);
+    GazetteWindowLayout(gFrame);
+    GazetteWinReaderCompose(gSelectedArticle);
+    GazetteUIUpdate();
+}
+
+void GazetteUIFeedsChanged(void)
+{
+    if (gFrame == NULL) {
+        return;
+    }
+    if (gSelectedFeed >= GazetteCoreFeedCount()) {
+        gSelectedFeed = 0;
+    }
+    if (gSelectedGroup >= GazetteCoreGroupCount()) {
+        gSelectedGroup = -1;
+    }
+    SyncSidebarRows();
+    GazetteUIUpdate();
+}
+
+int GazetteUISelectedArticle(void)
+{
+    return gSelectedArticle;
+}
+
+const char *GazetteUISelectedArticleLink(void)
+{
+    const GazetteArticle *a = GazetteFeedsArticleAt(gSelectedArticle);
+
+    return (a != NULL) ? a->link : "";
+}
+
+Boolean GazetteUINextUnread(void)
+{
+    int count = GazetteFeedsArticleCount();
+    int i;
+
+    for (i = (gSelectedArticle < 0) ? 0 : gSelectedArticle + 1;
+         i < count; i++) {
+        const GazetteArticle *a = GazetteFeedsArticleAt(i);
+
+        if (a != NULL && !a->read) {
+            SelectArticle(i);
+            return true;
+        }
+    }
+    return false;
+}
+
+int GazetteUISelectedFeed(void)
+{
+    return gSelectedFeed;
+}
+
+void GazetteUISelectFeed(int index)
+{
+    if (index < 0 || index >= GazetteCoreFeedCount()) {
+        return;
+    }
+    gSelectedFeed  = index;
+    gSelectedGroup = -1;
+    gSelectedSmart = -1;
+    ShowSelectionInTree();
+}
+
+Boolean GazetteUISelection(int *kind, int *index)
+{
+    if (kind == NULL || index == NULL || gSelectedSmart >= 0) {
+        return false;
+    }
+    if (gSelectedGroup >= 0 && gSelectedGroup < GazetteCoreGroupCount()) {
+        *kind  = kGazetteRowGroup;
+        *index = gSelectedGroup;
+        return true;
+    }
+    if (gSelectedFeed >= 0 && gSelectedFeed < GazetteCoreFeedCount()) {
+        *kind  = kGazetteRowFeed;
+        *index = gSelectedFeed;
+        return true;
+    }
+    return false;
+}
+
+void GazetteUISelectGroup(int index)
+{
+    if (index < 0 || index >= GazetteCoreGroupCount()) {
+        return;
+    }
+    gSelectedGroup = index;
+    gSelectedSmart = -1;
+    ShowSelectionInTree();
+}
+
+void GazetteUISelectSmart(int which)
+{
+    if (which < 0 || which >= kGazetteSmartCount) {
+        return;
+    }
+    ChooseRow(kGazetteRowSmart, which);
+    ShowSelectionInTree();
+}
+
+/* Windows has no search field: the Find dialog's text stands in for it,
+   so Find Next and the application read the same words. */
+void GazetteUISearchText(char *out, size_t cap)
+{
+    if (out == NULL || cap == 0) {
+        return;
+    }
+    lstrcpynA(out, gFindWhat, (int)cap);
+}
+
+void GazetteUISetSearchText(const char *text)
+{
+    lstrcpynA(gFindWhat, (text != NULL) ? text : "", sizeof(gFindWhat));
 }

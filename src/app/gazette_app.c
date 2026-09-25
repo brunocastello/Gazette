@@ -1019,6 +1019,75 @@ static void CheckAutoRefresh(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* The Feeds menu                                                      */
+/* ------------------------------------------------------------------ */
+
+/* Turn Off / Turn On, for the selected feed or every feed in a group. */
+void GazetteAppToggleEnabled(void)
+{
+    int kind  = 0;
+    int index = 0;
+
+    if (!GazetteUISelection(&kind, &index)) {
+        return;
+    }
+
+    if (kind == kGazetteRowFeed) {
+        GazetteCoreSetFeedEnabled(index, !GazetteCoreFeedEnabled(index));
+    } else if (kind == kGazetteRowGroup) {
+        GazetteCoreSetGroupEnabled(index, !GazetteCoreGroupEnabled(index));
+    } else {
+        return;
+    }
+    GazetteCoreSavePrefs();
+    GazetteUIFeedsChanged();
+}
+
+/*
+ * Delete what is selected, once the shell has asked. A group goes and its
+ * feeds move to the top of the list; a feed goes with its cache file and
+ * its read marks, which are keyed by an address nothing would look up
+ * again.
+ */
+void GazetteAppRemoveSelection(void)
+{
+    int kind  = 0;
+    int index = 0;
+
+    if (!GazetteUISelection(&kind, &index)) {
+        return;
+    }
+
+    if (kind == kGazetteRowGroup) {
+        GazetteCoreRemoveGroup(index);
+    } else {
+        char url[kGazetteURLLen];
+
+        /* Copy the address out first: removing shifts the array that pointer
+           points into. */
+        snprintf(url, sizeof url, "%s", GazetteCoreFeedURL(index));
+
+        GazetteFeedsForgetCache(url);
+        GazetteIndexForgetFeed(url);
+        GazetteCoreRemoveFeed(url);
+
+        /* The feed that shuffled up into the gap is the one to show — the
+           same place in the list the user was already looking at. */
+        GazetteCoreSavePrefs();
+        GazetteUIFeedsChanged();
+        if (index >= GazetteCoreFeedCount()) {
+            index = GazetteCoreFeedCount() - 1;
+        }
+        GazetteAppShowFeed(index);
+        return;
+    }
+
+    GazetteCoreSavePrefs();
+    GazetteUIFeedsChanged();
+    GazetteAppShowFeed(GazetteUISelectedFeed());
+}
+
+/* ------------------------------------------------------------------ */
 /* The idle slice                                                      */
 /* ------------------------------------------------------------------ */
 

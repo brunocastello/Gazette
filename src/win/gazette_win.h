@@ -13,6 +13,10 @@
 #include <commctrl.h>
 #include <commdlg.h>
 
+/* What the application asks of a window, on both systems; this shell's
+   window answers it (gazette_win_window.c). */
+#include "app/gazette_ui.h"
+
 /*
  * The icons, in the order tools/generate_win_assets.py lays them into
  * Resources/win/ui_icons.bmp -- which is resource-id order in
@@ -46,9 +50,16 @@ void  GazetteWindowLayout(HWND frame);
 void  GazetteWindowDestroy(void);
 HFONT GazetteWindowFont(void);
 
-/* View menu. Each answers whether the item is showing "Hide" or "Show". */
-void GazetteWindowToggleSidebar(HWND frame);
-void GazetteWindowToggleToolbar(HWND frame);
+/* What to call when a row or a headline is chosen, and when Find asks for
+   a search -- the Mac's GazetteUIOpen arguments. Before the window opens. */
+void GazetteWindowSetCallbacks(GazetteUIFeedChosen onFeedChosen,
+                               GazetteUIArticleChosen onArticleChosen,
+                               GazetteUIGroupChosen onGroupChosen,
+                               GazetteUISmartChosen onSmartChosen,
+                               GazetteUICommandChosen onCommand);
+
+/* View menu. Each answers whether the item is showing "Hide" or "Show";
+   the preferences hold the answer, and GazetteUIViewChanged reads it. */
 BOOL GazetteWindowSidebarHidden(void);
 BOOL GazetteWindowToolbarHidden(void);
 
@@ -58,7 +69,7 @@ void GazetteWindowDrawItem(const DRAWITEMSTRUCT *draw);
 BOOL GazetteWindowNotify(HWND frame, NMHDR *header, LRESULT *result);
 /* A WM_COMMAND the window itself answers -- the toolbar's chevron. Returns
    TRUE when it was one. */
-BOOL GazetteWindowCommand(HWND frame, int id);
+BOOL GazetteWindowCommand(HWND frame, WPARAM wParam, LPARAM lParam);
 
 /* The status bar's two sections: what the view holds, and what the
    network is doing. */
@@ -74,5 +85,14 @@ HWND GazetteWindowFindDialog(void);
 UINT GazetteWindowFindMessage(void);
 void GazetteWindowFindEvent(const FINDREPLACEA *find);
 void GazetteWindowMinimumSize(POINT *minimum);
+
+/* The article pane, gazette_win_reader.c: the window class's procedure,
+   and the text composed for an article (-1 for none) and laid out. */
+LRESULT CALLBACK GazetteWinReaderProc(HWND hwnd, UINT message,
+                                      WPARAM wParam, LPARAM lParam);
+void GazetteWinReaderCompose(int article);
+void GazetteWinReaderLayout(void);
+int  GazetteWinReaderOffset(void);
+void GazetteWinReaderScrollTo(int offset);
 
 #endif /* GAZETTE_WIN_H */

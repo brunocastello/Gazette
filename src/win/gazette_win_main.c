@@ -23,12 +23,18 @@
 
 #include <windows.h>
 #include <commctrl.h>
+#include <shellapi.h>
 #include <string.h>
 
 #include "gazette_win.h"
 #include "gazette_win_res.h"
 #include "gazette_version.h"
+#include "app/gazette_app.h"
+#include "core/gazette_core.h"
+#include "feeds/gazette_feeds.h"
+#include "feeds/gazette_index.h"
 #include "net/gazette_net.h"
+#include "store/gazette_store.h"
 
 static const char kMainClass[]  = "GazetteMainWindow";
 static const char kAboutClass[] = "GazetteAboutWindow";
@@ -270,24 +276,231 @@ static void ShowAbout(void)
 /* Menus                                                               */
 /* ------------------------------------------------------------------ */
 
-/*
- * Two items say what they would do rather than what is so, as their
- * Mac counterparts do, so their wording is set here rather than fixed
- * in the resource script.
- */
-static void AdjustMenus(HWND hwnd)
+static void Enable(HMENU menu, UINT id, BOOL on)
 {
-    HMENU menu = GetMenu(hwnd);
+    EnableMenuItem(menu, id, MF_BYCOMMAND | (on ? MF_ENABLED : MF_GRAYED));
+}
 
-    ModifyMenuA(menu, IDM_VIEW_SIDEBAR, MF_BYCOMMAND | MF_STRING,
-                IDM_VIEW_SIDEBAR,
-                GazetteWindowSidebarHidden() ? "Show &Sidebar\tCtrl+S"
-                                             : "Hide &Sidebar\tCtrl+S");
-    ModifyMenuA(menu, IDM_VIEW_TOOLBAR, MF_BYCOMMAND | MF_STRING,
-                IDM_VIEW_TOOLBAR,
-                GazetteWindowToolbarHidden() ? "Show &Toolbar\tCtrl+T"
-                                             : "Hide &Toolbar\tCtrl+T");
-    DrawMenuBar(hwnd);
+static void Retitle(HMENU menu, UINT id, const char *text)
+{
+    MENUITEMINFOA info;
+
+    /* SetMenuItemInfo keeps the item's state, which ModifyMenu resets --
+       and it is in USER32 on 95 and NT 4. */
+    ZeroMemory(&info, sizeof(info));
+    info.cbSize     = sizeof(info);
+    info.fMask      = MIIM_TYPE;
+    info.fType      = MFT_STRING;
+    info.dwTypeData = (char *)text;
+    SetMenuItemInfoA(menu, id, FALSE, &info);
+}
+
+/*
+ * The Mac's AdjustMenus, item for item, run as a menu drops down. Items
+ * say what they would do rather than what is so -- Hide Sidebar or Show
+ * Sidebar, Mark as Read or Mark as Unread -- with Windows' & and its
+ * Ctrl key after a tab.
+ */
+static void AdjustMenus(HMENU menu)
+{
+    const GazetteArticle *open;
+    int  kind  = 0;
+    int  index = 0;
+    int  at    = GazetteUISelectedArticle();
+    int  count = GazetteFeedsArticleCount();
+    BOOL any, feedSelected, groupSelected;
+
+    any           = GazetteUISelection(&kind, &index) ? TRUE : FALSE;
+    feedSelected  = (BOOL)(any && kind == kGazetteRowFeed);
+    groupSelected = (BOOL)(any && kind == kGazetteRowGroup);
+    open          = GazetteFeedsArticleAt(at);
+
+    /* File. New Feed and New Group wait for their dialogs. */
+    Enable(menu, IDM_FILE_REFRESH,
+           (BOOL)(GazetteCoreFeedCount() > 0 &&
+                  GazetteFeedsRefreshGetState() != kGazetteRefreshRunning));
+    Enable(menu, IDM_FILE_IMPORT, TRUE);
+    Enable(menu, IDM_FILE_EXPORT, (BOOL)(GazetteCoreFeedCount() > 0));
+
+    /* Edit. */
+    Enable(menu, IDM_EDIT_FIND, (BOOL)(GazetteFeedsTotalCount() > 0));
+
+    /* View. */
+    Enable(menu, IDM_VIEW_HIDE_READ, TRUE);
+    Enable(menu, IDM_VIEW_HIDE_FEEDS, TRUE);
+    CheckMenuItem(menu, IDM_VIEW_HIDE_READ, MF_BYCOMMAND |
+                  (GazetteCoreHideReadArticles() ? MF_CHECKED : MF_UNCHECKED));
+    CheckMenuItem(menu, IDM_VIEW_HIDE_FEEDS, MF_BYCOMMAND |
+                  (GazetteCoreHideReadFeeds() ? MF_CHECKED : MF_UNCHECKED));
+    Retitle(menu, IDM_VIEW_SIDEBAR,
+            GazetteCoreHideSidebar() ? "Show &Sidebar\tCtrl+S"
+                                     : "Hide &Sidebar\tCtrl+S");
+    Retitle(menu, IDM_VIEW_TOOLBAR,
+            GazetteCoreHideToolbar() ? "Show &Toolbar\tCtrl+T"
+                                     : "Hide &Toolbar\tCtrl+T");
+
+    /* Feeds. */
+    Enable(menu, IDM_FEEDS_TODAY, TRUE);
+    Enable(menu, IDM_FEEDS_UNREAD, TRUE);
+    Enable(menu, IDM_FEEDS_STARRED, TRUE);
+    Enable(menu, IDM_FEEDS_OLDEST_FIRST, TRUE);
+    Retitle(menu, IDM_FEEDS_OLDEST_FIRST,
+            GazetteCoreOldestFirst() ? "Show &Newest First"
+                                     : "Show &Oldest First");
+    Enable(menu, IDM_FEEDS_MARK_ALL, (BOOL)(count > 0));
+    Retitle(menu, IDM_FEEDS_MARK_ALL,
+            (count > 0 && GazetteFeedsUnreadCount() == 0)
+                ? "&Mark All as Unread\tCtrl+K"
+                : "&Mark All as Read\tCtrl+K");
+    Retitle(menu, IDM_FEEDS_DELETE,
+            groupSelected ? "&Delete Group" : "&Delete Feed");
+    Enable(menu, IDM_FEEDS_DELETE, (BOOL)(feedSelected || groupSelected));
+    Enable(menu, IDM_FEEDS_TURN_OFF, (BOOL)(feedSelected || groupSelected));
+    {
+        Boolean on = true;
+
+        if (feedSelected) {
+            on = GazetteCoreFeedEnabled(index);
+        } else if (groupSelected) {
+            on = GazetteCoreGroupEnabled(index);
+        }
+        Retitle(menu, IDM_FEEDS_TURN_OFF, on ? "Turn O&ff" : "Turn O&n");
+    }
+
+    /* Article. */
+    Enable(menu, IDM_ARTICLE_UNREAD, (BOOL)(open != NULL));
+    Retitle(menu, IDM_ARTICLE_UNREAD,
+            (open != NULL && !open->read) ? "Mark as &Read\tCtrl+U"
+                                          : "Mark as &Unread\tCtrl+U");
+    Enable(menu, IDM_ARTICLE_STAR, (BOOL)(open != NULL));
+    Retitle(menu, IDM_ARTICLE_STAR,
+            (open != NULL && open->starred) ? "Un&star Article\tCtrl+L"
+                                            : "&Star Article\tCtrl+L");
+    Enable(menu, IDM_ARTICLE_ABOVE, (BOOL)(open != NULL && at > 0));
+    Enable(menu, IDM_ARTICLE_BELOW,
+           (BOOL)(open != NULL && at >= 0 && at < count - 1));
+    Enable(menu, IDM_ARTICLE_NEXT, (BOOL)(GazetteFeedsUnreadCount() > 0));
+    Enable(menu, IDM_ARTICLE_BROWSER,
+           (BOOL)(GazetteUISelectedArticleLink()[0] != '\0'));
+}
+
+/* ------------------------------------------------------------------ */
+/* Commands                                                            */
+/*                                                                     */
+/* What main.cpp's handlers do, where they are not already the          */
+/* application's: the preference and the save, or the one call into     */
+/* app/gazette_app.c.                                                   */
+/* ------------------------------------------------------------------ */
+
+static void HandleHideSidebar(void)
+{
+    GazetteCoreSetHideSidebar(GazetteCoreHideSidebar() ? false : true);
+    GazetteCoreSavePrefs();
+    GazetteUIViewChanged();
+}
+
+static void HandleHideToolbar(void)
+{
+    GazetteCoreSetHideToolbar(GazetteCoreHideToolbar() ? false : true);
+    GazetteCoreSavePrefs();
+    GazetteUIViewChanged();
+}
+
+/* Find Next in the Find dialog: the search box's Return, on the Mac. */
+static void HandleSearch(void)
+{
+    char text[128];
+
+    GazetteUISearchText(text, sizeof text);
+    GazetteAppSearch(text);
+}
+
+/*
+ * Hand the article's address to whatever Windows opens web addresses
+ * with -- the user's browser, as Internet Config's choice is on the Mac.
+ * ShellExecute is in the 95 shell. It answers a number above 32 when it
+ * started something.
+ */
+static void HandleOpenInBrowser(void)
+{
+    const char *url = GazetteUISelectedArticleLink();
+
+    if (url[0] == '\0') {
+        return;
+    }
+    if ((INT_PTR)ShellExecuteA(gMainWindow, "open", url, NULL, NULL,
+                               SW_SHOWNORMAL) > 32) {
+        GazetteUISetStatus("Opened in your browser.");
+    } else {
+        GazetteUISetStatus("No program is set up to open web addresses.");
+    }
+}
+
+/* Delete, once asked: Windows' own question box, with the Mac's words and
+   Windows-1252's curly quotes. */
+static void HandleRemove(HWND hwnd)
+{
+    char message[320];
+    int  kind  = 0;
+    int  index = 0;
+
+    if (!GazetteUISelection(&kind, &index)) {
+        return;
+    }
+    if (kind == kGazetteRowGroup) {
+        wsprintfA(message, "Delete the group \223%s\224? The feeds in it "
+                  "are kept - they move to the top of the list.",
+                  GazetteCoreGroupName(index));
+    } else {
+        wsprintfA(message, "Delete the feed \223%s\224? You can subscribe "
+                  "to it again at any time.", GazetteCoreFeedTitle(index));
+    }
+    if (MessageBoxA(hwnd, message, "Gazette",
+                    MB_OKCANCEL | MB_ICONQUESTION | MB_DEFBUTTON2) != IDOK) {
+        return;
+    }
+    GazetteAppRemoveSelection();
+}
+
+/* The window's own commands -- the Find dialog's Find Next -- by name, as
+   the Mac's toolbar sends them. */
+static void WindowCommand(int command)
+{
+    if (command == kGazetteCmdSearch) {
+        HandleSearch();
+    }
+}
+
+static BOOL MenuCommand(HWND hwnd, int id)
+{
+    switch (id) {
+    case IDM_FILE_REFRESH:        GazetteAppRefreshAll();           return TRUE;
+    case IDM_FILE_IMPORT:         GazetteAppImportOPML();           return TRUE;
+    case IDM_FILE_EXPORT:         GazetteAppExportOPML();           return TRUE;
+
+    case IDM_VIEW_HIDE_READ:      GazetteAppHideReadArticles();     return TRUE;
+    case IDM_VIEW_HIDE_FEEDS:     GazetteAppHideReadFeeds();        return TRUE;
+    case IDM_VIEW_SIDEBAR:        HandleHideSidebar();              return TRUE;
+    case IDM_VIEW_TOOLBAR:        HandleHideToolbar();              return TRUE;
+
+    case IDM_FEEDS_TODAY:   GazetteUISelectSmart(kGazetteSmartToday);   return TRUE;
+    case IDM_FEEDS_UNREAD:  GazetteUISelectSmart(kGazetteSmartUnread);  return TRUE;
+    case IDM_FEEDS_STARRED: GazetteUISelectSmart(kGazetteSmartStarred); return TRUE;
+    case IDM_FEEDS_OLDEST_FIRST:
+        GazetteAppSortOrder(GazetteCoreOldestFirst() ? false : true);
+        return TRUE;
+    case IDM_FEEDS_MARK_ALL:      GazetteAppMarkAllRead();          return TRUE;
+    case IDM_FEEDS_TURN_OFF:      GazetteAppToggleEnabled();        return TRUE;
+    case IDM_FEEDS_DELETE:        HandleRemove(hwnd);               return TRUE;
+
+    case IDM_ARTICLE_NEXT:        GazetteAppNextUnread();           return TRUE;
+    case IDM_ARTICLE_UNREAD:      GazetteAppMarkRead();             return TRUE;
+    case IDM_ARTICLE_ABOVE:       GazetteAppMarkRange(false);       return TRUE;
+    case IDM_ARTICLE_BELOW:       GazetteAppMarkRange(true);        return TRUE;
+    case IDM_ARTICLE_STAR:        GazetteAppToggleStar();           return TRUE;
+    case IDM_ARTICLE_BROWSER:     HandleOpenInBrowser();            return TRUE;
+    }
+    return FALSE;
 }
 
 /* ------------------------------------------------------------------ */
@@ -353,21 +566,32 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message,
         break;
     }
 
+    case WM_INITMENUPOPUP:
+        /* The whole bar is brought up to date whichever menu is opening:
+           the accelerators run through the same enabling. */
+        AdjustMenus(GetMenu(hwnd));
+        return 0;
+
     case WM_COMMAND:
-        if (GazetteWindowCommand(hwnd, LOWORD(wParam))) {
+        if (GazetteWindowCommand(hwnd, wParam, lParam)) {
+            return 0;
+        }
+        /* An accelerator for an item that is greyed does nothing, as a
+           greyed menu item does: the bar is adjusted, then asked. */
+        if (HIWORD(wParam) == 1) {
+            UINT state;
+
+            AdjustMenus(GetMenu(hwnd));
+            state = GetMenuState(GetMenu(hwnd), LOWORD(wParam),
+                                 MF_BYCOMMAND);
+            if (state != (UINT)-1 && (state & (MF_GRAYED | MF_DISABLED))) {
+                return 0;
+            }
+        }
+        if (MenuCommand(hwnd, LOWORD(wParam))) {
             return 0;
         }
         switch (LOWORD(wParam)) {
-        case IDM_VIEW_SIDEBAR:
-            GazetteWindowToggleSidebar(hwnd);
-            AdjustMenus(hwnd);
-            return 0;
-
-        case IDM_VIEW_TOOLBAR:
-            GazetteWindowToggleToolbar(hwnd);
-            AdjustMenus(hwnd);
-            return 0;
-
         case IDM_HELP_ABOUT:
             ShowAbout();
             return 0;
@@ -382,6 +606,9 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message,
         break;
 
     case WM_DESTROY:
+        /* Everything in flight stopped, and what was read written, before
+           the window it would report to goes. */
+        GazetteAppShutdown();
         GazetteWindowDestroy();
         PostQuitMessage(0);
         return 0;
@@ -473,12 +700,11 @@ enum { kSleepMs = 100 };
 
 /*
  * The idle branch: the one place network I/O advances, as in the Mac's
- * RunGazette. Nothing it calls may block. The refresh, full-text and photo
- * pumps join it as the Windows shell grows the engine's store; until then
- * it has nothing to turn.
+ * RunGazette. Nothing it calls may block.
  */
 static void PumpNetwork(void)
 {
+    GazetteAppPumpNetwork();
 }
 
 /* One message, through the About box and the accelerators first. */
@@ -523,20 +749,43 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
         return 1;
     }
 
+    /* The preferences, then the read marks, before the window: the first
+       thing drawn is a sidebar with unread counts in it. The store keeps
+       its own copy of the View menu's sort and filter. InitGazette's
+       order on the Mac. */
+    (void)GazetteCoreInit();
+    GazetteIndexLoad();
+    GazetteFeedsSetOldestFirst(GazetteCoreOldestFirst() ? 1 : 0);
+    GazetteFeedsSetHideRead(GazetteCoreHideReadArticles() ? 1 : 0);
+
+    /* Winsock and Certainly, once. A machine without TCP/IP still opens
+       the window and reads its cache; the status line says why nothing
+       refreshes, as the Mac's does when Open Transport will not open. */
+    (void)GazetteNetInit();
+
+    GazetteWindowSetCallbacks(GazetteAppShowFeed, GazetteAppShowArticle,
+                              GazetteAppShowGroup, GazetteAppShowSmart,
+                              WindowCommand);
+
     hwnd = CreateMainWindow(showCommand);
     if (hwnd == NULL) {
         MessageBoxA(NULL, "Gazette could not open its window.",
                     "Gazette", MB_OK | MB_ICONSTOP);
+        GazetteCoreShutdown();
+        GazetteNetShutdown();
         return 1;
     }
 
     accelerators = LoadAcceleratorsA(instance,
                                      MAKEINTRESOURCEA(IDR_ACCELERATORS));
 
-    /* Winsock and Certainly, once. A machine without TCP/IP still opens
-       the window and reads its cache; the status line says why nothing
-       refreshes, as the Mac's does when Open Transport will not open. */
-    (void)GazetteNetInit();
+    /* The Open and Save As dialogs run a loop of their own; this keeps a
+       fetch moving while one is up. */
+    GazetteStoreSetIdle(GazetteAppPumpRefresh);
+
+    /* Whatever the last run left cached, so the window has content before
+       any network work happens. */
+    GazetteAppShowFeed(0);
 
     /*
      * The message loop is the Mac's WaitNextEvent loop in Win32's words.
@@ -549,6 +798,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
     for (;;) {
         while (PeekMessageA(&message, NULL, 0, 0, PM_REMOVE)) {
             if (message.message == WM_QUIT) {
+                /* Writes the preferences if anything changed them --
+                   including a first run, which saves the defaults. */
+                GazetteCoreShutdown();
                 GazetteNetShutdown();
                 return (int)message.wParam;
             }

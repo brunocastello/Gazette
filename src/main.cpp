@@ -1708,65 +1708,20 @@ static void HandleRemove(void)
                  "Delete the group \322%s\323? The feeds in it are kept - "
                  "they move to the top of the list.",
                  GazetteCoreGroupName(index));
-        if (!GazetteConfirmRemove(message)) {
-            return;
-        }
-        GazetteCoreRemoveGroup(index);
     } else {
-        char url[kGazetteURLLen];
-
         snprintf(message, sizeof message,
                  "Delete the feed \322%s\323? You can subscribe to it again "
                  "at any time.", GazetteCoreFeedTitle(index));
-        if (!GazetteConfirmRemove(message)) {
-            return;
-        }
-
-        /* Copy the address out first: removing shifts the array that pointer
-           points into. */
-        snprintf(url, sizeof url, "%s", GazetteCoreFeedURL(index));
-
-        /* The cache file is keyed by the address, so nothing would ever go
-           looking for it again -- it would just sit in the Gazette Cache
-           folder for good. */
-        GazetteFeedsForgetCache(url);
-        GazetteIndexForgetFeed(url);
-        GazetteCoreRemoveFeed(url);
-
-        /* The feed that shuffled up into the gap is the one to show — the
-           same place in the list the user was already looking at. */
-        GazetteCoreSavePrefs();
-        GazetteUIFeedsChanged();
-        if (index >= GazetteCoreFeedCount()) {
-            index = GazetteCoreFeedCount() - 1;
-        }
-        GazetteAppShowFeed(index);
+    }
+    if (!GazetteConfirmRemove(message)) {
         return;
     }
-
-    GazetteCoreSavePrefs();
-    GazetteUIFeedsChanged();
-    GazetteAppShowFeed(GazetteUISelectedFeed());
+    GazetteAppRemoveSelection();
 }
 
 static void HandleToggleEnabled(void)
 {
-    int kind  = 0;
-    int index = 0;
-
-    if (!GazetteUISelection(&kind, &index)) {
-        return;
-    }
-
-    if (kind == kGazetteRowFeed) {
-        GazetteCoreSetFeedEnabled(index, !GazetteCoreFeedEnabled(index));
-    } else if (kind == kGazetteRowGroup) {
-        GazetteCoreSetGroupEnabled(index, !GazetteCoreGroupEnabled(index));
-    } else {
-        return;
-    }
-    GazetteCoreSavePrefs();
-    GazetteUIFeedsChanged();
+    GazetteAppToggleEnabled();
 }
 
 static void HandleOpenHomePage(void)

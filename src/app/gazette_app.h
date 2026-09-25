@@ -70,6 +70,11 @@ void GazetteAppHideReadArticles(void);
 void GazetteAppHideReadFeeds(void);
 void GazetteAppShowPhotos(void);
 
+/* The Feeds menu: Turn Off / Turn On for what is selected, and Delete once
+   the shell has had it confirmed. */
+void GazetteAppToggleEnabled(void);
+void GazetteAppRemoveSelection(void);
+
 /* Keep only the articles containing text, and say how many; "" shows them
    all again. The search box on Return, and Find. */
 void GazetteAppSearch(const char *text);

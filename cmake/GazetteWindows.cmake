@@ -134,8 +134,8 @@ target_link_libraries(gazette_engine PUBLIC certainly comdlg32)
 # The application apart from its window and menus: src/main.cpp's views,
 # refresh queue and pumps, lifted into src/app/ so both shells run one
 # copy. It reaches the window only through app/gazette_ui.h. A library of
-# its own until gazette_win_window.c answers that header -- compiled on
-# every build meanwhile, so nothing Mac-only creeps into it.
+# its own so the flags below hold it to the Carbon compiler's standard:
+# what only warns under MinGW is an error under Retro68.
 add_library(gazette_app STATIC src/app/gazette_app.c)
 target_link_libraries(gazette_app PUBLIC gazette_engine)
 target_compile_options(gazette_app PRIVATE -Wall -Wextra -Wno-unused-parameter
@@ -146,6 +146,7 @@ set(GAZETTE_WIN_SOURCES
     # src/main.cpp and _window is src/ui/platinum_window.c.
     src/win/gazette_win_main.c
     src/win/gazette_win_window.c
+    src/win/gazette_win_reader.c   # the article pane's own layout
 )
 
 add_executable(Gazette WIN32
@@ -173,7 +174,10 @@ target_compile_options(Gazette PRIVATE -Wall -Wextra -Wno-unused-parameter)
 # for this list is the version, not the library: nothing newer than
 # comctl32 4.0 may appear in the import table, which the workflow checks
 # by printing it on every build.
-target_link_libraries(Gazette PRIVATE gazette_engine user32 gdi32 comctl32)
+# shell32 for ExtractIconEx (Windows' folder and document icons) and
+# ShellExecute (Open in Browser): both in the shell that shipped with 95.
+target_link_libraries(Gazette PRIVATE gazette_app gazette_engine
+                      user32 gdi32 comctl32 shell32)
 
 # Static everything: no libgcc, no libstdc++, no pthread DLL. What is
 # copied onto the disk image has to be the whole application.
