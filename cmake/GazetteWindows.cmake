@@ -39,7 +39,13 @@ add_compile_definitions(
     GAZETTE_WIN32=1        # the user-agent says Windows; see gazette_http.h
 )
 set(CMAKE_C_FLAGS_RELEASE "-Os -DNDEBUG")
-add_compile_options(-ffunction-sections -fdata-sections)
+# Function sections only. With -fdata-sections every zero-filled static
+# becomes a ".bss$name" section, which the PE linker script does not
+# gather into .bss -- they landed in .data instead, written into the file
+# byte for byte: the engine's buffers took Gazette.exe from 294 KB to
+# 1.6 MB, off the floppy (windows.yml's section table showed .data at
+# 1.1 MB and .bss at 2.6 KB).
+add_compile_options(-ffunction-sections)
 
 # ------------------------------------------------------------------ #
 # TLS: BearSSL + Certainly, vendored from Gateway, as on the Mac      #

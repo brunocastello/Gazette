@@ -135,8 +135,8 @@ jobs:
           # look when it stops fitting.
           i686-w64-mingw32-objdump -h build-win/Gazette.exe
           find build-win -name '*.a' -o -name '*.obj' \
-            | xargs i686-w64-mingw32-nm -S --size-sort 2>/dev/null \
-            | tail -25
+            | xargs i686-w64-mingw32-nm -S 2>/dev/null \
+            | awk 'NF == 4 { print $2, $3, $4 }' | sort | tail -25
 
       - name: Install Wine (32-bit)
         run: |
