@@ -1946,8 +1946,9 @@ static void ShowSelectionInTree(void)
         /* Up and down only. TVM_ENSUREVISIBLE also scrolls sideways to
            bring a label wider than the pane into view -- or any label at
            all while the tree is still 0 x 0 at start-up -- which slid the
-           icons and the lines off the left edge. */
-        SendMessage(gSidebar, WM_HSCROLL, MAKEWPARAM(SB_LEFT, 0), 0);
+           icons and the lines off the left edge. The thumb to 0 rather
+           than SB_LEFT, which Wine's tree does not answer. */
+        SendMessage(gSidebar, WM_HSCROLL, MAKEWPARAM(SB_THUMBPOSITION, 0), 0);
     }
     gSyncingTree = FALSE;
 }
