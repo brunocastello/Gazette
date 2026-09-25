@@ -28,13 +28,15 @@
 /*
  * The status line's words that are one system's. Status text is in the
  * system's own character set (see app/gazette_ui.h): the ellipsis and the
- * curly quotes are MacRoman 0xC9, 0xD2 and 0xD3 on the Mac, and
- * Windows-1252 0x85, 0x93 and 0x94 on Windows -- both fonts have them.
+ * curly quotes are MacRoman 0xC9, 0xD2 and 0xD3 on the Mac. On Windows
+ * they are plain ASCII: Windows-1252 puts them at 0x85, 0x93 and 0x94,
+ * and Windows 95's MS Sans Serif has no glyphs from 0x80 to 0x9F -- it
+ * draws a black bar for each (Bruno's 86Box, 2026-09-25).
  */
 #ifdef GAZETTE_WIN32
-#define GZ_ELLIPSIS      "\205"
-#define GZ_LQUOTE        "\223"
-#define GZ_RQUOTE        "\224"
+#define GZ_ELLIPSIS      "..."
+#define GZ_LQUOTE        "\""
+#define GZ_RQUOTE        "\""
 #define GZ_COMMAND       "Ctrl+"
 #define GZ_NETWORK_HINT  "check the Network control panel"
 #define GZ_DATA_FOLDER   "the Gazette Cache folder, beside Gazette"

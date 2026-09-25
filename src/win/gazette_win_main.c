@@ -437,7 +437,7 @@ static void HandleOpenInBrowser(void)
 }
 
 /* Delete, once asked: Windows' own question box, with the Mac's words and
-   Windows-1252's curly quotes. */
+   straight quotes -- 95's MS Sans Serif has no curly ones. */
 static void HandleRemove(HWND hwnd)
 {
     char message[320];
@@ -448,11 +448,11 @@ static void HandleRemove(HWND hwnd)
         return;
     }
     if (kind == kGazetteRowGroup) {
-        wsprintfA(message, "Delete the group \223%s\224? The feeds in it "
+        wsprintfA(message, "Delete the group \"%s\"? The feeds in it "
                   "are kept - they move to the top of the list.",
                   GazetteCoreGroupName(index));
     } else {
-        wsprintfA(message, "Delete the feed \223%s\224? You can subscribe "
+        wsprintfA(message, "Delete the feed \"%s\"? You can subscribe "
                   "to it again at any time.", GazetteCoreFeedTitle(index));
     }
     if (MessageBoxA(hwnd, message, "Gazette",

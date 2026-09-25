@@ -14,8 +14,9 @@
  * and AppendBody there): the headline, the byline, a rule, then the
  * article's own page when it has been read and the feed's summary when it
  * could not be, with the extractor's marks turned into faces. The words
- * are the engine's, which are ASCII; the only characters added here are
- * Windows-1252's bullet and ellipsis.
+ * are the engine's, which are ASCII; the only character added here is a
+ * middle dot for a list item's bullet. Nothing from 0x80 to 0x9F: Windows
+ * 95's MS Sans Serif has no glyphs there and draws black bars.
  */
 
 #define WINVER       0x0400
@@ -249,7 +250,9 @@ static void AppendBody(const char *body)
             first = 0;
             NoteRun(&runStart, &runFace, paragraph);
             if (bullet) {
-                AppendChar('\225');          /* Windows-1252 bullet */
+                /* The middle dot, 0xB7: Windows-1252's bullet is 0x95,
+                   in the range 95's MS Sans Serif draws as black bars. */
+                AppendChar('\267');
                 AppendChar(' ');
             }
         }
@@ -351,7 +354,7 @@ void GazetteWinReaderCompose(int article)
         }
 
         if (body == NULL) {
-            static const char kWaiting[] = "Reading the full article\205";
+            static const char kWaiting[] = "Reading the full article...";
 
             AppendText(kWaiting, (int)sizeof(kWaiting) - 1);
             NoteRun(&start, &face, 0);

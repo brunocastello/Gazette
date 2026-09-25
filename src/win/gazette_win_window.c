@@ -1669,6 +1669,8 @@ static LRESULT CALLBACK SplitterProc(HWND hwnd, UINT message,
 /* to the frame, which is where the rest of the window listens.         */
 /* ------------------------------------------------------------------ */
 
+static void RelabelSidebar(void);
+
 static void LayoutPane(HWND pane)
 {
     RECT client;
@@ -1695,7 +1697,16 @@ static void LayoutPane(HWND pane)
     }
 
     /* The headlines wrap to the list's width as they are drawn, so a new
-       width is the repaint above and nothing more. */
+       width is the repaint above and nothing more. The sidebar's names
+       are shortened to fit, so a new width is new labels. */
+    if (pane == gSidebarPane) {
+        static int lastWidth = -1;
+
+        if (width != lastWidth) {
+            lastWidth = width;
+            RelabelSidebar();
+        }
+    }
 }
 
 static LRESULT CALLBACK PaneProc(HWND hwnd, UINT message,
@@ -1799,6 +1810,79 @@ static int GroupUnread(int group)
 }
 
 /*
+ * How much room a row's words have: the tree's width less what the tree
+ * puts before them -- one indent for the lines at the root, one more per
+ * level, the icon -- and the few pixels of air it keeps round the text.
+ * Zero while the tree has no width yet, which fits everything.
+ */
+static int LabelRoom(int level)
+{
+    RECT client;
+    int  indent;
+
+    if (gSidebar == NULL || !GetClientRect(gSidebar, &client) ||
+        client.right <= 0) {
+        return 0;
+    }
+    indent = (int)SendMessage(gSidebar, TVM_GETINDENT, 0, 0);
+    if (indent <= 0) {
+        indent = 19;
+    }
+    return client.right - indent * (level + 1) - 16 - 3 - 6;
+}
+
+/*
+ * The name and its count, shortened as the Mac's BuildRowLabel shortens
+ * them: the count is kept whole and the name gives way, ending in "..."
+ * -- so a long feed name never hides how much is unread in it behind a
+ * horizontal scroll bar. Measured in the face the tree will draw it in:
+ * bold rows are wider.
+ */
+static void FitLabel(const char *name, const char *count, BOOL bold,
+                     int level, char *out, int cap)
+{
+    int   room = LabelRoom(level);
+    int   len  = lstrlenA(name);
+    int   countLen = lstrlenA(count);
+    HDC   dc;
+    HFONT previous;
+    SIZE  size;
+
+    if (len > cap - countLen - 4) {
+        len = cap - countLen - 4;
+    }
+    lstrcpynA(out, name, len + 1);
+    lstrcatA(out, count);
+    if (room <= 0) {
+        return;
+    }
+
+    dc = GetDC(gSidebar);
+    previous = (HFONT)SelectObject(dc, bold ? gBoldFont : gUIFont);
+    if (GetTextExtentPoint32A(dc, out, lstrlenA(out), &size) &&
+        size.cx > room) {
+        while (len > 0) {
+            int cut = len;
+
+            len--;
+            cut = len;
+            while (cut > 0 && name[cut - 1] == ' ') {
+                cut--;              /* no "Top ..." with a space before */
+            }
+            lstrcpynA(out, name, cut + 1);
+            lstrcatA(out, "...");
+            lstrcatA(out, count);
+            if (!GetTextExtentPoint32A(dc, out, lstrlenA(out), &size) ||
+                size.cx <= room) {
+                break;
+            }
+        }
+    }
+    SelectObject(dc, previous);
+    ReleaseDC(gSidebar, dc);
+}
+
+/*
  * A row's words and weight. Outlook Express's folder list is the model:
  * a folder with something unread in it is bold, with the count after its
  * name in brackets. The standing views carry their count the same way,
@@ -1826,14 +1910,16 @@ static void RowLabel(int kind, int index, char *out, int cap, BOOL *bold)
         *bold = (BOOL)(count > 0);
         break;
     }
-    if (count > 0) {
+    {
         char number[16];
+        int  level = (kind == kGazetteRowFeed &&
+                      GazetteCoreFeedGroup(index) >= 0) ? 1 : 0;
 
-        wsprintfA(number, " (%d)", count);
-        lstrcpynA(out, name, cap - lstrlenA(number));
-        lstrcatA(out, number);
-    } else {
-        lstrcpynA(out, name, cap);
+        number[0] = '\0';
+        if (count > 0) {
+            wsprintfA(number, " (%d)", count);
+        }
+        FitLabel(name, number, *bold, level, out, cap);
     }
 }
 
@@ -2229,7 +2315,7 @@ static void ShowArticleRow(BOOL reveal)
 }
 
 /*
- * The headline band and the window's title: the view's name, and how many
+ * The headline band: the view's name, and how many
  * are unread -- or, while a search is on, how many matched. The Mac's
  * GazetteUIUpdate works these out the same way.
  */
@@ -2237,7 +2323,6 @@ static void UpdateHeader(void)
 {
     char        header[kGazetteFeedTitleLen + 96];
     char        count[48];
-    char        caption[kGazetteFeedTitleLen + 32];
     const char *title = GazetteFeedsTitle();
 
     if (title[0] == '\0') {
@@ -2248,7 +2333,7 @@ static void UpdateHeader(void)
         int unread = GazetteFeedsUnreadCount();
 
         if (GazetteFeedsFilter()[0] != '\0') {
-            wsprintfA(header, "%s - \223%s\224", title, GazetteFeedsFilter());
+            wsprintfA(header, "%s - \"%s\"", title, GazetteFeedsFilter());
             wsprintfA(count, "(%d)", GazetteFeedsArticleCount());
         } else if (unread > 0) {
             lstrcpynA(header, title, sizeof(header));
@@ -2261,13 +2346,6 @@ static void UpdateHeader(void)
         lstrcpynA(header, title, sizeof(header));
     }
     SetListTitle(header, count);
-
-    /* "Today - Gazette", as Outlook Express's is "Inbox - Outlook
-       Express": the view, then the program. */
-    if (gFrame != NULL) {
-        wsprintfA(caption, "%s - Gazette", title[0] ? title : "Gazette");
-        SetWindowTextA(gFrame, caption);
-    }
 
     /* And the status bar's left-hand section: what the view holds. */
     if (GazetteFeedsTotalCount() > 0) {
