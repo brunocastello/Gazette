@@ -1943,6 +1943,11 @@ static void ShowSelectionInTree(void)
     SendMessage(gSidebar, TVM_SELECTITEM, TVGN_CARET, (LPARAM)item);
     if (item != NULL) {
         SendMessage(gSidebar, TVM_ENSUREVISIBLE, 0, (LPARAM)item);
+        /* Up and down only. TVM_ENSUREVISIBLE also scrolls sideways to
+           bring a label wider than the pane into view -- or any label at
+           all while the tree is still 0 x 0 at start-up -- which slid the
+           icons and the lines off the left edge. */
+        SendMessage(gSidebar, WM_HSCROLL, MAKEWPARAM(SB_LEFT, 0), 0);
     }
     gSyncingTree = FALSE;
 }
