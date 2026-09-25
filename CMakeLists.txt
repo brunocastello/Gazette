@@ -45,6 +45,10 @@ endif()
 set(GAZETTE_SOURCES
     src/main.cpp
 
+    # The application apart from its window and menus — shared with the
+    # Windows shell, which runs the same file (src/app/gazette_app.h)
+    src/app/gazette_app.c
+
     # Core — thin C seam between the Toolbox shell and the engine
     src/core/gazette_core.c
     src/core/gazette_sys_mac.c

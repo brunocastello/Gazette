@@ -131,6 +131,15 @@ target_compile_options(gazette_engine PRIVATE -Wall -Wextra -Wno-unused-paramete
 # comdlg32 for the Open and Save As dialogs: on every Windows 95.
 target_link_libraries(gazette_engine PUBLIC certainly comdlg32)
 
+# The application apart from its window and menus: src/main.cpp's views,
+# refresh queue and pumps, lifted into src/app/ so both shells run one
+# copy. It reaches the window only through app/gazette_ui.h. A library of
+# its own until gazette_win_window.c answers that header -- compiled on
+# every build meanwhile, so nothing Mac-only creeps into it.
+add_library(gazette_app STATIC src/app/gazette_app.c)
+target_link_libraries(gazette_app PUBLIC gazette_engine)
+target_compile_options(gazette_app PRIVATE -Wall -Wextra -Wno-unused-parameter)
+
 set(GAZETTE_WIN_SOURCES
     # The Windows shell. The split mirrors the Mac build's: _main is
     # src/main.cpp and _window is src/ui/platinum_window.c.

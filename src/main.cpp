@@ -56,6 +56,7 @@
 #include "store/gazette_store.h"
 #include "net/gazette_net.h"
 #include "ui/gazette_dialogs.h"
+#include "app/gazette_app.h"
 #include "ui/platinum_window.h"
 
 /* ------------------------------------------------------------------ */
@@ -75,17 +76,7 @@ static void    HandleMenuChoice(long menuResult);
 
 static void    HandleAbout(void);
 static void    HandleQuit(void);
-static void    HandleRefreshSelection(void);
-static void    HandleRefreshAll(void);
 static void    HandlePreferences(void);
-static void    ReloadCurrentView(void);
-static void    ShowFeed(int feedIndex);
-static void    ShowArticle(int articleIndex);
-static void    ShowGroup(int groupIndex);
-static Boolean AdvanceGroupRefresh(void);
-static void    PumpRefresh(void);
-static void    PumpFullText(void);
-static void    CheckAutoRefresh(void);
 
 static void    AdjustMenus(void);
 static void    HandleNewFeed(void);
@@ -95,7 +86,6 @@ static void    HandleEditGroup(void);
 static void    HandleEdit(void);
 static void    HandleRemove(void);
 static void    HandleToggleEnabled(void);
-static void    StartPhotos(void);
 static void    HandleOpenHomePage(void);
 static void    HandleCopyFeedURL(void);
 static void    HandleCopyHomeURL(void);
@@ -105,76 +95,19 @@ static void    AdjustRefreshItem(MenuRef menu, MenuItemIndex item);
 static void    ShowSidebarContextMenu(int kind, int index, Point global);
 static void    ShowArticleContextMenu(int index, Point global);
 static void    HandleCopyArticleURL(void);
-static void    ShowSmart(int which);
-static void    ResumeFullText(void);
-static void    HandleMarkRead(void);
-static void    HandleMarkAllRead(void);
-static void    HandleMarkRange(Boolean below);
-static void    HandleToggleStar(void);
-static void    HandleNextUnread(void);
 static void    HandleOpenInBrowser(void);
-static void    HandleSortOrder(Boolean oldestFirst);
-static void    HandleHideReadArticles(void);
-static void    HandleHideReadFeeds(void);
 static void    HandleHideSidebar(void);
 static void    HandleHideToolbar(void);
-static void    HandleShowPhotos(void);
 static void    RememberWindowLayout(void);
-static void    StartPhotos(void);
-static void    PumpPhotos(void);
-static void    ResumePhotos(void);
 static void    HandleSearch(void);
 static void    ToolbarCommand(int command);
 static void    HandleFind(void);
-static void    HandleImportOPML(void);
-static void    HandleExportOPML(void);
 
 /* ------------------------------------------------------------------ */
 /* Application globals                                                 */
 /* ------------------------------------------------------------------ */
 
 static Boolean gDone  = false;
-static Boolean gNetUp = false;
-
-/* When the running refresh started, so it can be timed, and when the last one
-   finished, so auto-refresh knows how long it has been. Both in ticks. */
-static unsigned long gLastRefreshTicks;
-
-/*
- * Refreshing a group is the one place Gazette fetches more than one feed, and
- * it does it one after another rather than at once: there is a single
- * connection, and a queue of feeds fetched in turn is the whole of what a
- * "refresh all" needs to be here.
- */
-static int gQueue[kGazetteMaxFeeds];
-static int gQueueCount;
-static int gQueueAt;
-static int gQueueGroup = -1;       /* -1 when no group refresh is running */
-
-/* Which standing view a finished queue should gather into, or -1. Refreshing
-   with Today, All Unread or Starred selected fetches every enabled feed —
-   there is no one feed behind the view — and then asks the question again. */
-static int gQueueSmart = -1;
-
-/* And which feed, when Refresh All was asked for with a feed on screen:
-   the queue fetches the lot and then shows that feed again. */
-static int gQueueFeed = -1;
-
-static Boolean QueueRunning(void)
-{
-    return (Boolean)(gQueueGroup >= 0 || gQueueSmart >= 0 || gQueueFeed >= 0);
-}
-
-/*
- * The feed a discovery attempt is still owed, or -1.
- *
- * Set when a feed is added, cleared the moment the attempt is made. Pasting a
- * site's home page into New Feed is the case this exists for: the fetch comes
- * back as a page rather than a feed, and the page says where its feed is.
- * One attempt, and only for a feed just added, so a feed that has always
- * worked can never be quietly replaced by something it links to.
- */
-static int gDiscoverFeed = -1;
 
 /* Menu IDs */
 enum {
@@ -412,7 +345,7 @@ static Boolean InitGazette(void)
     /* Open Transport before the window, because InitOpenTransport can put up
        a dialog of its own if TCP/IP needs loading and should not do that over
        a half-drawn window. Failure is not fatal — the cache still reads. */
-    gNetUp = GazetteNetInit() ? true : false;
+    (void)GazetteNetInit();
 
     if (!BuildMenuBar()) {
         return false;
@@ -420,20 +353,21 @@ static Boolean InitGazette(void)
 
     InstallAppleEventHandlers();
 
-    if (!GazetteUIOpen(ShowFeed, ShowArticle, ShowGroup, ShowSmart,
+    if (!GazetteUIOpen(GazetteAppShowFeed, GazetteAppShowArticle,
+                       GazetteAppShowGroup, GazetteAppShowSmart,
                        ToolbarCommand)) {
         return false;
     }
 
     /* A modal dialog and a Navigation Services dialog each run a loop of
        their own, and this is what keeps a fetch moving inside them. */
-    GazetteDialogsSetIdle(PumpRefresh);
-    GazetteStoreSetIdle(PumpRefresh);
+    GazetteDialogsSetIdle(GazetteAppPumpRefresh);
+    GazetteStoreSetIdle(GazetteAppPumpRefresh);
 
     /* Show whatever the last run left cached, so the window has content
        before any network work happens — which on a machine with no
        connection is the whole of what Gazette can do. */
-    ShowFeed(0);
+    GazetteAppShowFeed(0);
 
     return true;
 }
@@ -688,12 +622,7 @@ static void RunGazette(void)
  */
 static void PumpNetwork(void)
 {
-    PumpRefresh();
-    PumpFullText();
-    ResumeFullText();
-    PumpPhotos();
-    ResumePhotos();
-    CheckAutoRefresh();
+    GazetteAppPumpNetwork();
 }
 
 static void HandleEvent(const EventRecord *event)
@@ -898,9 +827,9 @@ static void HandleMenuChoice(long menuResult)
             switch (menuItem) {
                 case kFileItemNewFeed:  HandleNewFeed();    break;
                 case kFileItemNewGroup: HandleNewGroup();   break;
-                case kFileItemRefresh:  HandleRefreshAll(); break;
-                case kFileItemImport:   HandleImportOPML(); break;
-                case kFileItemExport:   HandleExportOPML(); break;
+                case kFileItemRefresh:  GazetteAppRefreshAll(); break;
+                case kFileItemImport:   GazetteAppImportOPML(); break;
+                case kFileItemExport:   GazetteAppExportOPML(); break;
                 case kFileItemQuit:     HandleQuit();       break;
                 default: break;
             }
@@ -921,9 +850,9 @@ static void HandleMenuChoice(long menuResult)
 
         case kMenuView:
             switch (menuItem) {
-                case kViewItemHideRead:    HandleHideReadArticles(); break;
-                case kViewItemHideFeeds:   HandleHideReadFeeds();    break;
-                case kViewItemShowPhotos:  HandleShowPhotos();       break;
+                case kViewItemHideRead:    GazetteAppHideReadArticles(); break;
+                case kViewItemHideFeeds:   GazetteAppHideReadFeeds();    break;
+                case kViewItemShowPhotos:  GazetteAppShowPhotos();       break;
                 case kViewItemHideSidebar: HandleHideSidebar();      break;
                 case kViewItemHideToolbar: HandleHideToolbar();      break;
                 default: break;
@@ -941,9 +870,9 @@ static void HandleMenuChoice(long menuResult)
                 case kFeedsItemStarred:
                     GazetteUISelectSmart(kGazetteSmartStarred);
                     break;
-                case kFeedsItemMarkAll:  HandleMarkAllRead();   break;
+                case kFeedsItemMarkAll:  GazetteAppMarkAllRead();   break;
                 case kFeedsItemSort:
-                    HandleSortOrder((Boolean)!GazetteCoreOldestFirst());
+                    GazetteAppSortOrder((Boolean)!GazetteCoreOldestFirst());
                     break;
                 case kFeedsItemEdit:     HandleEdit();          break;
                 case kFeedsItemEnabled:  HandleToggleEnabled(); break;
@@ -956,22 +885,22 @@ static void HandleMenuChoice(long menuResult)
            handler and nothing else, for the reason the toolbar's are. */
         case kMenuCtxSmart:
             switch (menuItem) {
-                case kCtxSmartRefresh: HandleRefreshSelection(); break;
+                case kCtxSmartRefresh: GazetteAppRefreshSelection(); break;
                 case kCtxSmartSort:
-                    HandleSortOrder((Boolean)!GazetteCoreOldestFirst());
+                    GazetteAppSortOrder((Boolean)!GazetteCoreOldestFirst());
                     break;
-                case kCtxSmartMarkAll: HandleMarkAllRead(); break;
+                case kCtxSmartMarkAll: GazetteAppMarkAllRead(); break;
                 default: break;
             }
             break;
 
         case kMenuCtxGroup:
             switch (menuItem) {
-                case kCtxGroupRefresh: HandleRefreshSelection(); break;
+                case kCtxGroupRefresh: GazetteAppRefreshSelection(); break;
                 case kCtxGroupSort:
-                    HandleSortOrder((Boolean)!GazetteCoreOldestFirst());
+                    GazetteAppSortOrder((Boolean)!GazetteCoreOldestFirst());
                     break;
-                case kCtxGroupMarkAll: HandleMarkAllRead();     break;
+                case kCtxGroupMarkAll: GazetteAppMarkAllRead();     break;
                 case kCtxGroupEnabled: HandleToggleEnabled();   break;
                 case kCtxGroupEdit:    HandleEditGroup();       break;
                 case kCtxGroupDelete:  HandleRemove();          break;
@@ -981,10 +910,10 @@ static void HandleMenuChoice(long menuResult)
 
         case kMenuCtxFeed:
             switch (menuItem) {
-                case kCtxFeedRefresh:  HandleRefreshSelection(); break;
-                case kCtxFeedMarkAll:  HandleMarkAllRead();     break;
+                case kCtxFeedRefresh:  GazetteAppRefreshSelection(); break;
+                case kCtxFeedMarkAll:  GazetteAppMarkAllRead();     break;
                 case kCtxFeedSort:
-                    HandleSortOrder((Boolean)!GazetteCoreOldestFirst());
+                    GazetteAppSortOrder((Boolean)!GazetteCoreOldestFirst());
                     break;
                 case kCtxFeedHome:     HandleOpenHomePage();    break;
                 case kCtxFeedCopyURL:  HandleCopyFeedURL();     break;
@@ -998,10 +927,10 @@ static void HandleMenuChoice(long menuResult)
 
         case kMenuCtxArticle:
             switch (menuItem) {
-                case kCtxArticleMarkRead:  HandleMarkRead();       break;
-                case kCtxArticleStar:      HandleToggleStar();     break;
-                case kCtxArticleMarkAbove: HandleMarkRange(false); break;
-                case kCtxArticleMarkBelow: HandleMarkRange(true);  break;
+                case kCtxArticleMarkRead:  GazetteAppMarkRead();       break;
+                case kCtxArticleStar:      GazetteAppToggleStar();     break;
+                case kCtxArticleMarkAbove: GazetteAppMarkRange(false); break;
+                case kCtxArticleMarkBelow: GazetteAppMarkRange(true);  break;
                 case kCtxArticleCopyURL:   HandleCopyArticleURL(); break;
                 case kCtxArticleBrowser:   HandleOpenInBrowser();  break;
                 default: break;
@@ -1010,11 +939,11 @@ static void HandleMenuChoice(long menuResult)
 
         case kMenuArticle:
             switch (menuItem) {
-                case kArticleItemNextUnread: HandleNextUnread();       break;
-                case kArticleItemMarkRead:   HandleMarkRead();         break;
-                case kArticleItemMarkAbove:  HandleMarkRange(false);   break;
-                case kArticleItemMarkBelow:  HandleMarkRange(true);    break;
-                case kArticleItemStar:       HandleToggleStar();       break;
+                case kArticleItemNextUnread: GazetteAppNextUnread();       break;
+                case kArticleItemMarkRead:   GazetteAppMarkRead();         break;
+                case kArticleItemMarkAbove:  GazetteAppMarkRange(false);   break;
+                case kArticleItemMarkBelow:  GazetteAppMarkRange(true);    break;
+                case kArticleItemStar:       GazetteAppToggleStar();       break;
                 case kArticleItemBrowser:    HandleOpenInBrowser();    break;
                 default: break;
             }
@@ -1626,8 +1555,8 @@ static void HandleNewFeed(void)
 
     /* A newly added feed gets one attempt at discovery, so pasting a site's
        home page finds the feed on it. */
-    gDiscoverFeed = added;
-    ShowFeed(added);
+    GazetteAppDiscoverNext(added);
+    GazetteAppShowFeed(added);
 }
 
 static void HandleNewGroup(void)
@@ -1720,8 +1649,8 @@ static void HandleEditFeed(void)
        reads that one — or fetches it when there is nothing cached yet. It
        earns a discovery attempt for the same reason a new feed does: what was
        typed may be a home page. */
-    gDiscoverFeed = index;
-    ShowFeed(index);
+    GazetteAppDiscoverNext(index);
+    GazetteAppShowFeed(index);
 }
 
 /* A group has a name and nothing else to edit, so editing one is naming it. */
@@ -1811,13 +1740,13 @@ static void HandleRemove(void)
         if (index >= GazetteCoreFeedCount()) {
             index = GazetteCoreFeedCount() - 1;
         }
-        ShowFeed(index);
+        GazetteAppShowFeed(index);
         return;
     }
 
     GazetteCoreSavePrefs();
     GazetteUIFeedsChanged();
-    ShowFeed(GazetteUISelectedFeed());
+    GazetteAppShowFeed(GazetteUISelectedFeed());
 }
 
 static void HandleToggleEnabled(void)
@@ -1907,79 +1836,6 @@ static void HandleCopyHomeURL(void)
 }
 
 /*
- * Full article text on or off. It is a preference rather than a one-off
- * command, so it saves at once and takes effect on the article already open:
- * turning it on and having to click away and back would read as it not
- * working.
- */
-static void HandleMarkRead(void)
-{
-    int                   index   = GazetteUISelectedArticle();
-    const GazetteArticle *article = GazetteFeedsArticleAt(index);
-
-    if (article == nil) {
-        return;
-    }
-    GazetteFeedsMarkRead(index, article->read ? 0 : 1);
-    GazetteUIUpdate();
-}
-
-static void HandleMarkAllRead(void)
-{
-    /* Which way round follows the list, exactly as the menu item's own text
-       does: nothing left unread means the command is the other one. */
-    if (GazetteFeedsUnreadCount() > 0) {
-        GazetteFeedsMarkAllRead();
-    } else {
-        GazetteFeedsMarkAllUnread();
-    }
-
-    /* With read articles hidden, marking the lot read empties the list — so
-       the list has to be re-derived rather than redrawn. */
-    if (GazetteCoreHideReadArticles()) {
-        GazetteUIViewChanged();
-    } else {
-        GazetteUIUpdate();
-    }
-}
-
-static void HandleMarkRange(Boolean below)
-{
-    int index = GazetteUISelectedArticle();
-
-    if (GazetteFeedsArticleAt(index) == nil) {
-        return;
-    }
-    GazetteFeedsMarkRange(index, below ? 1 : 0);
-
-    if (GazetteCoreHideReadArticles()) {
-        GazetteUIViewChanged();
-    } else {
-        GazetteUIUpdate();
-    }
-}
-
-static void HandleToggleStar(void)
-{
-    int                   index   = GazetteUISelectedArticle();
-    const GazetteArticle *article = GazetteFeedsArticleAt(index);
-
-    if (article == nil) {
-        return;
-    }
-    GazetteFeedsMarkStarred(index, article->starred ? 0 : 1);
-    GazetteIndexSave();
-    GazetteUIUpdate();
-}
-
-static void HandleNextUnread(void)
-{
-    if (!GazetteUINextUnread()) {
-        GazetteUISetStatus("Nothing unread below this one.");
-    }
-}
-
-/*
  * Hand the article's address to whatever the machine calls its browser.
  *
  * Internet Config, rather than an Apple event of our own: ICLaunchURL is what
@@ -2023,77 +1879,6 @@ static void HandleOpenInBrowser(void)
     (void)OpenURL(GazetteUISelectedArticleLink());
 }
 
-/* ------------------------------------------------------------------ */
-/* The View menu                                                       */
-/*                                                                     */
-/* Each of these is the same three steps: move the preference, tell     */
-/* the store or the window what changed, and save. They are written     */
-/* out rather than folded together because what each one has to tell    */
-/* is different, and the differences are the whole of the code.         */
-/* ------------------------------------------------------------------ */
-
-static void HandleSortOrder(Boolean oldestFirst)
-{
-    if (GazetteCoreOldestFirst() == oldestFirst) {
-        return;
-    }
-    GazetteCoreSetOldestFirst(oldestFirst);
-    GazetteFeedsSetOldestFirst(oldestFirst ? 1 : 0);
-    GazetteCoreSavePrefs();
-
-    GazetteUIViewChanged();
-    GazetteUISetStatus(oldestFirst ? "Oldest articles on top."
-                                   : "Newest articles on top.");
-}
-
-static void HandleHideReadArticles(void)
-{
-    Boolean wanted = GazetteCoreHideReadArticles() ? false : true;
-
-    GazetteCoreSetHideReadArticles(wanted);
-    GazetteFeedsSetHideRead(wanted ? 1 : 0);
-    GazetteCoreSavePrefs();
-
-    GazetteUIViewChanged();
-    GazetteUISetStatus(wanted ? "Showing unread articles only."
-                              : "Showing every article.");
-}
-
-static void HandleHideReadFeeds(void)
-{
-    Boolean wanted = GazetteCoreHideReadFeeds() ? false : true;
-
-    GazetteCoreSetHideReadFeeds(wanted);
-    GazetteCoreSavePrefs();
-
-    GazetteUIViewChanged();
-    GazetteUISetStatus(wanted ? "Showing feeds with something unread in them."
-                              : "Showing every feed.");
-}
-
-/*
- * Photos on or off. Off drops whatever is in flight and closes the gaps in
- * the article on screen; on fetches the pictures of the article that is
- * open, if its page has been read — its list is still held with the text.
- */
-static void HandleShowPhotos(void)
-{
-    Boolean wanted = GazetteCoreShowPhotos() ? false : true;
-
-    GazetteCoreSetShowPhotos(wanted);
-    GazetteCoreSavePrefs();
-
-    if (!wanted) {
-        GazettePhotosCancel();
-        GazetteUIArticleTextChanged();
-        GazetteUISetStatus("Photos off.");
-    } else {
-        StartPhotos();
-        GazetteUIArticleTextChanged();
-        GazetteUISetStatus("Photos on.");
-    }
-}
-
 /*
  * The Preferences window. Two numbers: how often the clock refreshes, and
  * how much of a feed is kept. Saved on OK, and the view shown again with
@@ -2120,8 +1905,8 @@ static void HandlePreferences(void)
     GazetteCoreSetRefreshMinutes(minutes);
     GazetteCoreSetMaxArticles(articles);
     GazetteCoreSavePrefs();
-    gLastRefreshTicks = TickCount();
-    ReloadCurrentView();
+    GazetteAppRestartClock();
+    GazetteAppReloadView();
 }
 
 static void HandleHideSidebar(void)
@@ -2152,24 +1937,9 @@ static void HandleHideToolbar(void)
 static void HandleSearch(void)
 {
     char text[64];
-    char message[224];
 
     GazetteUISearchText(text, sizeof text);
-    GazetteFeedsSetFilter(text);
-    GazetteUIArticlesChanged();
-
-    if (text[0] == '\0') {
-        snprintf(message, sizeof message, "%d articles.",
-                 GazetteFeedsArticleCount());
-    } else if (GazetteFeedsArticleCount() == 0) {
-        snprintf(message, sizeof message,
-                 "Nothing here contains \322%s\323.", text);
-    } else {
-        snprintf(message, sizeof message, "%d of %d articles contain "
-                 "\322%s\323.", GazetteFeedsArticleCount(),
-                 GazetteFeedsTotalCount(), text);
-    }
-    GazetteUISetStatus(message);
+    GazetteAppSearch(text);
 }
 
 /*
@@ -2181,12 +1951,12 @@ static void ToolbarCommand(int command)
 {
     switch (command) {
         case kGazetteCmdHideSidebar:      HandleHideSidebar();      break;
-        case kGazetteCmdRefresh:          HandleRefreshAll();       break;
-        case kGazetteCmdMarkAllRead:      HandleMarkAllRead();      break;
-        case kGazetteCmdHideReadArticles: HandleHideReadArticles(); break;
-        case kGazetteCmdMarkRead:         HandleMarkRead();         break;
-        case kGazetteCmdMarkStarred:      HandleToggleStar();       break;
-        case kGazetteCmdNextUnread:       HandleNextUnread();       break;
+        case kGazetteCmdRefresh:          GazetteAppRefreshAll();       break;
+        case kGazetteCmdMarkAllRead:      GazetteAppMarkAllRead();      break;
+        case kGazetteCmdHideReadArticles: GazetteAppHideReadArticles(); break;
+        case kGazetteCmdMarkRead:         GazetteAppMarkRead();         break;
+        case kGazetteCmdMarkStarred:      GazetteAppToggleStar();       break;
+        case kGazetteCmdNextUnread:       GazetteAppNextUnread();       break;
         case kGazetteCmdOpenInBrowser:    HandleOpenInBrowser();    break;
         case kGazetteCmdSearch:           HandleSearch();           break;
         case kGazetteCmdNewFeed:          HandleNewFeed();          break;
@@ -2205,821 +1975,14 @@ static void ToolbarCommand(int command)
 static void HandleFind(void)
 {
     char text[64];
-    char message[224];
 
     snprintf(text, sizeof text, "%s", GazetteFeedsFilter());
     if (!GazetteAskName("Find", "Find articles containing:", text,
                         sizeof text)) {
         return;
     }
-
-    GazetteFeedsSetFilter(text);
     GazetteUISetSearchText(text);
-    GazetteUIArticlesChanged();
-
-    /* An empty box is how a search is cleared — which is why there is no
-       "Show All Articles" beside this one any more. */
-    if (text[0] == '\0') {
-        snprintf(message, sizeof message, "%d articles.",
-                 GazetteFeedsArticleCount());
-        GazetteUISetStatus(message);
-        return;
-    }
-
-    if (GazetteFeedsArticleCount() == 0) {
-        snprintf(message, sizeof message,
-                 "Nothing here contains \322%s\323.", text);
-    } else {
-        snprintf(message, sizeof message, "%d of %d articles contain "
-                 "\322%s\323.", GazetteFeedsArticleCount(),
-                 GazetteFeedsTotalCount(), text);
-    }
-    GazetteUISetStatus(message);
-}
-
-/* ------------------------------------------------------------------ */
-/* OPML                                                                */
-/*                                                                     */
-/* The whole feed list, in the format every other reader speaks. The    */
-/* text is portable and host-tested (prefs/gazette_opml.h); choosing    */
-/* the file is Navigation Services, which is the only way to ask for    */
-/* one under Carbon.                                                    */
-/* ------------------------------------------------------------------ */
-
-static void HandleImportOPML(void)
-{
-    char     *text;
-    char      message[224];
-    long      len     = 0;
-    int       added   = 0;
-    int       outcome;
-
-    /* 96 KB is too much to put on this stack, and it is wanted for the
-       length of one import and no longer. */
-    text = (char *)NewPtrClear((Size)kGazetteOPMLMax);
-    if (text == nil) {
-        GazetteUISetStatus("Not enough memory to read a feed list.");
-        return;
-    }
-
-    outcome = GazetteStoreAskAndReadFile("Choose an OPML feed list to import:",
-                                        text, kGazetteOPMLMax, &len);
-    if (outcome == kGazetteFileDone && len > 0) {
-        added = GazetteCoreImportOPML(text, (size_t)len);
-    }
-    DisposePtr((Ptr)text);
-
-    if (outcome == kGazetteFileFailed) {
-        GazetteUISetStatus(GazetteStoreErrorText());
-        return;
-    }
-    if (outcome == kGazetteFileCancelled) {
-        return;                     /* changing your mind needs no report */
-    }
-    if (added <= 0) {
-        /* A file whose feeds are all subscribed already is not a failure;
-           saying nothing happened is the whole of the news. */
-        GazetteUISetStatus("No new feeds were added.");
-        return;
-    }
-
-    GazetteCoreSavePrefs();
-    GazetteUIFeedsChanged();
-    snprintf(message, sizeof message, "%d feed%s added.", added,
-             (added == 1) ? "" : "s");
-    GazetteUISetStatus(message);
-}
-
-static void HandleExportOPML(void)
-{
-    char  *text;
-    char   message[224];
-    size_t len;
-
-    text = (char *)NewPtrClear((Size)kGazetteOPMLMax);
-    if (text == nil) {
-        GazetteUISetStatus("Not enough memory to write a feed list.");
-        return;
-    }
-
-    len = GazetteOPMLWrite(GazetteCoreGetPrefs(), text, kGazetteOPMLMax);
-    if (len == 0) {
-        DisposePtr((Ptr)text);
-        GazetteUISetStatus("The feed list could not be written.");
-        return;
-    }
-
-    switch (GazetteStoreAskAndWriteFile("Save the feed list as:",
-                                        "Gazette Feeds.opml", text,
-                                        (long)len)) {
-        case kGazetteFileDone:
-            snprintf(message, sizeof message, "%d feeds exported.",
-                     GazetteCoreFeedCount());
-            GazetteUISetStatus(message);
-            break;
-        case kGazetteFileFailed:
-            /*
-             * The dialog would not open. That is no reason for the user to
-             * leave without their feed list, so it goes somewhere findable
-             * and the status line says exactly where.
-             */
-            if (GazetteStoreWriteDataFile("Gazette Feeds.opml", text,
-                                          (long)len)) {
-                GazetteUISetStatus("Saved as ÒGazette Feeds.opmlÓ in the "
-                                   "Gazette Cache folder, inside Preferences.");
-            } else {
-                GazetteUISetStatus(GazetteStoreErrorText());
-            }
-            break;
-        default:
-            break;                  /* cancelled */
-    }
-    DisposePtr((Ptr)text);
-}
-
-/* ------------------------------------------------------------------ */
-/* Feeds                                                               */
-/* ------------------------------------------------------------------ */
-
-static long PrefsMaxArticles(void)
-{
-    const GazettePrefs *prefs = GazetteCoreGetPrefs();
-
-    return (prefs != nil) ? prefs->maxArticles : 0;
-}
-
-/*
- * Show a feed. Reads the cache first and only reaches for the network when
- * there is nothing cached — so clicking through the sidebar is instant after
- * the first fetch, and works with the machine unplugged.
- */
-static void ShowFeed(int feedIndex)
-{
-    char message[224];
-
-    if (feedIndex < 0 || feedIndex >= GazetteCoreFeedCount()) {
-        GazetteUISetStatus("No feeds configured.");
-        return;
-    }
-
-    /* Whatever was read in the feed being left has to reach its cache file
-       before the store is replaced. */
-    GazetteFeedsFlush();
-
-    /* A search was about the articles that were on screen; these are not
-       them. Leaving it set would make a feed look empty for no visible
-       reason. */
-    GazetteFeedsSetFilter(NULL);
-
-    GazetteUISelectFeed(feedIndex);
-
-    if (GazetteFeedsLoadCache(feedIndex, GazetteCoreFeedURL(feedIndex),
-                              PrefsMaxArticles())) {
-        GazetteUIArticlesChanged();
-        snprintf(message, sizeof message, "%d articles from the last fetch.",
-                 GazetteFeedsArticleCount());
-        GazetteUISetStatus(message);
-        return;
-    }
-
-    /*
-     * Nothing cached for this feed. Whatever is still in the store belongs to
-     * another feed or to a group, and leaving it on screen under this feed's
-     * name would be a lie -- one that a group view makes obvious, since a
-     * merged list of ten feeds would sit under a single feed's heading.
-     */
-    if (GazetteFeedsCurrentFeed() != feedIndex) {
-        GazetteFeedsClear();
-        GazetteUIArticlesChanged();
-    }
-
-    if (!GazetteCoreFeedEnabled(feedIndex)) {
-        /* Off means off: a feed that is switched off is not fetched by being
-           looked at, any more than by the clock or by Refresh. */
-        GazetteUISetStatus("Nothing cached - this feed is switched off.");
-        return;
-    }
-    if (!gNetUp) {
-        GazetteUISetStatus("Nothing cached, and no network - "
-                           "check the TCP/IP control panel.");
-        return;
-    }
-
-    HandleRefreshSelection();
-}
-
-/*
- * An article has been opened. That is when
- * its own page is fetched: lazily, one at a time, and only for something the
- * user is actually looking at.
- */
-static void ShowArticle(int articleIndex)
-{
-    const GazetteArticle *article;
-
-    /* Whatever was held is for the article that was open a moment ago. */
-    GazetteFeedsFullTextCancel();
-
-    article = GazetteFeedsArticleAt(articleIndex);
-    if (article == nil || article->link[0] == '\0') {
-        return;                     /* nothing to fetch: no address */
-    }
-
-    /* Read lately and still held: nothing to wait for, and nothing needed
-       from the network. The same three steps the pump takes when a page
-       lands. */
-    if (GazetteFeedsFullTextRecall(articleIndex, article->link)) {
-        StartPhotos();
-        GazetteUIArticleTextChanged();
-        GazetteUISetStatus("Full article.");
-        return;
-    }
-    if (!gNetUp) {
-        return;                     /* nothing to fetch it with */
-    }
-
-    /*
-     * Started, or — if the refresh has the one connection — remembered by the
-     * store and started by ResumeFullText the moment the line is free. Either
-     * way the answer is yes, the page is coming, which is what the reader
-     * pane asks before it decides whether to lay out the summary.
-     */
-    if (GazetteFeedsFullTextStart(articleIndex, article->link)) {
-        GazetteUISetStatus("Reading the full article\311");
-    }
-}
-
-/* Start a page the store held back while the line was busy. */
-static void ResumeFullText(void)
-{
-    if (GazetteFeedsFullTextResume()) {
-        GazetteUISetStatus("Reading the full article\311");
-    }
-}
-
-/* Fetch the pictures of the article whose page has just been read, when
-   the user wants pictures. */
-static void StartPhotos(void)
-{
-    const GazettePhotoRef *refs;
-    int                    count;
-    int                    article = GazetteFeedsFullTextArticle();
-
-    if (!GazetteCoreShowPhotos() || article < 0) {
-        return;
-    }
-    count = GazetteFeedsFullTextPhotos(&refs);
-    if (count <= 0) {
-        return;
-    }
-    (void)GazettePhotosStart(article, GazetteFeedsFullTextFinalURL(),
-                             refs, count);
-}
-
-static void ResumePhotos(void)
-{
-    (void)GazettePhotosResume();
-}
-
-/* A slice of the picture fetch. Each picture that lands, or does not, is
-   worth a redraw of the pane and nothing more: no status line, because the
-   article is already there to read. */
-static void PumpPhotos(void)
-{
-    int before[kGazetteMaxPhotos];
-    int count = GazettePhotosCount();
-    int i;
-
-    if (GazettePhotosGetState() != kGazetteRefreshRunning) {
-        return;
-    }
-    for (i = 0; i < count; i++) {
-        before[i] = GazettePhotosState(i);
-    }
-    (void)GazettePhotosPump();
-    for (i = 0; i < count; i++) {
-        if (GazettePhotosState(i) != before[i]) {
-            GazetteUIPhotosChanged();
-            break;
-        }
-    }
-}
-
-static void PumpFullText(void)
-{
-    char message[224];
-
-    if (GazetteFeedsFullTextGetState() != kGazetteRefreshRunning) {
-        return;
-    }
-
-    switch (GazetteFeedsFullTextPump()) {
-        case kGazetteRefreshDone:
-            /* The pictures go after the text, on the same line: the article
-               is readable at once and they fill in behind it. Asked for
-               before the pane composes, so it knows to leave them room. */
-            StartPhotos();
-            /* The pane is showing the summary; this is what swaps it. */
-            GazetteUIArticleTextChanged();
-            GazetteUISetStatus("Full article.");
-            break;
-
-        case kGazetteRefreshFailed:
-            /*
-             * The pane has been saying it is reading. Now that the page is
-             * not coming after all, it falls back to the feed's summary —
-             * which is what this call composes, the store having just
-             * stopped answering that anything is on its way.
-             *
-             * Saying why is worth a status line and not worth a dialog: it
-             * happens on any paywall, and the article is still readable.
-             */
-            GazetteUIArticleTextChanged();
-            snprintf(message, sizeof message, "Summary only - %s",
-                     GazetteFeedsFullTextErrorText());
-            GazetteUISetStatus(message);
-            break;
-
-        default:
-            break;
-    }
-}
-
-/*
- * A group has been selected: show every article from every enabled feed in
- * it, merged newest first. Read out of the caches, so it is instant and works
- * with the machine unplugged — a group is readable as soon as any one of its
- * feeds has been fetched.
- */
-static void ShowGroup(int groupIndex)
-{
-    char message[224];
-    int  count;
-
-    /* The feed being left may have had something read in it. */
-    GazetteFeedsFlush();
-    GazetteFeedsSetFilter(NULL);
-
-    count = GazetteFeedsLoadGroup(groupIndex, PrefsMaxArticles());
-    GazetteUIArticlesChanged();
-
-    if (count == 0) {
-        GazetteUISetStatus("Nothing cached in this group yet - "
-                           "press Command-R to fetch it.");
-        return;
-    }
-    snprintf(message, sizeof message, "%d articles from %s.", count,
-             GazetteCoreGroupName(groupIndex));
-    GazetteUISetStatus(message);
-}
-
-/*
- * One of the three standing views. Gathered from every enabled feed's cache
- * rather than fetched: they are a question about what is already here, and a
- * reader who wants more presses Command-R, which refreshes the lot.
- */
-static void ShowSmart(int which)
-{
-    char message[224];
-    int  count;
-
-    /* The feed being left may have had something read in it. */
-    GazetteFeedsFlush();
-    GazetteFeedsSetFilter(NULL);
-
-    count = GazetteFeedsLoadSmart(which, PrefsMaxArticles());
-    GazetteUIArticlesChanged();
-
-    if (count == 0) {
-        switch (which) {
-            case kGazetteSmartToday:
-                GazetteUISetStatus("Nothing dated today in any feed yet.");
-                break;
-            case kGazetteSmartStarred:
-                GazetteUISetStatus("No starred articles - Command-L stars "
-                                   "the one you are reading.");
-                break;
-            default:
-                GazetteUISetStatus("Everything has been read.");
-                break;
-        }
-        return;
-    }
-    snprintf(message, sizeof message, "%d articles in %s.", count,
-             GazetteCoreSmartName(which));
-    GazetteUISetStatus(message);
-}
-
-/*
- * Start the next feed of a group refresh, or finish it. Returns true while
- * the queue is still running, which is what tells PumpRefresh to keep the
- * window as it is rather than showing the one feed that just landed.
- */
-static Boolean AdvanceGroupRefresh(void)
-{
-    char message[224];
-
-    if (!QueueRunning()) {
-        return false;
-    }
-
-    while (gQueueAt < gQueueCount) {
-        int feed = gQueue[gQueueAt++];
-
-        if (GazetteFeedsRefreshStart(feed, GazetteCoreFeedURL(feed),
-                                     PrefsMaxArticles(), 0)) {
-            snprintf(message, sizeof message, "Fetching %s (%d of %d)\311",
-                     GazetteCoreFeedTitle(feed), gQueueAt, gQueueCount);
-            GazetteUISetStatus(message);
-            return true;
-        }
-        /* A feed that will not start is skipped rather than stopping the
-           rest of the group. */
-    }
-
-    /* Done: the store holds whichever feed came last, so the view has to be
-       gathered again from the caches they all just wrote. */
-    {
-        int group = gQueueGroup;
-        int smart = gQueueSmart;
-        int feed  = gQueueFeed;
-        int count;
-
-        gQueueGroup = -1;
-        gQueueSmart = -1;
-        gQueueFeed  = -1;
-        gQueueCount = 0;
-        gQueueAt    = 0;
-
-        if (smart >= 0) {
-            ShowSmart(smart);
-            return false;
-        }
-        if (feed >= 0) {
-            ShowFeed(feed);
-            return false;
-        }
-
-        count = GazetteFeedsLoadGroup(group, PrefsMaxArticles());
-        GazetteUIArticlesChanged();
-        snprintf(message, sizeof message, "%d articles from %s.", count,
-                 GazetteCoreGroupName(group));
-        GazetteUISetStatus(message);
-    }
-    return false;
-}
-
-/*
- * Refresh every feed that is switched on, in turn, and then show again
- * whatever was on screen — the feed, the group or the standing view. This
- * is what File > Refresh and the toolbar's button do; the contextual menus
- * refresh the row they were opened on, see HandleRefreshSelection.
- */
-static void HandleRefreshAll(void)
-{
-    int kind      = 0;
-    int selection = 0;
-    int i;
-
-    if (GazetteFeedsRefreshGetState() == kGazetteRefreshRunning ||
-        QueueRunning()) {
-        return;                     /* one connection, one fetch */
-    }
-    if (!gNetUp) {
-        GazetteUISetStatus("No network - check the TCP/IP control panel.");
-        return;
-    }
-
-    gQueueCount = 0;
-    gQueueAt    = 0;
-    for (i = 0; i < GazetteCoreFeedCount(); i++) {
-        if (GazetteCoreFeedEnabled(i)) {
-            gQueue[gQueueCount++] = i;
-        }
-    }
-    if (gQueueCount == 0) {
-        GazetteUISetStatus("No feeds are switched on.");
-        return;
-    }
-
-    /* Whatever the refresh brings, the article being read stays open. */
-    GazetteUIKeepPlace();
-
-    if (GazetteFeedsCurrentSmart() >= 0) {
-        gQueueSmart = GazetteFeedsCurrentSmart();
-    } else if (GazetteUISelection(&kind, &selection) &&
-               kind == kGazetteRowGroup) {
-        gQueueGroup = selection;
-    } else {
-        gQueueFeed = GazetteUISelectedFeed();
-    }
-    (void)AdvanceGroupRefresh();
-}
-
-/* Show again whatever is on screen, from the caches: after the preferences
-   change how much of a feed is kept, or a queue has refreshed the lot. */
-static void ReloadCurrentView(void)
-{
-    int kind      = 0;
-    int selection = 0;
-
-    if (GazetteFeedsCurrentSmart() >= 0) {
-        ShowSmart(GazetteFeedsCurrentSmart());
-    } else if (GazetteUISelection(&kind, &selection) &&
-               kind == kGazetteRowGroup) {
-        ShowGroup(selection);
-    } else {
-        ShowFeed(GazetteUISelectedFeed());
-    }
-}
-
-/* Refresh the row the contextual menu was opened on: a feed, or every feed
-   of a group, or — for a standing view, which has no one feed behind it —
-   the lot. */
-static void HandleRefreshSelection(void)
-{
-    char message[224];
-    int  kind      = 0;
-    int  selection = 0;
-    int  feedIndex = GazetteUISelectedFeed();
-
-    if (GazetteFeedsRefreshGetState() == kGazetteRefreshRunning) {
-        return;                     /* one connection, one fetch */
-    }
-    if (!gNetUp) {
-        GazetteUISetStatus("No network - check the TCP/IP control panel.");
-        return;
-    }
-    if (GazetteCoreFeedCount() == 0) {
-        GazetteUISetStatus("No feeds configured.");
-        return;
-    }
-
-    /* Whatever the refresh brings — and the automatic one comes through
-       here — the article being read stays open, scrolled where it was. */
-    GazetteUIKeepPlace();
-
-    /* A standing view has no one feed behind it, so it refreshes the lot. */
-    if (GazetteFeedsCurrentSmart() >= 0) {
-        int i;
-
-        gQueueCount = 0;
-        gQueueAt    = 0;
-        for (i = 0; i < GazetteCoreFeedCount(); i++) {
-            if (GazetteCoreFeedEnabled(i)) {
-                gQueue[gQueueCount++] = i;
-            }
-        }
-        if (gQueueCount == 0) {
-            GazetteUISetStatus("No feeds are switched on.");
-            return;
-        }
-        gQueueSmart = GazetteFeedsCurrentSmart();
-        (void)AdvanceGroupRefresh();
-        return;
-    }
-
-    /* A group refreshes everything in it, in turn. */
-    if (GazetteUISelection(&kind, &selection) && kind == kGazetteRowGroup) {
-        int i;
-
-        gQueueCount = 0;
-        gQueueAt    = 0;
-        for (i = 0; i < GazetteCoreFeedCount(); i++) {
-            if (GazetteCoreFeedGroup(i) == selection &&
-                GazetteCoreFeedEnabled(i)) {
-                gQueue[gQueueCount++] = i;
-            }
-        }
-        if (gQueueCount == 0) {
-            GazetteUISetStatus("This group has no feeds switched on.");
-            return;
-        }
-        gQueueGroup = selection;
-        (void)AdvanceGroupRefresh();
-        return;
-    }
-
-    /* A feed switched off is not fetched, not even when asked by name:
-       Turn Off is the promise that nothing goes over the wire for it until
-       it is turned on again. Its cache stays readable. */
-    if (!GazetteCoreFeedEnabled(feedIndex)) {
-        GazetteUISetStatus("This feed is switched off.");
-        return;
-    }
-
-    if (!GazetteFeedsRefreshStart(feedIndex, GazetteCoreFeedURL(feedIndex),
-                                  PrefsMaxArticles(),
-                                  (feedIndex == gDiscoverFeed) ? 1 : 0)) {
-        snprintf(message, sizeof message, "Failed: %s",
-                 GazetteFeedsRefreshErrorText());
-        GazetteUISetStatus(message);
-        return;
-    }
-
-    snprintf(message, sizeof message, "Fetching %s\311",
-             GazetteCoreFeedTitle(feedIndex));
-    GazetteUISetStatus(message);
-}
-
-/*
- * A refresh came back with nothing that looked like a feed, and the document
- * named one. Point the feed at it and try again — which is what turns a
- * pasted home page into a subscription.
- *
- * Returns true when a second refresh was started, so the caller leaves the
- * status line and the window alone until that one lands.
- */
-static Boolean TryDiscovery(void)
-{
-    const char *found = GazetteFeedsDiscoveredURL();
-    int         feed  = gDiscoverFeed;
-    GazetteURL  base;
-    GazetteURL  target;
-    char        resolved[kGazetteURLLen];
-    char        wasURL[kGazetteURLLen];
-    char        message[224];
-
-    /* One attempt, whatever happens below. */
-    gDiscoverFeed = -1;
-
-    if (feed < 0 || feed >= GazetteCoreFeedCount() || found[0] == '\0') {
-        return false;
-    }
-
-    snprintf(wasURL, sizeof wasURL, "%s", GazetteCoreFeedURL(feed));
-
-    /* The href is whatever the page wrote, so it is resolved against the page
-       it was found on -- "/feed" and "feed.xml" are both ordinary. */
-    if (!GazetteURLSplit(wasURL, strlen(wasURL), &base)) {
-        return false;
-    }
-    if (!GazetteURLResolve(&base, found, strlen(found), &target)) {
-        return false;
-    }
-    if (GazetteURLFormat(&target, resolved, sizeof resolved) == 0) {
-        return false;
-    }
-    if (gz_stricmp(resolved, wasURL) == 0) {
-        return false;               /* the page pointed at itself */
-    }
-
-    if (!GazetteCoreSetFeedURL(feed, resolved)) {
-        /* Already subscribed to under its real address. Say so rather than
-           leaving a duplicate that will never load. */
-        GazetteUISetStatus("That site's feed is already in the list.");
-        return false;
-    }
-    GazetteFeedsForgetCache(wasURL);
-    GazetteIndexForgetFeed(wasURL);
-    GazetteCoreSavePrefs();
-    GazetteUIFeedsChanged();
-
-    if (!GazetteFeedsRefreshStart(feed, resolved, PrefsMaxArticles(), 0)) {
-        return false;
-    }
-    snprintf(message, sizeof message, "Found a feed on that page - "
-             "fetching it\311");
-    GazetteUISetStatus(message);
-    return true;
-}
-
-static void PumpRefresh(void)
-{
-    static int lastProgress = -1;
-    char       message[224];
-    Boolean    queued;
-
-    if (GazetteFeedsRefreshGetState() != kGazetteRefreshRunning) {
-        return;
-    }
-
-    /* Whether what just finished was one feed of a queue. Read before the
-       pump, because finishing the queue is what clears it. */
-    queued = QueueRunning();
-
-    switch (GazetteFeedsRefreshPump()) {
-        case kGazetteRefreshDone:
-            gLastRefreshTicks = TickCount();
-            lastProgress      = -1;
-
-            /* The feed has said where its site is, or said it again; either
-               way the preferences carry it from here, for Open Home Page. */
-            if (GazetteFeedsRefreshHome()[0] != '\0' &&
-                GazetteCoreSetFeedHome(GazetteFeedsRefreshFeedIndex(),
-                                       GazetteFeedsRefreshHome())) {
-                GazetteCoreSavePrefs();
-            }
-            if (queued) {
-                /*
-                 * Either more of the queue to fetch, or it has just finished
-                 * and gathered the group — or the standing view — back
-                 * together and said so. Nothing below applies either way: it
-                 * is about one feed's refresh landing.
-                 *
-                 * Asked *before* the call, not after. AdvanceGroupRefresh
-                 * clears gQueueGroup on its way out, so the test that used
-                 * to be here — for a queue still being set after it returned
-                 * false — could never be true, and a finished group refresh
-                 * went on to overwrite its own status line with the last
-                 * feed's.
-                 */
-                (void)AdvanceGroupRefresh();
-                break;
-            }
-            GazetteUIArticlesChanged();
-            snprintf(message, sizeof message, "%d articles from %s",
-                     GazetteFeedsArticleCount(),
-                     GazetteFeedsTitle()[0]
-                         ? GazetteFeedsTitle()
-                         : GazetteCoreFeedTitle(GazetteUISelectedFeed()));
-            GazetteUISetStatus(message);
-            break;
-
-        case kGazetteRefreshFailed:
-            gLastRefreshTicks = TickCount();
-            lastProgress      = -1;
-            /* What came back may have been a page that names its feed. */
-            if (TryDiscovery()) {
-                break;
-            }
-            /* One feed of a group failing is not the group failing: carry on
-               to the next and let the ones that worked show. */
-            if (queued) {
-                (void)AdvanceGroupRefresh();
-                break;
-            }
-            snprintf(message, sizeof message, "Failed: %s",
-                     GazetteFeedsRefreshErrorText());
-            GazetteUISetStatus(message);
-            break;
-
-        case kGazetteRefreshRunning: {
-            /* Only while headlines are actually arriving: a status line
-               rewritten on every pass would repaint many times a second to
-               say the same thing. */
-            int progress = GazetteFeedsRefreshProgress();
-
-            if (progress != lastProgress) {
-                lastProgress = progress;
-                if (progress > 0) {
-                    snprintf(message, sizeof message,
-                             "Reading\311 %d articles", progress);
-                    GazetteUISetStatus(message);
-                }
-            }
-            break;
-        }
-
-        default:
-            break;
-    }
-}
-
-/*
- * Automatic refresh. Deliberately modest: it refreshes the feed being looked
- * at, and only that one, on the interval in the preferences. Walking the
- * whole list in the background would be a queue, several connections and a
- * policy about what to do when one fails — Phase 4's problem, not this one.
- */
-static void CheckAutoRefresh(void)
-{
-    const GazettePrefs *prefs = GazetteCoreGetPrefs();
-    unsigned long       interval;
-
-    if (prefs == nil || prefs->refreshMinutes <= 0) {
-        return;                     /* 0 means manual only */
-    }
-    if (!gNetUp || GazetteFeedsRefreshGetState() == kGazetteRefreshRunning) {
-        return;
-    }
-    if (QueueRunning()) {
-        return;                     /* a queued refresh is already running */
-    }
-    /* A merged view is on screen — a group, or one of the standing views.
-       The clock refreshes one feed, and replacing what is merged with that
-       one feed's articles is not what anyone asked for; Command-R on the
-       view is. */
-    if (GazetteFeedsCurrentGroup() >= 0 || GazetteFeedsCurrentSmart() >= 0) {
-        return;
-    }
-    /* A feed switched off is never fetched; the clock is one more thing
-       that leaves it alone. */
-    if (!GazetteCoreFeedEnabled(GazetteUISelectedFeed())) {
-        return;
-    }
-    if (gLastRefreshTicks == 0) {
-        gLastRefreshTicks = TickCount();
-        return;
-    }
-
-    interval = (unsigned long)prefs->refreshMinutes * 60UL * 60UL;
-    if (TickCount() - gLastRefreshTicks < interval) {
-        return;
-    }
-
-    gLastRefreshTicks = TickCount();
-    HandleRefreshSelection();
+    GazetteAppSearch(text);
 }
 
 /* ------------------------------------------------------------------ */
@@ -3028,15 +1991,8 @@ static void CheckAutoRefresh(void)
 
 static void DoExitGazette(void)
 {
-    /* Nothing in flight may outlive the application: cancelling closes the
-       connection and frees the parser or the extractor behind it. */
-    GazetteFeedsRefreshCancel();
-    GazetteFeedsFullTextCancel();
-    GazettePhotosCancel();
-
-    /* And what was read in the feed still on screen. */
-    GazetteFeedsFlush();
-    GazetteIndexSave();
+    /* Everything in flight stopped, and what was read written. */
+    GazetteAppShutdown();
 
     GazetteUIClose();
 
