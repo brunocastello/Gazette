@@ -81,6 +81,10 @@ BOOL GazetteWindowNotify(HWND frame, NMHDR *header, LRESULT *result);
    the next. TRUE when it did, and the key is spent. */
 BOOL GazetteWindowTabKey(BOOL back);
 
+/* Escape in one of the panes: a search in force is cleared and every
+   article shown again. TRUE when there was one. */
+BOOL GazetteWindowEscapeKey(void);
+
 /* A WM_COMMAND the window itself answers -- the toolbar's chevron. Returns
    TRUE when it was one. */
 BOOL GazetteWindowCommand(HWND frame, WPARAM wParam, LPARAM lParam);

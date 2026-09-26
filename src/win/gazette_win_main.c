@@ -1150,6 +1150,11 @@ static void HandleMessage(HWND hwnd, HACCEL accelerators, MSG *message)
         TranslateAcceleratorA(hwnd, accelerators, message)) {
         return;
     }
+    /* Escape clears a search, before a tree or a list takes it. */
+    if (message->message == WM_KEYDOWN && message->wParam == VK_ESCAPE &&
+        GazetteWindowEscapeKey()) {
+        return;
+    }
     /* Tab between the panes, before a tree or a list takes it. */
     if (message->message == WM_KEYDOWN && message->wParam == VK_TAB &&
         GazetteWindowTabKey((GetKeyState(VK_SHIFT) & 0x8000) != 0)) {

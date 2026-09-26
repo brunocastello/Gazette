@@ -40,6 +40,9 @@
 #define GZ_COMMAND       "Ctrl+"
 #define GZ_NETWORK_HINT  "check the Network control panel"
 #define GZ_DATA_FOLDER   "the Cache folder, beside Gazette"
+/* Windows' Find dialog cannot search for nothing, which is how the Mac's
+   search box clears a search; Escape does it there, and says so. */
+#define GZ_CLEAR_SEARCH  " Esc shows them all."
 #else
 #define GZ_ELLIPSIS      "\311"
 #define GZ_LQUOTE        "\322"
@@ -47,6 +50,7 @@
 #define GZ_COMMAND       "Command-"
 #define GZ_NETWORK_HINT  "check the TCP/IP control panel"
 #define GZ_DATA_FOLDER   "the Gazette Cache folder, inside Preferences"
+#define GZ_CLEAR_SEARCH  ""
 #endif
 
 static void StartPhotos(void);
@@ -1317,11 +1321,12 @@ void GazetteAppSearch(const char *text)
                  GazetteFeedsArticleCount());
     } else if (GazetteFeedsArticleCount() == 0) {
         snprintf(message, sizeof message,
-                 "Nothing here contains " GZ_LQUOTE "%s" GZ_RQUOTE ".", text);
+                 "Nothing here contains " GZ_LQUOTE "%s" GZ_RQUOTE "."
+                 GZ_CLEAR_SEARCH, text);
     } else {
         snprintf(message, sizeof message, "%d of %d articles contain "
-                 GZ_LQUOTE "%s" GZ_RQUOTE ".", GazetteFeedsArticleCount(),
-                 GazetteFeedsTotalCount(), text);
+                 GZ_LQUOTE "%s" GZ_RQUOTE "." GZ_CLEAR_SEARCH,
+                 GazetteFeedsArticleCount(), GazetteFeedsTotalCount(), text);
     }
     GazetteUISetStatus(message);
 }

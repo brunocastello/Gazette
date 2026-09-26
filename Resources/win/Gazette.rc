@@ -88,7 +88,6 @@ BEGIN
 
     POPUP "&View"
     BEGIN
-        MENUITEM "&Group by Feed",              IDM_VIEW_GROUP_BY_FEED, GRAYED
         MENUITEM "&Hide Read Articles\tCtrl+H", IDM_VIEW_HIDE_READ, GRAYED
         MENUITEM "Hide Read &Feeds\tCtrl+Shift+H", IDM_VIEW_HIDE_FEEDS, GRAYED
         MENUITEM "Show &Photos",                IDM_VIEW_SHOW_PHOTOS, GRAYED

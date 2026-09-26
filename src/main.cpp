@@ -177,13 +177,12 @@ enum {
 
 /* View menu items. */
 enum {
-    kViewItemGroupByFeed = 1,     /* grey until a later phase */
-    kViewItemHideRead    = 2,
-    kViewItemHideFeeds   = 3,
-    kViewItemShowPhotos  = 4,
-    /* 5 is a divider */
-    kViewItemHideSidebar = 6,
-    kViewItemHideToolbar = 7
+    kViewItemHideRead    = 1,
+    kViewItemHideFeeds   = 2,
+    kViewItemShowPhotos  = 3,
+    /* 4 is a divider */
+    kViewItemHideSidebar = 5,
+    kViewItemHideToolbar = 6
 };
 
 /*
@@ -461,7 +460,7 @@ static Boolean BuildMenuBar(void)
         return false;
     }
     AppendMenu(viewMenu,
-               "\p(Group by Feed;Hide Read Articles/H;Hide Read Feeds/H;"
+               "\pHide Read Articles/H;Hide Read Feeds/H;"
                "Show Photos;(-;"
                "Hide Sidebar/S;Hide Toolbar/T");
     SetShiftKey(viewMenu, kViewItemHideFeeds);

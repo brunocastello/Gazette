@@ -60,7 +60,9 @@ Reuse Gateway’s Win32 networking and build patterns. Keep portable core pure.
 > Done in W2 today: dialogs (DIALOGEX, Tahoma on 2000/XP), toolbar New menu, sidebar drag and drop, photos via stb_image, reader selection + Copy, contextual menus (sidebar, headlines, article text), safe saving (.new + swap, warning on failure), Gazette.ini, Cache folder.
 > **Left before Windows can ship**, in order:
 > 1. [~] Tab / Shift+Tab between the three panes (sidebar, headlines, article), as the Mac's focus ring moves. Built 2026-09-26: caught in the message loop after the accelerators; skips the sidebar while hidden. Awaiting 86Box.
-> 2. A way to clear a search (the Find dialog cannot send empty text) -- e.g. Escape in the list, or the status bar's count, or a "Show All" item; decide with Bruno.
+> 2. [~] A way to clear a search (the Find dialog cannot send empty text). Built 2026-09-26: Escape in any of the three panes clears a search in force; the status line after a search ends "Esc shows them all." (Windows only, a GZ_ macro). No menu item, so the menus still mirror the Mac's.
+> 2b. [x] View > Group by Feed removed from both builds (Bruno, 2026-09-26: "Scrap that") -- it was a greyed placeholder on the Mac too.
+> **Next: Bruno tests this build on Win 95 and XP. If approved: installer, README and release as 0.2.0, versions bumped on both (gazette_version.h, Gazette.r, Gazette.rc).**
 > 3. Installer, as Gateway's (NSIS, `installer/gateway.nsi`: C:\Gazette, Start menu shortcuts, keeps an existing Gazette.ini, uninstaller), built on CI; the zip and floppy image stay for testing.
 > 4. Release step for the Windows assets (as build.yml's for the Mac), version in Gazette.rc in step with gazette_version.h.
 > 5. Bruno's checks: XP (Luna, Tahoma dialogs, themed controls), and one of 98/Me and 2000; the OLE32 blank-sheet icon on 86Box.

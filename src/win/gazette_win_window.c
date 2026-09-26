@@ -858,6 +858,27 @@ BOOL GazetteWindowTabKey(BOOL back)
     return TRUE;
 }
 
+/*
+ * Escape in one of the panes, with a search in force: every article again.
+ * The Mac clears a search by emptying its search box; Windows' Find dialog
+ * cannot search for nothing, so this is the way back, and the status line
+ * after a search says so.
+ */
+BOOL GazetteWindowEscapeKey(void)
+{
+    HWND focus = GetFocus();
+
+    if (focus != gSidebar && focus != gHeadlines && focus != gReader) {
+        return FALSE;
+    }
+    if (GazetteFeedsFilter()[0] == '\0' || gOnCommand == NULL) {
+        return FALSE;
+    }
+    GazetteUISetSearchText("");
+    gOnCommand(kGazetteCmdSearch);
+    return TRUE;
+}
+
 BOOL GazetteWindowCommand(HWND frame, WPARAM wParam, LPARAM lParam)
 {
     int id = LOWORD(wParam);
