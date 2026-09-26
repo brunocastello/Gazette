@@ -38,6 +38,9 @@
 
 #include "ui/platinum_window.h"
 
+/* For GazetteAppViewTitle alone: what the headline list is headed with is
+   the application's to say, and the same on both systems. */
+#include "app/gazette_app.h"
 #include "core/gazette_core.h"
 #include "extract/gazette_extract.h"
 #include "feeds/gazette_feeds.h"
@@ -4987,12 +4990,8 @@ void GazetteUIUpdate(void)
 
 
     if (GazetteFeedsTotalCount() > 0) {
-        const char *title  = GazetteFeedsTitle();
+        const char *title  = GazetteAppViewTitle();
         int         unread = GazetteFeedsUnreadCount();
-
-        if (title[0] == '\0') {
-            title = GazetteCoreFeedTitle(gSelectedFeed);
-        }
 
         if (GazetteFeedsFilter()[0] != '\0') {
             /* While a search is on, what is on screen is the matches, and

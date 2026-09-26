@@ -97,11 +97,8 @@ void GazetteWindowPaint(HWND frame, HDC dc);
 void GazetteWindowSetCount(const char *text);
 void GazetteWindowSetStatus(const char *text);
 
-/* The Find dialog, which is modeless: the loop gives it its keystrokes,
-   and the frame passes on the message it reports through. */
+/* The Search dialog, which is modeless: the loop gives it its keystrokes. */
 HWND GazetteWindowFindDialog(void);
-UINT GazetteWindowFindMessage(void);
-void GazetteWindowFindEvent(const FINDREPLACEA *find);
 void GazetteWindowMinimumSize(POINT *minimum);
 void GazetteWindowColumnWidths(int *sidebar, int *list);
 

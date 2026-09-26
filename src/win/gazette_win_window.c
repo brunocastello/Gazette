@@ -130,7 +130,7 @@ static const ToolSpec kToolSpec[kToolbarButtons] = {
     /* Find, in a group of its own at the end: the standard Find dialog
        every Windows program has, in place of the Mac's search field, and
        the same magnifier the Mac's field wears. */
-    { IDM_EDIT_FIND,        kIconFind,         -1,                "Find",               NULL,                 TRUE  }
+    { IDM_EDIT_FIND,        kIconFind,         -1,                "Search",             NULL,                 TRUE  }
 };
 
 /* ------------------------------------------------------------------ */
@@ -721,62 +721,126 @@ static void ShowToolChevron(HWND frame)
 }
 
 /*
- * Find: Windows' own Find dialog, the one Notepad opens, from comdlg32 on
- * every Windows 95. It is modeless -- it stays up while the window is
- * used -- so the message loop hands it its keystrokes (GazetteWindowFind
- * Dialog) and it reports through a message Windows names at run time.
- * Up/Down and "Match whole word only" are hidden: Gazette's search filters
- * the headlines, it does not step through them.
+ * Search: a small modeless dialog of Gazette's own -- a field, and Search,
+ * Clear and Close. It began as Windows' stock Find dialog, which cannot
+ * clear what it found (it will not search for nothing, which is how the
+ * Mac's search box clears), calls its button Find Next, and offers Match
+ * case and a direction that a filter of the headlines has no use for.
+ * Bruno, 2026-09-26: a third button to clear it, and Find called Search.
+ *
+ * It stays up while the window is used, so the message loop hands it its
+ * keystrokes (GazetteWindowFindDialog). Search is the Mac's Return in the
+ * search field: the application reads what was typed through
+ * GazetteUISearchText. Clear is enabled while a search is in force, which
+ * the headline heading's update keeps true (UpdateSearchControls).
  */
-static HWND         gFindDialog;
-static FINDREPLACEA gFind;
-static char         gFindWhat[128];
-static UINT         gFindMessage;
+static HWND gFindDialog;
+static char gFindWhat[128];
+
+static void UpdateSearchControls(void);
+
+static void RunSearch(const char *text)
+{
+    lstrcpynA(gFindWhat, text, sizeof(gFindWhat));
+    if (gOnCommand != NULL) {
+        gOnCommand(kGazetteCmdSearch);
+    }
+    UpdateSearchControls();
+}
+
+static INT_PTR CALLBACK SearchDialogProc(HWND dialog, UINT message,
+                                         WPARAM wParam, LPARAM lParam)
+{
+    (void)lParam;
+    switch (message) {
+    case WM_INITDIALOG: {
+        HWND frame = GetWindow(dialog, GW_OWNER);
+        RECT outer, inner;
+
+        SendDlgItemMessageA(dialog, IDC_SEARCH_TEXT, EM_LIMITTEXT,
+                            sizeof(gFindWhat) - 1, 0);
+        SetDlgItemTextA(dialog, IDC_SEARCH_TEXT, gFindWhat);
+        /* Near the top of the window, over the headlines, where Notepad's
+           Find sits over its text. */
+        if (frame != NULL && GetWindowRect(frame, &outer) &&
+            GetWindowRect(dialog, &inner)) {
+            SetWindowPos(dialog, NULL,
+                         outer.left + ((outer.right - outer.left) -
+                                       (inner.right - inner.left)) / 2,
+                         outer.top + 80, 0, 0,
+                         SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        return TRUE;
+    }
+
+    case WM_COMMAND:
+        switch (LOWORD(wParam)) {
+        case IDOK: {
+            char text[sizeof(gFindWhat)];
+
+            GetDlgItemTextA(dialog, IDC_SEARCH_TEXT, text, sizeof(text));
+            if (text[0] != '\0') {
+                RunSearch(text);
+            }
+            return TRUE;
+        }
+        case IDC_SEARCH_CLEAR:
+            SetDlgItemTextA(dialog, IDC_SEARCH_TEXT, "");
+            RunSearch("");
+            SetFocus(GetDlgItem(dialog, IDC_SEARCH_TEXT));
+            return TRUE;
+        case IDCANCEL:
+            DestroyWindow(dialog);
+            return TRUE;
+        case IDC_SEARCH_TEXT:
+            if (HIWORD(wParam) == EN_CHANGE) {
+                UpdateSearchControls();
+            }
+            return TRUE;
+        }
+        break;
+
+    case WM_DESTROY:
+        gFindDialog = NULL;
+        break;
+    }
+    return FALSE;
+}
+
+/* Search enabled when there is something to look for, Clear while a search
+   is in force -- in the dialog, and on the toolbar's Clear Search. */
+static void UpdateSearchControls(void)
+{
+    BOOL active = (BOOL)(GazetteFeedsFilter()[0] != '\0');
+
+    if (gFindDialog != NULL) {
+        EnableWindow(GetDlgItem(gFindDialog, IDOK),
+                     (BOOL)(GetWindowTextLengthA(
+                                GetDlgItem(gFindDialog, IDC_SEARCH_TEXT)) > 0));
+        EnableWindow(GetDlgItem(gFindDialog, IDC_SEARCH_CLEAR), active);
+    }
+}
 
 static void ShowFind(HWND frame)
 {
-    if (gFindDialog != NULL) {
-        SetFocus(gFindDialog);
-        return;
+    if (gFindDialog == NULL) {
+        gFindDialog = CreateDialogParamA(GetModuleHandleA(NULL),
+                                         MAKEINTRESOURCEA(IDD_SEARCH), frame,
+                                         SearchDialogProc, 0);
+        if (gFindDialog == NULL) {
+            return;
+        }
+        UpdateSearchControls();
+        ShowWindow(gFindDialog, SW_SHOW);
     }
-    ZeroMemory(&gFind, sizeof(gFind));
-    gFind.lStructSize   = sizeof(gFind);
-    gFind.hwndOwner     = frame;
-    gFind.lpstrFindWhat = gFindWhat;
-    gFind.wFindWhatLen  = sizeof(gFindWhat);
-    gFind.Flags         = FR_DOWN | FR_HIDEUPDOWN | FR_HIDEWHOLEWORD;
-    gFindDialog = FindTextA(&gFind);
+    SetActiveWindow(gFindDialog);
+    SetFocus(GetDlgItem(gFindDialog, IDC_SEARCH_TEXT));
+    SendDlgItemMessageA(gFindDialog, IDC_SEARCH_TEXT, EM_SETSEL, 0, -1);
 }
 
 HWND GazetteWindowFindDialog(void)
 {
     return gFindDialog;
-}
-
-UINT GazetteWindowFindMessage(void)
-{
-    if (gFindMessage == 0) {
-        gFindMessage = RegisterWindowMessageA(FINDMSGSTRINGA);
-    }
-    return gFindMessage;
-}
-
-/*
- * What the Find dialog said. Find Next asks for what was typed; the
- * headline filter it drives joins with the store, so until then the
- * status bar says what is being looked for.
- */
-void GazetteWindowFindEvent(const FINDREPLACEA *find)
-{
-    if (find->Flags & FR_DIALOGTERM) {
-        gFindDialog = NULL;
-        return;
-    }
-    /* Find Next is the Mac's Return in the search field: the application
-       reads what was typed out through GazetteUISearchText. */
-    if ((find->Flags & FR_FINDNEXT) && gOnCommand != NULL) {
-        gOnCommand(kGazetteCmdSearch);
-    }
 }
 
 /*
@@ -874,8 +938,10 @@ BOOL GazetteWindowEscapeKey(void)
     if (GazetteFeedsFilter()[0] == '\0' || gOnCommand == NULL) {
         return FALSE;
     }
-    GazetteUISetSearchText("");
-    gOnCommand(kGazetteCmdSearch);
+    RunSearch("");
+    if (gFindDialog != NULL) {
+        SetDlgItemTextA(gFindDialog, IDC_SEARCH_TEXT, "");
+    }
     return TRUE;
 }
 
@@ -2084,25 +2150,47 @@ static int GroupUnread(int group)
 }
 
 /*
- * How much room a row's words have: the tree's width less what the tree
- * puts before them -- one indent for the lines at the root, one more per
- * level, the icon -- and the few pixels of air it keeps round the text.
- * Zero while the tree has no width yet, which fits everything.
+ * How far right a row's words may reach: the tree's whole width less a
+ * vertical scroll bar, whether one is showing or not. A bar that came with
+ * the fortieth feed narrowed the tree under labels fitted to the width
+ * before it, and the tree answered with a horizontal bar (Bruno, 86Box,
+ * 2026-09-26). TVS_NOHSCROLL would forbid that bar outright, but it is
+ * comctl32 5.80's, so on a Windows 95 the labels must simply fit.
+ */
+static int LabelLimit(void)
+{
+    RECT window;
+
+    if (gSidebar == NULL || !GetWindowRect(gSidebar, &window)) {
+        return 0;
+    }
+    return (window.right - window.left) - GetSystemMetrics(SM_CXVSCROLL);
+}
+
+/* Extra pixels to leave, learned from the tree itself: see RelabelSidebar. */
+static int gLabelSlack;
+
+/*
+ * How much room a row's words have: that limit less what the tree puts
+ * before them -- one indent for the lines at the root, one more per level,
+ * the icon -- and the few pixels of air it keeps round the text. Zero
+ * while the tree has no width yet, which fits everything.
  */
 static int LabelRoom(int level)
 {
-    RECT client;
-    int  indent;
+    int limit = LabelLimit();
+    int indent;
+    int room;
 
-    if (gSidebar == NULL || !GetClientRect(gSidebar, &client) ||
-        client.right <= 0) {
+    if (limit <= 0) {
         return 0;
     }
     indent = (int)SendMessage(gSidebar, TVM_GETINDENT, 0, 0);
     if (indent <= 0) {
         indent = 19;
     }
-    return client.right - indent * (level + 1) - 16 - 3 - 10;
+    room = limit - indent * (level + 1) - 16 - 3 - 10 - gLabelSlack;
+    return (room > 1) ? room : 1;
 }
 
 /*
@@ -2353,12 +2441,54 @@ static void RelabelRows(HTREEITEM item)
     }
 }
 
+/* How far right the furthest label on an open row reaches, as the tree
+   itself has laid it out. */
+static int WidestLabel(void)
+{
+    HTREEITEM item = (HTREEITEM)SendMessage(gSidebar, TVM_GETNEXTITEM,
+                                            TVGN_ROOT, 0);
+    int       widest = 0;
+
+    while (item != NULL) {
+        RECT r;
+
+        memcpy(&r, &item, sizeof(HTREEITEM));
+        if (SendMessage(gSidebar, TVM_GETITEMRECT, TRUE, (LPARAM)&r) &&
+            r.right > widest) {
+            widest = r.right;
+        }
+        item = (HTREEITEM)SendMessage(gSidebar, TVM_GETNEXTITEM,
+                                      TVGN_NEXTVISIBLE, (LPARAM)item);
+    }
+    return widest;
+}
+
+/*
+ * Every row's words again. Then the tree is asked where it put them: if
+ * any label still reaches past the limit -- the tree's margins round the
+ * text are its own and differ between comctl32 versions -- the difference
+ * is kept as slack and the rows fitted once more, which they then do for
+ * the rest of the run.
+ */
 static void RelabelSidebar(void)
 {
-    if (gSidebar != NULL) {
+    int limit, widest;
+
+    if (gSidebar == NULL) {
+        return;
+    }
+    RelabelRows((HTREEITEM)SendMessage(gSidebar, TVM_GETNEXTITEM,
+                                       TVGN_ROOT, 0));
+
+    limit  = LabelLimit();
+    widest = WidestLabel();
+    if (limit > 0 && widest > limit && gLabelSlack < 64) {
+        gLabelSlack += widest - limit + 2;
         RelabelRows((HTREEITEM)SendMessage(gSidebar, TVM_GETNEXTITEM,
                                            TVGN_ROOT, 0));
     }
+    /* Anything that scrolled sideways before goes back to the left. */
+    SendMessage(gSidebar, WM_HSCROLL, MAKEWPARAM(SB_THUMBPOSITION, 0), 0);
 }
 
 /* Which rows "Hide Read Feeds" leaves standing: platinum_window.c's
@@ -3503,11 +3633,8 @@ static void UpdateHeader(void)
 {
     char        header[kGazetteFeedTitleLen + 96];
     char        count[48];
-    const char *title = GazetteFeedsTitle();
+    const char *title = GazetteAppViewTitle();
 
-    if (title[0] == '\0') {
-        title = GazetteCoreFeedTitle(gSelectedFeed);
-    }
     count[0] = '\0';
     if (GazetteFeedsTotalCount() > 0) {
         int unread = GazetteFeedsUnreadCount();
@@ -3526,6 +3653,7 @@ static void UpdateHeader(void)
         lstrcpynA(header, title, sizeof(header));
     }
     SetListTitle(header, count);
+    UpdateSearchControls();
 
     /* And the status bar's left-hand section: what the view holds. */
     if (GazetteFeedsTotalCount() > 0) {

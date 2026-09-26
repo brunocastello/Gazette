@@ -931,10 +931,7 @@ void GazetteAppPumpRefresh(void)
             }
             GazetteUIArticlesChanged();
             snprintf(message, sizeof message, "%d articles from %s",
-                     GazetteFeedsArticleCount(),
-                     GazetteFeedsTitle()[0]
-                         ? GazetteFeedsTitle()
-                         : GazetteCoreFeedTitle(GazetteUISelectedFeed()));
+                     GazetteFeedsArticleCount(), GazetteAppViewTitle());
             GazetteUISetStatus(message);
             break;
 
@@ -1309,6 +1306,24 @@ void GazetteAppDiscoverNext(int feedIndex)
  * An empty text is how a search is cleared — which is why there is no
  * "Show All Articles" beside Find.
  */
+const char *GazetteAppViewTitle(void)
+{
+    int kind  = 0;
+    int index = 0;
+
+    /* A feed: the name it has in the list (Bruno, 2026-09-26: a renamed
+       feed was headed with the title the feed gives itself). The feed's own
+       title only when the list has none for it. */
+    if (GazetteUISelection(&kind, &index) && kind == kGazetteRowFeed &&
+        GazetteCoreFeedTitle(index)[0] != '\0') {
+        return GazetteCoreFeedTitle(index);
+    }
+    if (GazetteFeedsTitle()[0] != '\0') {
+        return GazetteFeedsTitle();
+    }
+    return GazetteCoreFeedTitle(GazetteUISelectedFeed());
+}
+
 void GazetteAppSearch(const char *text)
 {
     char message[224];

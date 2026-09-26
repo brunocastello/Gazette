@@ -858,13 +858,6 @@ static BOOL MenuCommand(HWND hwnd, int id)
 static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message,
                                     WPARAM wParam, LPARAM lParam)
 {
-    /* The Find dialog reports through a message Windows numbers at run
-       time, so it cannot be a case label. */
-    if (message == GazetteWindowFindMessage()) {
-        GazetteWindowFindEvent((const FINDREPLACEA *)lParam);
-        return 0;
-    }
-
     switch (message) {
     case WM_PAINT: {
         PAINTSTRUCT paint;
@@ -1144,7 +1137,7 @@ static void HandleMessage(HWND hwnd, HACCEL accelerators, MSG *message)
     }
     if (GazetteWindowFindDialog() != NULL &&
         IsDialogMessage(GazetteWindowFindDialog(), message)) {
-        return;                     /* the Find dialog's own keys */
+        return;                     /* the Search dialog's own keys */
     }
     if (accelerators != NULL &&
         TranslateAcceleratorA(hwnd, accelerators, message)) {

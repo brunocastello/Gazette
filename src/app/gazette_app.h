@@ -93,6 +93,12 @@ void GazetteAppAddGroup(const char *name);
 void GazetteAppRenameGroup(int groupIndex, const char *name);
 void GazetteAppSetPreferences(long refreshMinutes, long maxArticles);
 
+/* What the view on screen is called, for the headline list's heading and
+   the status line: a feed by the name in the user's list -- which they may
+   have changed from the feed's own -- and a group or a standing view by
+   its name. */
+const char *GazetteAppViewTitle(void);
+
 /* Keep only the articles containing text, and say how many; "" shows them
    all again. The search box on Return, and Find. */
 void GazetteAppSearch(const char *text);

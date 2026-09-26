@@ -23,6 +23,7 @@
 #define IDD_FEED               110
 #define IDD_NAME               111
 #define IDD_PREFS              112
+#define IDD_SEARCH             113
 
 /* Menu commands. Grouped by menu in blocks of a hundred so a new item
    never has to be squeezed between two existing numbers. */
@@ -96,5 +97,7 @@
 #define IDC_NAME_TEXT          1111
 #define IDC_PREFS_MINUTES      1120
 #define IDC_PREFS_ARTICLES     1121
+#define IDC_SEARCH_TEXT        1130
+#define IDC_SEARCH_CLEAR       1131
 
 #endif /* GAZETTE_WIN_RES_H */
