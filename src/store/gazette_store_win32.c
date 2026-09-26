@@ -22,6 +22,7 @@
 #include <windows.h>
 #include <commdlg.h>
 
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -647,9 +648,13 @@ static const char kFilter[] =
  */
 #define kOpenFileNameSize OPENFILENAME_SIZE_VERSION_400A
 
-/* 76 bytes on Win32, and the build stops if it is ever anything else. */
+/* 76 bytes on Win32 -- everything up to and including lpTemplateName --
+   and the build stops if it is ever anything else. offsetof, because
+   MinGW's OPENFILENAME_SIZE_VERSION_400A is pointer arithmetic that GCC
+   will not take as a constant at file scope. */
 typedef char gazette_open_file_name_is_the_95_size[
-    (kOpenFileNameSize == 76) ? 1 : -1];
+    (offsetof(OPENFILENAMEA, lpTemplateName) + sizeof(LPCSTR) == 76)
+        ? 1 : -1];
 
 /*
  * A common dialog's own failure, as opposed to Cancel: both return FALSE,
