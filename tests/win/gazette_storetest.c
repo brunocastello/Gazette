@@ -99,7 +99,7 @@ int main(void)
         {
             char leaf[64];
 
-            wsprintfA(leaf, "Gazette Cache\\Feed %08lX", hash & 0xFFFFFFFFUL);
+            wsprintfA(leaf, "Cache\\Feed %08lX", hash & 0xFFFFFFFFUL);
             printf("   cache file: %s\n", leaf);
             Check("the cache file is where the Mac's name says",
                   RawFile(leaf, buf, sizeof buf) > 0);

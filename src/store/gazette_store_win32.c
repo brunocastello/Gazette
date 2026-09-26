@@ -36,7 +36,13 @@ static const char kPrefsFileName[]   = "Gazette.ini";
    Gazette.ini yet, so a feed list made with one of them carries over. The
    next save writes Gazette.ini, and the old file is left alone. */
 static const char kOldPrefsFileName[] = "Gazette Preferences.txt";
-static const char kCacheFolderName[] = "Gazette Cache";
+/* Beside the program, where "Gazette" in the name would say nothing a
+   folder next to Gazette.exe does not (Bruno, 2026-09-26). The Mac's is
+   "Gazette Cache" because it lives in the shared Preferences folder. */
+static const char kCacheFolderName[] = "Cache";
+/* What builds before 2026-09-26 called it: renamed on first use, so the
+   cached articles and the read marks in it carry over. */
+static const char kOldCacheFolderName[] = "Gazette Cache";
 
 /* ------------------------------------------------------------------ */
 /* The folder                                                          */
@@ -120,11 +126,32 @@ static int PathIn(const char *leaf, char *out)
     return 1;
 }
 
-/* base\Gazette Cache\leaf, making the folder when asked. */
+/* An earlier build's "Gazette Cache", renamed to "Cache" when there is no
+   "Cache" yet. Once a run: after that the answer cannot change. */
+static void AdoptOldCache(void)
+{
+    static int done;
+    char       oldFolder[MAX_PATH];
+    char       folder[MAX_PATH];
+
+    if (done) {
+        return;
+    }
+    done = 1;
+    if (PathIn(kOldCacheFolderName, oldFolder) &&
+        PathIn(kCacheFolderName, folder) &&
+        GetFileAttributesA(folder) == (DWORD)-1 &&
+        GetFileAttributesA(oldFolder) != (DWORD)-1) {
+        MoveFileA(oldFolder, folder);
+    }
+}
+
+/* base\Cache\leaf, making the folder when asked. */
 static int CachePath(const char *leaf, int createFolder, char *out)
 {
     char folder[MAX_PATH];
 
+    AdoptOldCache();
     if (!PathIn(kCacheFolderName, folder) ||
         lstrlenA(folder) + lstrlenA(leaf) + 2 > MAX_PATH) {
         return 0;

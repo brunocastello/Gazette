@@ -39,7 +39,7 @@
 #define GZ_RQUOTE        "\""
 #define GZ_COMMAND       "Ctrl+"
 #define GZ_NETWORK_HINT  "check the Network control panel"
-#define GZ_DATA_FOLDER   "the Gazette Cache folder, beside Gazette"
+#define GZ_DATA_FOLDER   "the Cache folder, beside Gazette"
 #else
 #define GZ_ELLIPSIS      "\311"
 #define GZ_LQUOTE        "\322"
