@@ -65,7 +65,7 @@ int main(void)
     Check("written", GazetteStoreWritePrefs(kPrefs, (long)strlen(kPrefs)));
     Check("read back", GazetteStoreReadPrefs(buf, sizeof buf, &len));
     Check("as CRLF on disk, for Notepad",
-          RawFile("Gazette Preferences.txt", buf, sizeof buf) > 0 &&
+          RawFile("Gazette.ini", buf, sizeof buf) > 0 &&
           strcmp(buf, "# Gazette Preferences\r\nfeed = https://e/1\r\n") == 0);
 
     printf("== a feed's cache, streamed\n");

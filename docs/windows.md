@@ -46,7 +46,7 @@ The user-agent names the platform: `Gazette/0.1.0 (Windows; Win32)` (`GAZETTE_WI
 
 | Mac OS 9 (Preferences folder) | Windows (beside Gazette.exe) |
 |---|---|
-| `Gazette Preferences` | `Gazette Preferences.txt` |
+| `Gazette Preferences` | `Gazette.ini` (as Gateway.ini; an old `Gazette Preferences.txt` is read once if there is no .ini) |
 | `Gazette Cache` folder | `Gazette Cache` folder |
 | `Gazette Cache:Feed XXXXXXXX` | `Gazette Cache\Feed XXXXXXXX` |
 | `Gazette Cache:Gazette Index` | `Gazette Cache\Gazette Index` |

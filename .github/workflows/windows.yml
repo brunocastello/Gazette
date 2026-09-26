@@ -203,7 +203,7 @@ jobs:
             'group        = Technology' \
             'feed     = https://9to5mac.com/feed/ | 9to5Mac' \
             'feed-off = https://feeds.nbcnews.com/nbcnews/public/news | NBC News' \
-            'group-end    = 1' > "shot/Gazette Preferences.txt"
+            'group-end    = 1' > "shot/Gazette.ini"
           Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 &
           export DISPLAY=:99
           sleep 3
@@ -218,7 +218,7 @@ jobs:
           # often a summary only. A fresh folder: no cache, no read marks.
           mkdir -p shot2 && cp build-win/Gazette.exe shot2/
           printf '%s\r\n' \
-            'feed     = https://9to5mac.com/feed/ | 9to5Mac' > "shot2/Gazette Preferences.txt"
+            'feed     = https://9to5mac.com/feed/ | 9to5Mac' > "shot2/Gazette.ini"
           (cd shot2 && wine Gazette.exe >/dev/null 2>&1 &)
           sleep 60
           import -window root shot/photos.png

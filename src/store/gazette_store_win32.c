@@ -27,7 +27,15 @@
 
 #include "store/gazette_store.h"
 
-static const char kPrefsFileName[]   = "Gazette Preferences.txt";
+/* Gazette.ini, as Gateway keeps Gateway.ini: the Windows name for a
+   settings file beside the program (Bruno, 2026-09-26). The contents are
+   the Mac's grammar, key = value, one to a line, which is what an INI
+   file is; a section header or a ';' comment is skipped by the parser. */
+static const char kPrefsFileName[]   = "Gazette.ini";
+/* What builds before 2026-09-26 called it: read when there is no
+   Gazette.ini yet, so a feed list made with one of them carries over. The
+   next save writes Gazette.ini, and the old file is left alone. */
+static const char kOldPrefsFileName[] = "Gazette Preferences.txt";
 static const char kCacheFolderName[] = "Gazette Cache";
 
 /* ------------------------------------------------------------------ */
@@ -516,7 +524,11 @@ int GazetteStoreReadPrefs(char *buf, long cap, long *outLen)
     if (!PathIn(kPrefsFileName, path)) {
         return 0;
     }
-    return ReadWhole(path, buf, cap, outLen);
+    if (ReadWhole(path, buf, cap, outLen)) {
+        return 1;
+    }
+    return PathIn(kOldPrefsFileName, path) &&
+           ReadWhole(path, buf, cap, outLen);
 }
 
 int GazetteStoreWritePrefs(const char *text, long len)

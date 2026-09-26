@@ -50,7 +50,7 @@ Reuse Gateway’s Win32 networking and build patterns. Keep portable core pure.
 - [x] Winsock adapter for the same non-blocking fetch API used on OS 9.
   `src/net/` shared; `gazette_net_ot.c` / `gazette_net_win32.c` hold start-up, clock and allocation. Certainly `transport_win32.c` + `entropy_win32.c` (PATCHES §25: CryptoAPI looked up, not imported). Proved by `GazetteNetTest.exe` under Wine on CI, run 35893041987: 4/4 live fetches — Google News (TLS 1.3, 38 articles parsed), NBC feed (25), www.nbcnews.com (TLS 1.2, 1.4 MB), 9to5Mac (100).
 - [x] File I/O / cache path for Windows (prefs + cache folders beside the exe or under AppData — pick one, document it).
-  Beside `Gazette.exe` (as Gateway), falling back to `%APPDATA%\Gazette`, then `%USERPROFILE%\Gazette`; `Gazette Preferences.txt`, `Gazette Cache\`; CRLF on write. See `docs/windows.md`.
+  Beside `Gazette.exe` (as Gateway), falling back to `%APPDATA%\Gazette`, then `%USERPROFILE%\Gazette`; `Gazette.ini` (was `Gazette Preferences.txt` until 2026-09-26, still read once), `Gazette Cache\`; CRLF on write. See `docs/windows.md`.
 - [x] Win32 store: `src/store/gazette_store_win32.c` — gazette_store.h on Win32 files per the above, CRLF on write, the Mac's cache-file names, GetOpenFileName / GetSaveFileName for OPML with a timer keeping the network moving while they are up. Proved by `GazetteStoreTest.exe` under Wine in windows.yml: 16/16 checks, run 35900555401.
 - [x] Host tests still pass; no Mac headers in portable code. 765/765, run 35893041948.
 
