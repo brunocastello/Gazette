@@ -1516,20 +1516,9 @@ static void HandleNewFeed(void)
     char              title[kGazetteTitleLen];
     const char       *names[kGazetteMaxGroups];
     GazetteFeedDialog d;
-    int               kind  = 0;
-    int               index = 0;
-    int               group = -1;
-    int               added;
 
     url[0]   = '\0';
     title[0] = '\0';
-
-    /* The dialog opens on the group the user is looking at — the selected
-       one, or the selected feed's — and they choose from there. */
-    if (GazetteUISelection(&kind, &index)) {
-        group = (kind == kGazetteRowGroup) ? index
-                                           : GazetteCoreFeedGroup(index);
-    }
 
     d.windowTitle = "New Feed";
     d.url         = url;
@@ -1538,47 +1527,23 @@ static void HandleNewFeed(void)
     d.titleCap    = sizeof title;
     d.groups      = names;
     d.groupCount  = GroupNames(names, kGazetteMaxGroups);
-    d.group       = group;
+    d.group       = GazetteAppSelectedGroup();
     if (!GazetteAskFeed(&d)) {
         return;
     }
-
-    added = GazetteCoreAddFeed(url, title, d.group);
-    if (added < 0) {
-        GazetteUISetStatus("That feed is already in the list, or the list "
-                           "is full.");
-        return;
-    }
-
-    GazetteCoreSavePrefs();
-    GazetteUIFeedsChanged();
-
-    /* A newly added feed gets one attempt at discovery, so pasting a site's
-       home page finds the feed on it. */
-    GazetteAppDiscoverNext(added);
-    GazetteAppShowFeed(added);
+    GazetteAppAddFeed(url, title, d.group);
 }
 
 static void HandleNewGroup(void)
 {
     char name[kGazetteGroupLen];
-    int  group;
 
     name[0] = '\0';
     if (!GazetteAskName("New Group", "Name for the new group:", name,
                         sizeof name)) {
         return;
     }
-
-    group = GazetteCoreAddGroup(name);
-    if (group < 0) {
-        GazetteUISetStatus("No room for another group.");
-        return;
-    }
-
-    GazetteCoreSavePrefs();
-    GazetteUIFeedsChanged();
-    GazetteUISelectGroup(group);
+    GazetteAppAddGroup(name);
 }
 
 /* The address as well as the name, in the same dialog adding one uses,
@@ -1587,12 +1552,10 @@ static void HandleEditFeed(void)
 {
     char              url[kGazetteURLLen];
     char              title[kGazetteTitleLen];
-    char              wasURL[kGazetteURLLen];
     const char       *names[kGazetteMaxGroups];
     GazetteFeedDialog d;
     int               kind  = 0;
     int               index = 0;
-    int               wasGroup;
 
     if (!GazetteUISelection(&kind, &index) || kind != kGazetteRowFeed) {
         return;
@@ -1600,8 +1563,6 @@ static void HandleEditFeed(void)
 
     snprintf(url, sizeof url, "%s", GazetteCoreFeedURL(index));
     snprintf(title, sizeof title, "%s", GazetteCoreFeedTitle(index));
-    snprintf(wasURL, sizeof wasURL, "%s", url);
-    wasGroup = GazetteCoreFeedGroup(index);
 
     d.windowTitle = "Edit Feed";
     d.url         = url;
@@ -1610,50 +1571,13 @@ static void HandleEditFeed(void)
     d.titleCap    = sizeof title;
     d.groups      = names;
     d.groupCount  = GroupNames(names, kGazetteMaxGroups);
-    d.group       = wasGroup;
+    d.group       = GazetteCoreFeedGroup(index);
     if (!GazetteAskFeed(&d)) {
         return;
     }
-
-    /* A different group: to the end of it, or of the list, where a feed
-       put somewhere by a dialog rather than a drag goes. */
-    if (d.group != wasGroup) {
-        GazettePlace place;
-        int          moved;
-
-        place.where = (d.group < 0) ? kGazettePlaceListEnd
-                                    : kGazettePlaceGroupEnd;
-        place.ref   = (d.group < 0) ? 0 : d.group;
-        moved = GazetteCoreMoveFeed(index, place);
-        if (moved >= 0) {
-            index = moved;
-        }
-    }
-
-    if (strcmp(url, wasURL) != 0) {
-        if (!GazetteCoreSetFeedURL(index, url)) {
-            GazetteUISetStatus("Another feed already has that address.");
-            return;
-        }
-        /* The old address's cache and counts are keyed by an address nothing
-           points at any more. */
-        GazetteFeedsForgetCache(wasURL);
-        GazetteIndexForgetFeed(wasURL);
-    }
-    GazetteCoreRenameFeed(index, title);
-
-    GazetteCoreSavePrefs();
-    GazetteUIFeedsChanged();
-
-    /* A new address is a different feed with a different cache file, so this
-       reads that one — or fetches it when there is nothing cached yet. It
-       earns a discovery attempt for the same reason a new feed does: what was
-       typed may be a home page. */
-    GazetteAppDiscoverNext(index);
-    GazetteAppShowFeed(index);
+    GazetteAppEditFeed(index, url, title, d.group);
 }
 
-/* A group has a name and nothing else to edit, so editing one is naming it. */
 static void HandleEditGroup(void)
 {
     char name[kGazetteGroupLen];
@@ -1669,10 +1593,7 @@ static void HandleEditGroup(void)
                         sizeof name)) {
         return;
     }
-    GazetteCoreRenameGroup(index, name);
-
-    GazetteCoreSavePrefs();
-    GazetteUIFeedsChanged();
+    GazetteAppRenameGroup(index, name);
 }
 
 /* Feeds > Edit Feed… / Edit Group…: whichever the sidebar has selected. */
@@ -1854,14 +1775,7 @@ static void HandlePreferences(void)
     if (!GazetteAskPreferences(&minutes, &articles)) {
         return;
     }
-    if (minutes == prefs->refreshMinutes && articles == prefs->maxArticles) {
-        return;
-    }
-    GazetteCoreSetRefreshMinutes(minutes);
-    GazetteCoreSetMaxArticles(articles);
-    GazetteCoreSavePrefs();
-    GazetteAppRestartClock();
-    GazetteAppReloadView();
+    GazetteAppSetPreferences(minutes, articles);
 }
 
 static void HandleHideSidebar(void)

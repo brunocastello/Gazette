@@ -135,6 +135,64 @@ BEGIN
 END
 
 /* ------------------------------------------------------------------ */
+/* Dialogs                                                             */
+/*                                                                     */
+/* The Mac's three DLOGs (Resources/Gazette.r) with the same fields,    */
+/* words and order, laid out as Windows lays a dialog out: dialog       */
+/* units, 7-unit margins, 14-unit fields and 50x14 buttons, OK then     */
+/* Cancel at the bottom right, in "MS Shell Dlg" 8 -- MS Sans Serif on  */
+/* every version, the font Windows' own dialogs of the time use. The    */
+/* Mac sets its notes in the small system font; here they are the       */
+/* dialog font, which is already that size.                            */
+/* ------------------------------------------------------------------ */
+
+IDD_FEED DIALOG 0, 0, 240, 110
+STYLE DS_MODALFRAME | DS_SETFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "New Feed"
+FONT 8, "MS Shell Dlg"
+BEGIN
+    LTEXT           "The address of an RSS or Atom feed. Leave the name empty to use the feed's own.",
+                    IDC_FEED_NOTE, 7, 7, 226, 18
+    LTEXT           "&Name:", -1, 7, 32, 40, 8
+    EDITTEXT        IDC_FEED_NAME, 50, 30, 183, 14, ES_AUTOHSCROLL
+    LTEXT           "&Address:", -1, 7, 50, 40, 8
+    EDITTEXT        IDC_FEED_URL, 50, 48, 183, 14, ES_AUTOHSCROLL
+    LTEXT           "&Group:", -1, 7, 68, 40, 8
+    COMBOBOX        IDC_FEED_GROUP, 50, 66, 120, 120,
+                    CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    DEFPUSHBUTTON   "OK", IDOK, 129, 89, 50, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 183, 89, 50, 14
+END
+
+IDD_NAME DIALOG 0, 0, 200, 66
+STYLE DS_MODALFRAME | DS_SETFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "New Group"
+FONT 8, "MS Shell Dlg"
+BEGIN
+    LTEXT           "", IDC_NAME_PROMPT, 7, 7, 186, 10
+    EDITTEXT        IDC_NAME_TEXT, 7, 20, 186, 14, ES_AUTOHSCROLL
+    DEFPUSHBUTTON   "OK", IDOK, 89, 45, 50, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 143, 45, 50, 14
+END
+
+IDD_PREFS DIALOG 0, 0, 220, 100
+STYLE DS_MODALFRAME | DS_SETFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Preferences"
+FONT 8, "MS Shell Dlg"
+BEGIN
+    LTEXT           "&Refresh feeds every", -1, 7, 9, 72, 8
+    EDITTEXT        IDC_PREFS_MINUTES, 82, 7, 32, 14, ES_NUMBER
+    LTEXT           "minutes", -1, 118, 9, 95, 8
+    LTEXT           "Zero never refreshes by itself.", -1, 7, 25, 206, 8
+    LTEXT           "&Keep at most", -1, 7, 44, 72, 8
+    EDITTEXT        IDC_PREFS_ARTICLES, 82, 42, 32, 14, ES_NUMBER
+    LTEXT           "articles per feed", -1, 118, 44, 95, 8
+    LTEXT           "Zero keeps every article the feed offers.", -1, 7, 60, 206, 8
+    DEFPUSHBUTTON   "OK", IDOK, 109, 79, 50, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 163, 79, 50, 14
+END
+
+/* ------------------------------------------------------------------ */
 /* Accelerators                                                        */
 /*                                                                     */
 /* The Mac's Command-key equivalents, on Control. The whole table is   */

@@ -1090,6 +1090,147 @@ void GazetteAppRemoveSelection(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* Feed management                                                     */
+/*                                                                     */
+/* What happens once a shell's dialog has been answered. Every one of   */
+/* these saves immediately rather than leaving it to the quit: on a     */
+/* cooperative machine the application that is edited and then crashed  */
+/* by something else is normal, and a subscription that did not survive */
+/* that is a subscription the user has to remember.                     */
+/* ------------------------------------------------------------------ */
+
+/* The dialog opens on the group the user is looking at — the selected
+   one, or the selected feed's — and they choose from there. */
+int GazetteAppSelectedGroup(void)
+{
+    int kind  = 0;
+    int index = 0;
+
+    if (!GazetteUISelection(&kind, &index)) {
+        return -1;
+    }
+    return (kind == kGazetteRowGroup) ? index : GazetteCoreFeedGroup(index);
+}
+
+void GazetteAppAddFeed(const char *url, const char *title, int group)
+{
+    int added = GazetteCoreAddFeed(url, title, group);
+
+    if (added < 0) {
+        GazetteUISetStatus("That feed is already in the list, or the list "
+                           "is full.");
+        return;
+    }
+
+    GazetteCoreSavePrefs();
+    GazetteUIFeedsChanged();
+
+    /* A newly added feed gets one attempt at discovery, so pasting a site's
+       home page finds the feed on it. */
+    GazetteAppDiscoverNext(added);
+    GazetteAppShowFeed(added);
+}
+
+void GazetteAppEditFeed(int index, const char *url, const char *title,
+                        int group)
+{
+    char wasURL[kGazetteURLLen];
+    int  wasGroup;
+
+    if (index < 0 || index >= GazetteCoreFeedCount()) {
+        return;
+    }
+    snprintf(wasURL, sizeof wasURL, "%s", GazetteCoreFeedURL(index));
+    wasGroup = GazetteCoreFeedGroup(index);
+
+    /* A different group: to the end of it, or of the list, where a feed
+       put somewhere by a dialog rather than a drag goes. */
+    if (group != wasGroup) {
+        GazettePlace place;
+        int          moved;
+
+        place.where = (group < 0) ? kGazettePlaceListEnd
+                                  : kGazettePlaceGroupEnd;
+        place.ref   = (group < 0) ? 0 : group;
+        moved = GazetteCoreMoveFeed(index, place);
+        if (moved >= 0) {
+            index = moved;
+        }
+    }
+
+    if (strcmp(url, wasURL) != 0) {
+        if (!GazetteCoreSetFeedURL(index, url)) {
+            GazetteUISetStatus("Another feed already has that address.");
+            return;
+        }
+        /* The old address's cache and counts are keyed by an address nothing
+           points at any more. */
+        GazetteFeedsForgetCache(wasURL);
+        GazetteIndexForgetFeed(wasURL);
+    }
+    GazetteCoreRenameFeed(index, title);
+
+    GazetteCoreSavePrefs();
+    GazetteUIFeedsChanged();
+
+    /* A new address is a different feed with a different cache file, so this
+       reads that one — or fetches it when there is nothing cached yet. It
+       earns a discovery attempt for the same reason a new feed does: what was
+       typed may be a home page. */
+    GazetteAppDiscoverNext(index);
+    GazetteAppShowFeed(index);
+}
+
+void GazetteAppAddGroup(const char *name)
+{
+    int group = GazetteCoreAddGroup(name);
+
+    if (group < 0) {
+        GazetteUISetStatus("No room for another group.");
+        return;
+    }
+
+    GazetteCoreSavePrefs();
+    GazetteUIFeedsChanged();
+    GazetteUISelectGroup(group);
+}
+
+/* A group has a name and nothing else to edit, so editing one is naming it. */
+void GazetteAppRenameGroup(int index, const char *name)
+{
+    if (index < 0 || index >= GazetteCoreGroupCount()) {
+        return;
+    }
+    GazetteCoreRenameGroup(index, name);
+
+    GazetteCoreSavePrefs();
+    GazetteUIFeedsChanged();
+}
+
+/*
+ * The Preferences window's two numbers. Saved, and the view shown again
+ * with the new limit; the clock starts over, so a shorter interval is not
+ * already overdue.
+ */
+void GazetteAppSetPreferences(long refreshMinutes, long maxArticles)
+{
+    const GazettePrefs *prefs = GazetteCoreGetPrefs();
+
+    if (prefs == NULL) {
+        return;
+    }
+    if (refreshMinutes == prefs->refreshMinutes &&
+        maxArticles == prefs->maxArticles) {
+        return;
+    }
+    GazetteCoreSetRefreshMinutes(refreshMinutes);
+    GazetteCoreSetMaxArticles(maxArticles);
+    GazetteCoreSavePrefs();
+    GazetteAppRestartClock();
+    GazetteAppReloadView();
+}
+
+/* ------------------------------------------------------------------ */
 /* The idle slice                                                      */
 /* ------------------------------------------------------------------ */
 

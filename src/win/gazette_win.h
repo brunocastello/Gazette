@@ -98,4 +98,17 @@ void GazetteWinReaderLayout(void);
 int  GazetteWinReaderOffset(void);
 void GazetteWinReaderScrollTo(int offset);
 
+/* The dialogs, gazette_win_dialogs.c: the Mac's gazette_dialogs.h in
+   Windows' controls. Each starts from what the buffers hold, runs modally
+   over owner with a refresh still moving underneath, and answers FALSE for
+   Cancel -- and for OK on an empty address or name, as the Mac's do. The
+   feed's group is -1 for the top level. */
+BOOL GazetteWinAskFeed(HWND owner, const char *windowTitle,
+                       char *url, size_t urlCap,
+                       char *title, size_t titleCap, int *group);
+BOOL GazetteWinAskName(HWND owner, const char *windowTitle,
+                       const char *prompt, char *name, size_t cap);
+BOOL GazetteWinAskPreferences(HWND owner, long *refreshMinutes,
+                              long *maxArticles);
+
 #endif /* GAZETTE_WIN_H */

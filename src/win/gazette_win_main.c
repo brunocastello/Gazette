@@ -322,7 +322,9 @@ static void AdjustMenus(HMENU menu)
     groupSelected = (BOOL)(any && kind == kGazetteRowGroup);
     open          = GazetteFeedsArticleAt(at);
 
-    /* File. New Feed and New Group wait for their dialogs. */
+    /* File. There is always something to make. */
+    Enable(menu, IDM_FILE_NEW_FEED, TRUE);
+    Enable(menu, IDM_FILE_NEW_GROUP, TRUE);
     Enable(menu, IDM_FILE_REFRESH,
            (BOOL)(GazetteCoreFeedCount() > 0 &&
                   GazetteFeedsRefreshGetState() != kGazetteRefreshRunning));
@@ -331,6 +333,7 @@ static void AdjustMenus(HMENU menu)
 
     /* Edit. */
     Enable(menu, IDM_EDIT_FIND, (BOOL)(GazetteFeedsTotalCount() > 0));
+    Enable(menu, IDM_EDIT_PREFS, TRUE);
 
     /* View. */
     Enable(menu, IDM_VIEW_HIDE_READ, TRUE);
@@ -365,6 +368,7 @@ static void AdjustMenus(HMENU menu)
             groupSelected ? "&Delete Group" : "&Delete Feed");
     Retitle(menu, IDM_FEEDS_EDIT,
             groupSelected ? "&Edit Group..." : "&Edit Feed...");
+    Enable(menu, IDM_FEEDS_EDIT, (BOOL)(feedSelected || groupSelected));
     Enable(menu, IDM_FEEDS_DELETE, (BOOL)(feedSelected || groupSelected));
     Enable(menu, IDM_FEEDS_TURN_OFF, (BOOL)(feedSelected || groupSelected));
     {
@@ -473,18 +477,103 @@ static void HandleRemove(HWND hwnd)
     GazetteAppRemoveSelection();
 }
 
-/* The window's own commands -- the Find dialog's Find Next -- by name, as
-   the Mac's toolbar sends them. */
+/*
+ * Feed management: main.cpp's handlers, with gazette_win_dialogs.c asking
+ * and app/gazette_app.c doing what the answer says -- the same code the
+ * Mac runs once its dialog closes.
+ */
+static void HandleNewFeed(HWND hwnd)
+{
+    char url[kGazetteURLLen];
+    char title[kGazetteTitleLen];
+    int  group = GazetteAppSelectedGroup();
+
+    url[0]   = '\0';
+    title[0] = '\0';
+    if (!GazetteWinAskFeed(hwnd, "New Feed", url, sizeof url,
+                           title, sizeof title, &group)) {
+        return;
+    }
+    GazetteAppAddFeed(url, title, group);
+}
+
+static void HandleNewGroup(HWND hwnd)
+{
+    char name[kGazetteGroupLen];
+
+    name[0] = '\0';
+    if (!GazetteWinAskName(hwnd, "New Group", "Name for the new group:",
+                           name, sizeof name)) {
+        return;
+    }
+    GazetteAppAddGroup(name);
+}
+
+/* Feeds > Edit Feed... / Edit Group...: whichever the sidebar has
+   selected. A feed's address as well as its name, in the dialog adding one
+   uses; a group has only its name. */
+static void HandleEdit(HWND hwnd)
+{
+    int kind  = 0;
+    int index = 0;
+
+    if (!GazetteUISelection(&kind, &index)) {
+        return;
+    }
+    if (kind == kGazetteRowGroup) {
+        char name[kGazetteGroupLen];
+
+        lstrcpynA(name, GazetteCoreGroupName(index), sizeof name);
+        if (GazetteWinAskName(hwnd, "Edit Group", "Name for this group:",
+                              name, sizeof name)) {
+            GazetteAppRenameGroup(index, name);
+        }
+    } else if (kind == kGazetteRowFeed) {
+        char url[kGazetteURLLen];
+        char title[kGazetteTitleLen];
+        int  group = GazetteCoreFeedGroup(index);
+
+        lstrcpynA(url, GazetteCoreFeedURL(index), sizeof url);
+        lstrcpynA(title, GazetteCoreFeedTitle(index), sizeof title);
+        if (GazetteWinAskFeed(hwnd, "Edit Feed", url, sizeof url,
+                              title, sizeof title, &group)) {
+            GazetteAppEditFeed(index, url, title, group);
+        }
+    }
+}
+
+static void HandlePreferences(HWND hwnd)
+{
+    const GazettePrefs *prefs = GazetteCoreGetPrefs();
+    long minutes, articles;
+
+    if (prefs == NULL) {
+        return;
+    }
+    minutes  = prefs->refreshMinutes;
+    articles = prefs->maxArticles;
+    if (GazetteWinAskPreferences(hwnd, &minutes, &articles)) {
+        GazetteAppSetPreferences(minutes, articles);
+    }
+}
+
+/* The window's own commands -- the Find dialog's Find Next, and the two
+   halves of the New button's menu -- by name, as the Mac's toolbar sends
+   them. */
 static void WindowCommand(int command)
 {
-    if (command == kGazetteCmdSearch) {
-        HandleSearch();
+    switch (command) {
+    case kGazetteCmdSearch:   HandleSearch();              break;
+    case kGazetteCmdNewFeed:  HandleNewFeed(gMainWindow);  break;
+    case kGazetteCmdNewGroup: HandleNewGroup(gMainWindow); break;
     }
 }
 
 static BOOL MenuCommand(HWND hwnd, int id)
 {
     switch (id) {
+    case IDM_FILE_NEW_FEED:       HandleNewFeed(hwnd);              return TRUE;
+    case IDM_FILE_NEW_GROUP:      HandleNewGroup(hwnd);             return TRUE;
     case IDM_FILE_REFRESH:        GazetteAppRefreshAll();           return TRUE;
     case IDM_FILE_IMPORT:         GazetteAppImportOPML();           return TRUE;
     case IDM_FILE_EXPORT:         GazetteAppExportOPML();           return TRUE;
@@ -501,6 +590,9 @@ static BOOL MenuCommand(HWND hwnd, int id)
         GazetteAppSortOrder(GazetteCoreOldestFirst() ? false : true);
         return TRUE;
     case IDM_FEEDS_MARK_ALL:      GazetteAppMarkAllRead();          return TRUE;
+    case IDM_EDIT_PREFS:          HandlePreferences(hwnd);          return TRUE;
+
+    case IDM_FEEDS_EDIT:          HandleEdit(hwnd);                 return TRUE;
     case IDM_FEEDS_TURN_OFF:      GazetteAppToggleEnabled();        return TRUE;
     case IDM_FEEDS_DELETE:        HandleRemove(hwnd);               return TRUE;
 

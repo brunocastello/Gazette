@@ -764,11 +764,58 @@ void GazetteWindowFindEvent(const FINDREPLACEA *find)
     }
 }
 
+/*
+ * New: as on the Mac, the button drops a menu of the two things there are
+ * to make, from under the button, and stays pressed while it is up. The
+ * menu's Control-N and Control-G go straight to the dialogs; only a click
+ * on the button asks which.
+ */
+static void ShowNewMenu(HWND frame)
+{
+    HMENU menu = CreatePopupMenu();
+    RECT  button;
+    int   chosen;
+
+    if (menu == NULL) {
+        return;
+    }
+    AppendMenuA(menu, MF_STRING, 1, "New &Feed...");
+    AppendMenuA(menu, MF_STRING, 2, "New &Group...");
+
+    /* By index, not TB_GETRECT: that one is comctl32 4.70, and a 95 with
+       no IE has 4.0. */
+    SetRectEmpty(&button);
+    SendMessage(gToolbar, TB_GETITEMRECT,
+                (WPARAM)SendMessage(gToolbar, TB_COMMANDTOINDEX,
+                                    (WPARAM)IDM_FILE_NEW_FEED, 0),
+                (LPARAM)&button);
+    MapWindowPoints(gToolbar, HWND_DESKTOP, (POINT *)&button, 2);
+
+    SendMessage(gToolbar, TB_PRESSBUTTON, (WPARAM)IDM_FILE_NEW_FEED,
+                MAKELONG(TRUE, 0));
+    chosen = (int)TrackPopupMenu(menu,
+                                 TPM_LEFTALIGN | TPM_TOPALIGN |
+                                 TPM_RETURNCMD | TPM_NONOTIFY,
+                                 button.left, button.bottom, 0, frame,
+                                 NULL);
+    SendMessage(gToolbar, TB_PRESSBUTTON, (WPARAM)IDM_FILE_NEW_FEED,
+                MAKELONG(FALSE, 0));
+    DestroyMenu(menu);
+
+    if (chosen != 0 && gOnCommand != NULL) {
+        gOnCommand(chosen == 1 ? kGazetteCmdNewFeed : kGazetteCmdNewGroup);
+    }
+}
+
 BOOL GazetteWindowCommand(HWND frame, WPARAM wParam, LPARAM lParam)
 {
     int id = LOWORD(wParam);
 
-    (void)lParam;
+    if (id == IDM_FILE_NEW_FEED && gToolbar != NULL &&
+        (HWND)lParam == gToolbar) {
+        ShowNewMenu(frame);
+        return TRUE;
+    }
     if (id == IDC_TOOL_CHEVRON) {
         ShowToolChevron(frame);
         return TRUE;

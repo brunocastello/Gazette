@@ -75,6 +75,17 @@ void GazetteAppShowPhotos(void);
 void GazetteAppToggleEnabled(void);
 void GazetteAppRemoveSelection(void);
 
+/* What a dialog's answer does, once the shell has had it: add or change a
+   feed (group -1 is the top level), add or rename a group, set the two
+   preferences. Each saves at once and brings the window up to date. */
+int  GazetteAppSelectedGroup(void);     /* where a new feed starts: -1 top */
+void GazetteAppAddFeed(const char *url, const char *title, int group);
+void GazetteAppEditFeed(int feedIndex, const char *url, const char *title,
+                        int group);
+void GazetteAppAddGroup(const char *name);
+void GazetteAppRenameGroup(int groupIndex, const char *name);
+void GazetteAppSetPreferences(long refreshMinutes, long maxArticles);
+
 /* Keep only the articles containing text, and say how many; "" shows them
    all again. The search box on Return, and Find. */
 void GazetteAppSearch(const char *text);

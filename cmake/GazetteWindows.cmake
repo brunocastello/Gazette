@@ -153,6 +153,7 @@ set(GAZETTE_WIN_SOURCES
     src/win/gazette_win_main.c
     src/win/gazette_win_window.c
     src/win/gazette_win_reader.c   # the article pane's own layout
+    src/win/gazette_win_dialogs.c  # src/ui/gazette_dialogs.c
 )
 
 add_executable(Gazette WIN32

@@ -18,6 +18,11 @@
 /* The strip of every 16x16 icon Gazette drew for itself, cut into an
    image list at startup. tools/generate_win_assets.py writes it. */
 #define IDB_UI_ICONS           103
+/* The dialogs, gazette_win_dialogs.c: the Mac's DLOGs 128-130 in
+   Windows' layout. */
+#define IDD_FEED               110
+#define IDD_NAME               111
+#define IDD_PREFS              112
 
 /* Menu commands. Grouped by menu in blocks of a hundred so a new item
    never has to be squeezed between two existing numbers. */
@@ -74,5 +79,15 @@
 #define IDC_SEARCH             1008
 #define IDC_FINDICON           1009
 #define IDC_TOOL_CHEVRON       1010   /* the toolbar's >> when it is full */
+
+/* Dialog items. IDOK and IDCANCEL are Windows' own 1 and 2. */
+#define IDC_FEED_NOTE          1100
+#define IDC_FEED_NAME          1101
+#define IDC_FEED_URL           1102
+#define IDC_FEED_GROUP         1103
+#define IDC_NAME_PROMPT        1110
+#define IDC_NAME_TEXT          1111
+#define IDC_PREFS_MINUTES      1120
+#define IDC_PREFS_ARTICLES     1121
 
 #endif /* GAZETTE_WIN_RES_H */
