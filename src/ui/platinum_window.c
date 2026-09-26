@@ -6641,6 +6641,32 @@ void GazetteUIReaderCopy(void)
     (void)TEToScrap();
 }
 
+/* On the text, not on its scroll bar: the bar has no menu. */
+Boolean GazetteUIReaderAt(Point where)
+{
+    return (Boolean)(gWindow != NULL && gReaderTE != NULL &&
+                     PtInRect(where, &gReaderRect));
+}
+
+/*
+ * The whole article selected, as a drag from top to bottom would leave it:
+ * the pane takes the focus -- a selection lives only while it has it, see
+ * ReaderFocus -- the record is woken, and the pane drawn again with the
+ * highlight, as ReaderClick finishes a drag.
+ */
+void GazetteUIReaderSelectAll(void)
+{
+    if (gWindow == NULL || gReaderTE == NULL || (**gReaderTE).teLength == 0) {
+        return;
+    }
+    SetFocus(kRefReader);
+    SetPortWindowPort(gWindow);
+    ReaderHiliteColours();
+    TEActivate(gReaderTE);
+    TESetSelect(0, (**gReaderTE).teLength, gReaderTE);
+    DrawReader();
+}
+
 int GazetteUISelectedArticle(void)
 {
     return gSelectedArticle;

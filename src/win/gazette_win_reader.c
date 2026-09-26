@@ -1233,6 +1233,66 @@ BOOL GazetteWinReaderCopy(HWND owner)
     return TRUE;
 }
 
+/*
+ * The article's contextual menu (Bruno, 2026-09-26): an edit menu, as a
+ * piece of text has on Windows, with only what a text that cannot be
+ * edited can do -- Copy what is selected, Select All -- and the rest there
+ * and greyed, so it reads as the menu it is. The Mac's is the same menu.
+ */
+enum {
+    kReaderUndo = 1,
+    kReaderCut,
+    kReaderCopy,
+    kReaderPaste,
+    kReaderDelete,
+    kReaderSelectAll
+};
+
+static void ReaderContextMenu(LPARAM where)
+{
+    HMENU menu = CreatePopupMenu();
+    POINT pt;
+    int   chosen;
+
+    if (menu == NULL) {
+        return;
+    }
+    AppendMenuA(menu, MF_STRING | MF_GRAYED, kReaderUndo, "&Undo");
+    AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(menu, MF_STRING | MF_GRAYED, kReaderCut, "Cu&t");
+    AppendMenuA(menu, MF_STRING |
+                (GazetteWinReaderHasSelection() ? 0 : MF_GRAYED),
+                kReaderCopy, "&Copy");
+    AppendMenuA(menu, MF_STRING | MF_GRAYED, kReaderPaste, "&Paste");
+    AppendMenuA(menu, MF_STRING | MF_GRAYED, kReaderDelete, "&Delete");
+    AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(menu, MF_STRING | (gTextLen > 0 ? 0 : MF_GRAYED),
+                kReaderSelectAll, "Select &All");
+
+    /* From the keyboard -- the menu key, Shift+F10 -- there is no point,
+       and the menu opens at the pane's corner. */
+    if (where == (LPARAM)-1) {
+        pt.x = kMargin;
+        pt.y = kMargin;
+        ClientToScreen(gPane, &pt);
+    } else {
+        pt.x = (short)LOWORD(where);
+        pt.y = (short)HIWORD(where);
+    }
+    chosen = (int)TrackPopupMenu(menu,
+                                 TPM_LEFTALIGN | TPM_TOPALIGN |
+                                 TPM_RIGHTBUTTON | TPM_RETURNCMD |
+                                 TPM_NONOTIFY,
+                                 pt.x, pt.y, 0, gPane, NULL);
+    DestroyMenu(menu);
+
+    if (chosen == kReaderCopy) {
+        (void)GazetteWinReaderCopy(gPane);
+    } else if (chosen == kReaderSelectAll) {
+        GazetteWinReaderSelectAll();
+    }
+}
+
 /* While the mouse is held beyond the pane's top or bottom, the text scrolls
    under it and the selection follows. */
 static void DragSelect(void)
@@ -1436,6 +1496,10 @@ LRESULT CALLBACK GazetteWinReaderProc(HWND hwnd, UINT message,
             return TRUE;
         }
         break;
+
+    case WM_CONTEXTMENU:
+        ReaderContextMenu(lParam);
+        return 0;
 
     case WM_CHAR:
         if (wParam == 1) {                  /* Ctrl+A */

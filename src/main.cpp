@@ -94,6 +94,7 @@ static void    AdjustMarkAllItem(MenuRef menu, MenuItemIndex item);
 static void    AdjustRefreshItem(MenuRef menu, MenuItemIndex item);
 static void    ShowSidebarContextMenu(int kind, int index, Point global);
 static void    ShowArticleContextMenu(int index, Point global);
+static void    ShowReaderContextMenu(Point global);
 static void    HandleCopyArticleURL(void);
 static void    HandleOpenInBrowser(void);
 static void    HandleHideSidebar(void);
@@ -135,7 +136,10 @@ enum {
     kMenuCtxSmart   = 139,
     kMenuCtxGroup   = 140,
     kMenuCtxFeed    = 142,
-    kMenuCtxArticle = 145
+    kMenuCtxArticle = 145,
+    /* The article's text: an edit menu where only Copy and Select All
+       can do anything (Bruno, 2026-09-26; the Windows build has the same). */
+    kMenuCtxReader  = 146
 };
 
 enum {
@@ -245,6 +249,16 @@ enum {
     kCtxArticleCopyURL   = 6,
     /* 7 is a divider */
     kCtxArticleBrowser   = 8
+};
+enum {
+    kCtxReaderUndo      = 1,
+    /* 2 is a divider */
+    kCtxReaderCut       = 3,
+    kCtxReaderCopy      = 4,
+    kCtxReaderPaste     = 5,
+    kCtxReaderDelete    = 6,
+    /* 7 is a divider */
+    kCtxReaderSelectAll = 8
 };
 
 /* Article menu items: what is done to the article that is open, and the
@@ -505,6 +519,13 @@ static Boolean BuildMenuBar(void)
                     "Open in Browser");
     InsertMenu(ctx, hierMenu);
 
+    ctx = NewMenu(kMenuCtxReader, "\p");
+    if (ctx == nil) {
+        return false;
+    }
+    AppendMenu(ctx, "\p(Undo;(-;(Cut;Copy;(Paste;(Delete;(-;Select All");
+    InsertMenu(ctx, hierMenu);
+
     articleMenu = NewMenu(kMenuArticle, "\pArticle");
     if (articleMenu == nil) {
         return false;
@@ -748,6 +769,8 @@ static void HandleMouseDown(const EventRecord *event)
                         ShowSidebarContextMenu(kind, index, event->where);
                     } else if (GazetteUIArticleRowAt(local, &index)) {
                         ShowArticleContextMenu(index, event->where);
+                    } else if (GazetteUIReaderAt(local)) {
+                        ShowReaderContextMenu(event->where);
                     }
                     break;
                 }
@@ -933,6 +956,14 @@ static void HandleMenuChoice(long menuResult)
                 case kCtxArticleMarkBelow: GazetteAppMarkRange(true);  break;
                 case kCtxArticleCopyURL:   HandleCopyArticleURL(); break;
                 case kCtxArticleBrowser:   HandleOpenInBrowser();  break;
+                default: break;
+            }
+            break;
+
+        case kMenuCtxReader:
+            switch (menuItem) {
+                case kCtxReaderCopy:      GazetteUIReaderCopy();      break;
+                case kCtxReaderSelectAll: GazetteUIReaderSelectAll(); break;
                 default: break;
             }
             break;
@@ -1426,6 +1457,31 @@ static void AdjustRefreshItem(MenuRef menu, MenuItemIndex item)
  * the way that menu words them, for the one under the mouse — and its
  * address to copy.
  */
+/*
+ * A contextual click on the article's text: an edit menu, with what text
+ * that cannot be edited can do -- Copy what is selected, Select All -- and
+ * the rest shown grey. The selection is left as it is; the click chooses
+ * nothing.
+ */
+static void ShowReaderContextMenu(Point global)
+{
+    MenuRef menu = GetMenuHandle(kMenuCtxReader);
+    long    chosen;
+
+    if (menu == nil) {
+        return;
+    }
+    if (GazetteUIReaderHasSelection()) {
+        MacEnableMenuItem(menu, kCtxReaderCopy);
+    } else {
+        DisableMenuItem(menu, kCtxReaderCopy);
+    }
+    chosen = PopUpMenuSelect(menu, global.v, global.h, 0);
+    if ((chosen >> 16) != 0) {
+        HandleMenuChoice(chosen);
+    }
+}
+
 static void ShowArticleContextMenu(int index, Point global)
 {
     MenuRef               menu = GetMenuHandle(kMenuCtxArticle);

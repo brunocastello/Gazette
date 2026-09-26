@@ -94,6 +94,11 @@ void GazetteUIAdjustToolbar(void);
 Boolean GazetteUIReaderHasSelection(void);
 void    GazetteUIReaderCopy(void);
 
+/* For the article's contextual menu: whether a point is on the article's
+   text, and selecting the whole of it. */
+Boolean GazetteUIReaderAt(Point where);
+void    GazetteUIReaderSelectAll(void);
+
 /*
  * The sidebar row under a point in the window, for a contextual click: the
  * row's kind (kGazetteRowSmart, kGazetteRowGroup or kGazetteRowFeed) and its

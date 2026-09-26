@@ -2146,7 +2146,24 @@ static void SetRowItem(HTREEITEM item, int kind, int index)
     char     label[kGazetteTitleLen + 16];
     BOOL     bold;
 
+    char     was[kGazetteTitleLen + 16];
+
     RowLabel(kind, index, label, sizeof(label), &bold);
+
+    /* Left alone when it already says this: setting an item repaints it,
+       and a whole sidebar of rows repainting on every count is a flash. */
+    ZeroMemory(&tv, sizeof(tv));
+    tv.mask       = TVIF_TEXT | TVIF_STATE;
+    tv.hItem      = item;
+    tv.pszText    = was;
+    tv.cchTextMax = sizeof(was);
+    tv.stateMask  = TVIS_BOLD;
+    if (SendMessage(gSidebar, TVM_GETITEMA, 0, (LPARAM)&tv) &&
+        lstrcmpA(was, label) == 0 &&
+        ((tv.state & TVIS_BOLD) != 0) == (bold != FALSE)) {
+        return;
+    }
+
     ZeroMemory(&tv, sizeof(tv));
     tv.mask      = TVIF_TEXT | TVIF_STATE;
     tv.hItem     = item;
@@ -2333,59 +2350,190 @@ static void CountSmartRows(void)
     gSmartCount[kGazetteSmartStarred] = GazetteIndexStarredCount();
 }
 
-/* The whole tree made again from the preferences: after a refresh, a
-   feed added or removed, or Hide Read Feeds. */
-static void SyncSidebarRows(void)
+/*
+ * The rows the tree should hold, in order, each with the group it sits in
+ * (-1 at the top level): the standing views, then the preferences'
+ * sequence less what is hidden.
+ */
+typedef struct {
+    int kind;
+    int index;
+    int parent;
+} TreeShape;
+
+enum { kMaxTreeShape = kGazetteSmartCount + kGazetteMaxFeeds +
+                       kGazetteMaxGroups };
+
+static int WantedShape(TreeShape *out)
 {
     static GazetteSidebarRow sequence[kGazetteMaxFeeds + kGazetteMaxGroups];
-    HTREEITEM                groupItem[kGazetteMaxGroups];
     const GazettePrefs      *prefs = GazetteCoreGetPrefs();
-    int                      count, i;
-
-    ApplyFeedVisibility();
-    CountSmartRows();
-
-    if (gSidebar == NULL || prefs == NULL) {
-        return;
-    }
-
-    /* No WM_SETREDRAW round this: a tree told not to redraw while items
-       go in was left laying them out with no room for the icon or the
-       lines (seen under Wine, 2026-09-25), and a sidebar is a few dozen
-       rows at most. */
-    gSyncingTree = TRUE;
-    SendMessage(gSidebar, TVM_DELETEITEM, 0, (LPARAM)TVI_ROOT);
+    BOOL                     shown[kGazetteMaxGroups];
+    int                      count, i, n = 0;
 
     for (i = 0; i < kGazetteSmartCount; i++) {
-        (void)InsertRow(TVI_ROOT, kGazetteRowSmart, i);
+        out[n].kind   = kGazetteRowSmart;
+        out[n].index  = i;
+        out[n].parent = -1;
+        n++;
+    }
+    if (prefs == NULL) {
+        return n;
     }
     for (i = 0; i < kGazetteMaxGroups; i++) {
-        groupItem[i] = NULL;
+        shown[i] = FALSE;
     }
-
     count = GazetteCoreSequence(sequence);
-    for (i = 0; i < count; i++) {
+    for (i = 0; i < count && n < kMaxTreeShape; i++) {
         int index = sequence[i].index;
 
         if (sequence[i].kind == kGazetteRowGroup) {
             if (index >= 0 && index < prefs->groupCount &&
-                !prefs->groups[index].hidden) {
-                groupItem[index] = InsertRow(TVI_ROOT, kGazetteRowGroup,
-                                             index);
+                index < kGazetteMaxGroups && !prefs->groups[index].hidden) {
+                shown[index] = TRUE;
+                out[n].kind   = kGazetteRowGroup;
+                out[n].index  = index;
+                out[n].parent = -1;
+                n++;
             }
         } else if (index >= 0 && index < prefs->feedCount &&
                    !prefs->feeds[index].hidden) {
-            int       group  = GazetteCoreFeedGroup(index);
-            HTREEITEM parent = TVI_ROOT;
+            int group = GazetteCoreFeedGroup(index);
 
-            if (group >= 0) {
-                parent = (group < kGazetteMaxGroups) ? groupItem[group]
-                                                     : NULL;
-                if (parent == NULL) {
-                    continue;       /* its group is hidden */
-                }
+            if (group >= 0 && (group >= kGazetteMaxGroups || !shown[group])) {
+                continue;           /* its group is hidden */
             }
-            (void)InsertRow(parent, kGazetteRowFeed, index);
+            out[n].kind   = kGazetteRowFeed;
+            out[n].index  = index;
+            out[n].parent = group;
+            n++;
+        }
+    }
+    return n;
+}
+
+/* The rows the tree holds now, in the same form: each top-level item, then
+   its children if it has any, whether open or shut. */
+static int CurrentShape(TreeShape *out)
+{
+    HTREEITEM item = (HTREEITEM)SendMessage(gSidebar, TVM_GETNEXTITEM,
+                                            TVGN_ROOT, 0);
+    int       n = 0;
+
+    while (item != NULL && n < kMaxTreeShape) {
+        TVITEMA   tv;
+        HTREEITEM child;
+        int       group = -1;
+
+        ZeroMemory(&tv, sizeof(tv));
+        tv.mask  = TVIF_PARAM;
+        tv.hItem = item;
+        if (!SendMessage(gSidebar, TVM_GETITEMA, 0, (LPARAM)&tv)) {
+            return -1;
+        }
+        out[n].kind   = RowKind(tv.lParam);
+        out[n].index  = RowIndex(tv.lParam);
+        out[n].parent = -1;
+        if (out[n].kind == kGazetteRowGroup) {
+            group = out[n].index;
+        }
+        n++;
+
+        child = (HTREEITEM)SendMessage(gSidebar, TVM_GETNEXTITEM, TVGN_CHILD,
+                                       (LPARAM)item);
+        while (child != NULL && n < kMaxTreeShape) {
+            tv.hItem = child;
+            if (!SendMessage(gSidebar, TVM_GETITEMA, 0, (LPARAM)&tv)) {
+                return -1;
+            }
+            out[n].kind   = RowKind(tv.lParam);
+            out[n].index  = RowIndex(tv.lParam);
+            out[n].parent = group;
+            n++;
+            child = (HTREEITEM)SendMessage(gSidebar, TVM_GETNEXTITEM,
+                                           TVGN_NEXT, (LPARAM)child);
+        }
+        item = (HTREEITEM)SendMessage(gSidebar, TVM_GETNEXTITEM, TVGN_NEXT,
+                                      (LPARAM)item);
+    }
+    return n;
+}
+
+/*
+ * The tree brought into line with the preferences: after a refresh, a feed
+ * added, moved or removed, or Hide Read Feeds -- and every time a feed is
+ * opened, since its counts change. When the rows are the ones already
+ * there, which is nearly always, only their names and counts are set again
+ * and nothing is taken down (Bruno, 86Box, 2026-09-26: the sidebar flashed
+ * as every row was deleted and inserted on choosing a feed or dropping
+ * one). When they are not, the tree is made again with its painting held
+ * off until it is done, scrolled back to where it was.
+ */
+static void SyncSidebarRows(void)
+{
+    static TreeShape wanted[kMaxTreeShape];
+    static TreeShape current[kMaxTreeShape];
+    HTREEITEM        groupItem[kGazetteMaxGroups];
+    HTREEITEM        top;
+    int              count, have, i;
+    int              topKind = -1, topIndex = -1;
+
+    ApplyFeedVisibility();
+    CountSmartRows();
+
+    if (gSidebar == NULL || GazetteCoreGetPrefs() == NULL) {
+        return;
+    }
+
+    count = WantedShape(wanted);
+    have  = CurrentShape(current);
+    if (have == count &&
+        memcmp(wanted, current, sizeof(TreeShape) * (size_t)count) == 0) {
+        RelabelSidebar();
+        ShowSelectionInTree();
+        return;
+    }
+
+    /* The row at the top of the view, to scroll back to afterwards. */
+    top = (HTREEITEM)SendMessage(gSidebar, TVM_GETNEXTITEM,
+                                 TVGN_FIRSTVISIBLE, 0);
+    if (top != NULL) {
+        TVITEMA tv;
+
+        ZeroMemory(&tv, sizeof(tv));
+        tv.mask  = TVIF_PARAM;
+        tv.hItem = top;
+        if (SendMessage(gSidebar, TVM_GETITEMA, 0, (LPARAM)&tv)) {
+            topKind  = RowKind(tv.lParam);
+            topIndex = RowIndex(tv.lParam);
+        }
+    }
+
+    /* LockWindowUpdate rather than WM_SETREDRAW: a tree told not to redraw
+       while items go in was left laying them out with no room for the icon
+       or the lines (seen under Wine, 2026-09-25). A locked window paints
+       nothing and is painted whole when it is unlocked, and the tree lays
+       itself out as usual meanwhile. */
+    LockWindowUpdate(gSidebar);
+    gSyncingTree = TRUE;
+    SendMessage(gSidebar, TVM_DELETEITEM, 0, (LPARAM)TVI_ROOT);
+
+    for (i = 0; i < kGazetteMaxGroups; i++) {
+        groupItem[i] = NULL;
+    }
+    for (i = 0; i < count; i++) {
+        HTREEITEM parent = TVI_ROOT;
+        HTREEITEM made;
+
+        if (wanted[i].parent >= 0) {
+            parent = groupItem[wanted[i].parent];
+            if (parent == NULL) {
+                continue;
+            }
+        }
+        made = InsertRow(parent, wanted[i].kind, wanted[i].index);
+        if (wanted[i].kind == kGazetteRowGroup) {
+            groupItem[wanted[i].index] = made;
         }
     }
 
@@ -2398,8 +2546,19 @@ static void SyncSidebarRows(void)
         }
     }
 
-    gSyncingTree = FALSE;
-    ShowSelectionInTree();
+    if (topKind >= 0) {
+        HTREEITEM again = FindRow((HTREEITEM)SendMessage(gSidebar,
+                                                         TVM_GETNEXTITEM,
+                                                         TVGN_ROOT, 0),
+                                  RowParam(topKind, topIndex));
+
+        if (again != NULL) {
+            SendMessage(gSidebar, TVM_SELECTITEM, TVGN_FIRSTVISIBLE,
+                        (LPARAM)again);
+        }
+    }
+    ShowSelectionInTree();          /* clears gSyncingTree */
+    LockWindowUpdate(NULL);
     InvalidateRect(gSidebar, NULL, TRUE);
 }
 
