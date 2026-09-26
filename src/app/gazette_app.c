@@ -179,7 +179,7 @@ void GazetteAppSortOrder(Boolean oldestFirst)
     }
     GazetteCoreSetOldestFirst(oldestFirst);
     GazetteFeedsSetOldestFirst(oldestFirst ? 1 : 0);
-    GazetteCoreSavePrefs();
+    GazetteAppSavePrefs();
 
     GazetteUIViewChanged();
     GazetteUISetStatus(oldestFirst ? "Oldest articles on top."
@@ -192,7 +192,7 @@ void GazetteAppHideReadArticles(void)
 
     GazetteCoreSetHideReadArticles(wanted);
     GazetteFeedsSetHideRead(wanted ? 1 : 0);
-    GazetteCoreSavePrefs();
+    GazetteAppSavePrefs();
 
     GazetteUIViewChanged();
     GazetteUISetStatus(wanted ? "Showing unread articles only."
@@ -204,7 +204,7 @@ void GazetteAppHideReadFeeds(void)
     Boolean wanted = GazetteCoreHideReadFeeds() ? false : true;
 
     GazetteCoreSetHideReadFeeds(wanted);
-    GazetteCoreSavePrefs();
+    GazetteAppSavePrefs();
 
     GazetteUIViewChanged();
     GazetteUISetStatus(wanted ? "Showing feeds with something unread in them."
@@ -221,7 +221,7 @@ void GazetteAppShowPhotos(void)
     Boolean wanted = GazetteCoreShowPhotos() ? false : true;
 
     GazetteCoreSetShowPhotos(wanted);
-    GazetteCoreSavePrefs();
+    GazetteAppSavePrefs();
 
     if (!wanted) {
         GazettePhotosCancel();
@@ -280,7 +280,7 @@ void GazetteAppImportOPML(void)
         return;
     }
 
-    GazetteCoreSavePrefs();
+    GazetteAppSavePrefs();
     GazetteUIFeedsChanged();
     snprintf(message, sizeof message, "%d feed%s added.", added,
              (added == 1) ? "" : "s");
@@ -870,7 +870,7 @@ static Boolean TryDiscovery(void)
     }
     GazetteFeedsForgetCache(wasURL);
     GazetteIndexForgetFeed(wasURL);
-    GazetteCoreSavePrefs();
+    GazetteAppSavePrefs();
     GazetteUIFeedsChanged();
 
     if (!GazetteFeedsRefreshStart(feed, resolved, PrefsMaxArticles(), 0)) {
@@ -906,7 +906,7 @@ void GazetteAppPumpRefresh(void)
             if (GazetteFeedsRefreshHome()[0] != '\0' &&
                 GazetteCoreSetFeedHome(GazetteFeedsRefreshFeedIndex(),
                                        GazetteFeedsRefreshHome())) {
-                GazetteCoreSavePrefs();
+                GazetteAppSavePrefs();
             }
             if (queued) {
                 /*
@@ -1041,7 +1041,7 @@ void GazetteAppToggleEnabled(void)
     } else {
         return;
     }
-    GazetteCoreSavePrefs();
+    GazetteAppSavePrefs();
     GazetteUIFeedsChanged();
 }
 
@@ -1075,7 +1075,7 @@ void GazetteAppRemoveSelection(void)
 
         /* The feed that shuffled up into the gap is the one to show — the
            same place in the list the user was already looking at. */
-        GazetteCoreSavePrefs();
+        GazetteAppSavePrefs();
         GazetteUIFeedsChanged();
         if (index >= GazetteCoreFeedCount()) {
             index = GazetteCoreFeedCount() - 1;
@@ -1084,9 +1084,45 @@ void GazetteAppRemoveSelection(void)
         return;
     }
 
-    GazetteCoreSavePrefs();
+    GazetteAppSavePrefs();
     GazetteUIFeedsChanged();
     GazetteAppShowFeed(GazetteUISelectedFeed());
+}
+
+/* ------------------------------------------------------------------ */
+/* Saving                                                              */
+/* ------------------------------------------------------------------ */
+
+static GazetteAppSaveFailed gOnSaveFailed;
+static Boolean              gSaveFailing;
+
+void GazetteAppSetSaveFailed(GazetteAppSaveFailed handler)
+{
+    gOnSaveFailed = handler;
+}
+
+/*
+ * Write the preferences, and say so when that did not work -- a full or
+ * locked disk (Bruno's 86Box run, 2026-09-26: a floppy the cache had
+ * filled). The shell is told once, when saving starts failing, not at every
+ * save after; a save that works again resets it.
+ */
+Boolean GazetteAppSavePrefs(void)
+{
+    if (GazetteCoreSavePrefs()) {
+        gSaveFailing = false;
+        return true;
+    }
+    if (!gSaveFailing) {
+        gSaveFailing = true;
+        if (gOnSaveFailed != NULL) {
+            gOnSaveFailed();
+        } else {
+            GazetteUISetStatus("The feed list could not be saved - the disk "
+                               "may be full or locked.");
+        }
+    }
+    return false;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1122,7 +1158,7 @@ void GazetteAppAddFeed(const char *url, const char *title, int group)
         return;
     }
 
-    GazetteCoreSavePrefs();
+    GazetteAppSavePrefs();
     GazetteUIFeedsChanged();
 
     /* A newly added feed gets one attempt at discovery, so pasting a site's
@@ -1170,7 +1206,7 @@ void GazetteAppEditFeed(int index, const char *url, const char *title,
     }
     GazetteCoreRenameFeed(index, title);
 
-    GazetteCoreSavePrefs();
+    GazetteAppSavePrefs();
     GazetteUIFeedsChanged();
 
     /* A new address is a different feed with a different cache file, so this
@@ -1190,7 +1226,7 @@ void GazetteAppAddGroup(const char *name)
         return;
     }
 
-    GazetteCoreSavePrefs();
+    GazetteAppSavePrefs();
     GazetteUIFeedsChanged();
     GazetteUISelectGroup(group);
 }
@@ -1203,7 +1239,7 @@ void GazetteAppRenameGroup(int index, const char *name)
     }
     GazetteCoreRenameGroup(index, name);
 
-    GazetteCoreSavePrefs();
+    GazetteAppSavePrefs();
     GazetteUIFeedsChanged();
 }
 
@@ -1225,7 +1261,7 @@ void GazetteAppSetPreferences(long refreshMinutes, long maxArticles)
     }
     GazetteCoreSetRefreshMinutes(refreshMinutes);
     GazetteCoreSetMaxArticles(maxArticles);
-    GazetteCoreSavePrefs();
+    GazetteAppSavePrefs();
     GazetteAppRestartClock();
     GazetteAppReloadView();
 }

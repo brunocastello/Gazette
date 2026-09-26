@@ -149,9 +149,20 @@ static void CacheFileName(const char *feedURL, char *out)
 /* Streamed files                                                      */
 /* ------------------------------------------------------------------ */
 
+/*
+ * A file being written goes to "<name>.new" beside the real one and takes
+ * its place only once every byte is down (Close). Opening the real file
+ * with CREATE_ALWAYS would empty it first, so a write that failed half way
+ * -- a full disk, above all a floppy (Bruno's 86Box run, 2026-09-26: the
+ * cache filled the disk and the feed list came back empty) -- lost the old
+ * contents as well as the new. Now a failed write loses only itself.
+ */
 struct GazetteStoreFile {
     HANDLE handle;
     int    writing;
+    int    failed;              /* writing: a write did not go down */
+    char   path[MAX_PATH];      /* writing: the real file */
+    char   temp[MAX_PATH];      /* writing: where the bytes go meanwhile */
     int    atEOF;
     int    lastCR;              /* writing: the last byte out was a CR */
     long   len;                 /* bytes in buf */
@@ -163,7 +174,15 @@ static GazetteStoreFile *OpenPath(const char *path, int writing)
 {
     GazetteStoreFile *f;
     HANDLE            h;
+    char              temp[MAX_PATH];
 
+    if (writing) {
+        if (lstrlenA(path) + 5 > MAX_PATH) {
+            return NULL;
+        }
+        wsprintfA(temp, "%s.new", path);
+        path = temp;
+    }
     h = CreateFileA(path, writing ? GENERIC_WRITE : GENERIC_READ,
                     writing ? 0 : FILE_SHARE_READ, NULL,
                     writing ? CREATE_ALWAYS : OPEN_EXISTING,
@@ -179,6 +198,11 @@ static GazetteStoreFile *OpenPath(const char *path, int writing)
     }
     f->handle  = h;
     f->writing = writing;
+    if (writing) {
+        lstrcpynA(f->temp, temp, sizeof f->temp);
+        lstrcpynA(f->path, temp, sizeof f->path);
+        f->path[lstrlenA(f->path) - 4] = '\0';     /* without ".new" */
+    }
     return f;
 }
 
@@ -249,6 +273,7 @@ static int FlushWrite(GazetteStoreFile *f)
     }
     if (!WriteFile(f->handle, f->buf, (DWORD)f->len, &wrote, NULL) ||
         wrote != (DWORD)f->len) {
+        f->failed = 1;
         return 0;
     }
     f->len = 0;
@@ -363,16 +388,67 @@ long GazetteStoreReadLine(GazetteStoreFile *f, char *buf, long cap)
     return (any || len > 0) ? len : -1;
 }
 
-void GazetteStoreClose(GazetteStoreFile *f)
+/*
+ * Close, and for a file written, put it in place: the finished ".new" over
+ * the real file when every write went down, or thrown away when one did
+ * not, leaving the real file as it was. MoveFileEx replaces in one step on
+ * NT; 95, 98 and Me answer it with "not implemented", and there the old
+ * file is deleted and the new one renamed -- the only moment a crash could
+ * cost the file, and a moment rather than the length of a whole write.
+ * Returns whether the file is now what was written.
+ */
+typedef BOOL (WINAPI *MoveFileExProc)(LPCSTR, LPCSTR, DWORD);
+
+/* MoveFileExA by name: 95 has at most a stub of it, and a static import
+   is a load-time failure on any Windows that lacks the export. */
+static BOOL ReplaceFile95(const char *from, const char *to)
 {
-    if (f == NULL) {
-        return;
+    static MoveFileExProc moveEx;
+    static int            looked;
+
+    if (!looked) {
+        HMODULE kernel = GetModuleHandleA("KERNEL32.DLL");
+
+        looked = 1;
+        if (kernel != NULL) {
+            moveEx = (MoveFileExProc)GetProcAddress(kernel, "MoveFileExA");
+        }
     }
+    return (moveEx != NULL && moveEx(from, to, MOVEFILE_REPLACE_EXISTING));
+}
+
+static int Finish(GazetteStoreFile *f)
+{
+    int ok = 1;
+
     if (f->writing) {
-        (void)FlushWrite(f);
+        if (!FlushWrite(f)) {
+            f->failed = 1;
+        }
     }
     CloseHandle(f->handle);
+
+    if (f->writing) {
+        if (f->failed) {
+            DeleteFileA(f->temp);
+            ok = 0;
+        } else if (!ReplaceFile95(f->temp, f->path)) {
+            DeleteFileA(f->path);
+            if (!MoveFileA(f->temp, f->path)) {
+                DeleteFileA(f->temp);
+                ok = 0;
+            }
+        }
+    }
     HeapFree(GetProcessHeap(), 0, f);
+    return ok;
+}
+
+void GazetteStoreClose(GazetteStoreFile *f)
+{
+    if (f != NULL) {
+        (void)Finish(f);
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -420,8 +496,10 @@ static int WriteWhole(const char *path, const char *text, long len)
     if (f == NULL) {
         return 0;
     }
-    ok = GazetteStoreWrite(f, text, len) && FlushWrite(f);
-    GazetteStoreClose(f);
+    if (!GazetteStoreWrite(f, text, len)) {
+        f->failed = 1;
+    }
+    ok = Finish(f);
     return ok;
 }
 

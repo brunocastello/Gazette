@@ -29,6 +29,11 @@
 
 #include "gazette_win.h"
 #include "gazette_win_res.h"
+/* For GazetteAppSavePrefs alone: a row dropped in a new place saves the
+   feed list, and a save that fails is reported the one way every other
+   save's failure is. Everything else reaches the application through the
+   callbacks, as on the Mac. */
+#include "app/gazette_app.h"
 #include "core/gazette_core.h"
 #include "core/gazette_sys.h"
 #include "feeds/gazette_feed_parse.h"
@@ -2970,7 +2975,7 @@ static void EndRowDrag(BOOL drop)
     if (moved < 0) {
         return;
     }
-    (void)GazetteCoreSavePrefs();
+    (void)GazetteAppSavePrefs();
 
     /* The row that was carried stays chosen, where it landed, and the
        list shows what the sidebar says is chosen. The indexes under the

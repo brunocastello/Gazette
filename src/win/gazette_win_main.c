@@ -408,17 +408,41 @@ static void AdjustMenus(HMENU menu)
 /* app/gazette_app.c.                                                   */
 /* ------------------------------------------------------------------ */
 
+/*
+ * The feed list would not save. Put off to the loop with a posted message:
+ * the save that failed may be in the middle of a network slice, and a
+ * message box there would run its own loop under it.
+ */
+enum { WM_GAZETTE_SAVE_FAILED = WM_APP + 1 };
+
+static void SaveFailed(void)
+{
+    if (gMainWindow != NULL) {
+        PostMessageA(gMainWindow, WM_GAZETTE_SAVE_FAILED, 0, 0);
+    }
+}
+
+static void ShowSaveFailed(HWND hwnd)
+{
+    MessageBoxA(hwnd,
+                "Gazette could not save your feed list. The disk may be "
+                "full or write-protected.\n\n"
+                "Changes made now will be lost when Gazette quits. Make "
+                "room on the disk, or run Gazette from a hard disk.",
+                "Gazette", MB_OK | MB_ICONEXCLAMATION);
+}
+
 static void HandleHideSidebar(void)
 {
     GazetteCoreSetHideSidebar(GazetteCoreHideSidebar() ? false : true);
-    GazetteCoreSavePrefs();
+    GazetteAppSavePrefs();
     GazetteUIViewChanged();
 }
 
 static void HandleHideToolbar(void)
 {
     GazetteCoreSetHideToolbar(GazetteCoreHideToolbar() ? false : true);
-    GazetteCoreSavePrefs();
+    GazetteAppSavePrefs();
     GazetteUIViewChanged();
 }
 
@@ -710,6 +734,10 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message,
         }
         break;
 
+    case WM_GAZETTE_SAVE_FAILED:
+        ShowSaveFailed(hwnd);
+        return 0;
+
     case WM_DESTROY:
         RememberWindowLayout(hwnd);
         /* Everything in flight stopped, and what was read written, before
@@ -964,6 +992,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
     /* The Open and Save As dialogs run a loop of their own; this keeps a
        fetch moving while one is up. */
     GazetteStoreSetIdle(GazetteAppPumpRefresh);
+    GazetteAppSetSaveFailed(SaveFailed);
 
     /* Whatever the last run left cached, so the window has content before
        any network work happens. */

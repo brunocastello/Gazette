@@ -75,6 +75,13 @@ void GazetteAppShowPhotos(void);
 void GazetteAppToggleEnabled(void);
 void GazetteAppRemoveSelection(void);
 
+/* Write the preferences now. When that fails -- a full or locked disk --
+   the handler is called once (the shell puts up its warning); with none,
+   the status line says it. Every save in here goes this way. */
+typedef void (*GazetteAppSaveFailed)(void);
+void    GazetteAppSetSaveFailed(GazetteAppSaveFailed handler);
+Boolean GazetteAppSavePrefs(void);
+
 /* What a dialog's answer does, once the shell has had it: add or change a
    feed (group -1 is the top level), add or rename a group, set the two
    preferences. Each saves at once and brings the window up to date. */
