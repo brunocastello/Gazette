@@ -41,6 +41,8 @@
 #define IDM_EDIT_CLEAR         40204
 #define IDM_EDIT_FIND          40205
 #define IDM_EDIT_PREFS         40206
+/* The toolbar's Clear Search, which no menu has. */
+#define IDM_EDIT_CLEAR_SEARCH  40207
 
 #define IDM_VIEW_HIDE_READ     40301
 #define IDM_VIEW_HIDE_FEEDS    40302

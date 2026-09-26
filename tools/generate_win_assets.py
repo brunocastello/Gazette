@@ -44,6 +44,42 @@ import generate_ui_icons as ui       # noqa: E402
 MAGENTA = (255, 0, 255)
 
 
+# --- Windows-only icons -----------------------------------------------------
+#
+# Drawn here rather than in generate_ui_icons.py so the Mac's resource file
+# never carries them: the Mac's toolbar has no such buttons (Bruno,
+# 2026-09-26 -- the Mac stays as it shipped). Each takes the next index in
+# the strip after the shared ones; gazette_win.h's kIcon* list follows.
+
+# A cross ten pixels square, the Hide Read Articles cross's strokes grown,
+# centred on the whole sixteen-pixel icon (rows and columns 3 to 12).
+CLEAR_CROSS = ui.badge("""
+DD......DD
+DRD....DRD
+.DRD..DRD.
+..DRDDRD..
+...DRRD...
+...DRSD...
+..DRDDSD..
+.DRD..DSD.
+DRD....DSD
+DD......DD
+""")
+
+
+def draw_clear_search():
+    """Search's magnifier with the cross over it: clear the search.
+    Bruno's pick of the drafts, 2026-09-26 (draft C)."""
+    return ui.overlay(ui.draw_find(), CLEAR_CROSS, 3, 3)
+
+
+def win_icon_list():
+    """The shared icons, then the Windows-only ones, in strip order."""
+    icons = list(ui.icon_list())
+    icons.append((272, "Clear Search", draw_clear_search()))
+    return icons
+
+
 def ui_pixels(px):
     """A generate_ui_icons grid of letters, as rows of RGB or None."""
     return [[ui.PAL[ch] for ch in row] for row in px]
@@ -176,7 +212,7 @@ def main():
     ap.add_argument("--proof", help="write the grids as JSON for review")
     args = ap.parse_args()
 
-    icons = ui.icon_list()
+    icons = win_icon_list()
     app32, app16 = app.draw32(), app.draw16()
 
     # One strip, sixteen pixels tall and as wide as it needs: an image

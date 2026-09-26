@@ -105,6 +105,7 @@ enum {
     kTBNextUnread,
     kTBBrowser,
     kTBFind,
+    kTBClearSearch,
     kToolbarButtons
 };
 
@@ -127,10 +128,13 @@ static const ToolSpec kToolSpec[kToolbarButtons] = {
     { IDM_ARTICLE_STAR,     kIconStarred,      -1,                "Star Article",       "Unstar Article",     FALSE },
     { IDM_ARTICLE_NEXT,     kIconNextUnread,   -1,                "Next Unread",        NULL,                 FALSE },
     { IDM_ARTICLE_BROWSER,  kIconBrowser,      -1,                "Open in Browser",    NULL,                 FALSE },
-    /* Find, in a group of its own at the end: the standard Find dialog
-       every Windows program has, in place of the Mac's search field, and
-       the same magnifier the Mac's field wears. */
-    { IDM_EDIT_FIND,        kIconFind,         -1,                "Search",             NULL,                 TRUE  }
+    /* Search, in a group of its own at the end: the Search dialog in
+       place of the Mac's search field, wearing the magnifier that field
+       wears. */
+    { IDM_EDIT_FIND,        kIconFind,         -1,                "Search",             NULL,                 TRUE  },
+    /* Windows-only (Bruno, 2026-09-26): the way back from a search, greyed
+       until one is in force. The Mac clears its search field instead. */
+    { IDM_EDIT_CLEAR_SEARCH, kIconClearSearch, -1,                "Clear Search",       NULL,                 FALSE }
 };
 
 /* ------------------------------------------------------------------ */
@@ -962,6 +966,15 @@ BOOL GazetteWindowCommand(HWND frame, WPARAM wParam, LPARAM lParam)
         ShowFind(frame);
         return TRUE;
     }
+    if (id == IDM_EDIT_CLEAR_SEARCH) {
+        if (GazetteFeedsFilter()[0] != '\0') {
+            RunSearch("");
+            if (gFindDialog != NULL) {
+                SetDlgItemTextA(gFindDialog, IDC_SEARCH_TEXT, "");
+            }
+        }
+        return TRUE;
+    }
     if (id == IDC_HEADLINES) {
         if (HIWORD(wParam) == LBN_SELCHANGE) {
             HeadlineRowChosen();
@@ -1312,6 +1325,8 @@ static void AdjustToolbarState(void)
                             (BOOL)(open != NULL && open->link[0] != '\0'),
                             FALSE);
     changed |= SetToolState(kTBFind,       TRUE,                     FALSE);
+    changed |= SetToolState(kTBClearSearch,
+                            (BOOL)(GazetteFeedsFilter()[0] != '\0'), FALSE);
 
     if (!changed && built) {
         return;

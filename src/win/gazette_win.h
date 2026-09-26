@@ -40,6 +40,9 @@ enum {
     kIconBrowser,
     kIconNew,
     kIconFind,
+    /* Windows-only, drawn by generate_win_assets.py after the shared ones:
+       the Mac's resource file has no such icon. */
+    kIconClearSearch,
     kIconCount
 };
 
