@@ -822,6 +822,42 @@ static void ShowNewMenu(HWND frame)
     }
 }
 
+/*
+ * Tab and Shift+Tab: the focus on to the next pane, or back -- sidebar,
+ * headlines, article, and round again -- as the Mac's Tab walks its three
+ * panes. The sidebar is passed over while it is hidden. Only when one of
+ * the panes has the focus: anywhere else Tab is that window's own.
+ */
+BOOL GazetteWindowTabKey(BOOL back)
+{
+    HWND panes[3];
+    HWND focus = GetFocus();
+    int  count = 0;
+    int  at    = -1;
+    int  i;
+
+    if (!gSidebarHidden && gSidebar != NULL) {
+        panes[count++] = gSidebar;
+    }
+    if (gHeadlines != NULL) {
+        panes[count++] = gHeadlines;
+    }
+    if (gReader != NULL) {
+        panes[count++] = gReader;
+    }
+    for (i = 0; i < count; i++) {
+        if (focus == panes[i]) {
+            at = i;
+        }
+    }
+    if (at < 0 || count < 2) {
+        return FALSE;
+    }
+    at = back ? (at + count - 1) % count : (at + 1) % count;
+    SetFocus(panes[at]);
+    return TRUE;
+}
+
 BOOL GazetteWindowCommand(HWND frame, WPARAM wParam, LPARAM lParam)
 {
     int id = LOWORD(wParam);

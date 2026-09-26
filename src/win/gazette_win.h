@@ -77,6 +77,10 @@ BOOL GazetteWindowToolbarHidden(void);
 void GazetteWindowMeasureItem(MEASUREITEMSTRUCT *measure);
 void GazetteWindowDrawItem(const DRAWITEMSTRUCT *draw);
 BOOL GazetteWindowNotify(HWND frame, NMHDR *header, LRESULT *result);
+/* Tab or Shift+Tab (back) in one of the three panes: the focus moves to
+   the next. TRUE when it did, and the key is spent. */
+BOOL GazetteWindowTabKey(BOOL back);
+
 /* A WM_COMMAND the window itself answers -- the toolbar's chevron. Returns
    TRUE when it was one. */
 BOOL GazetteWindowCommand(HWND frame, WPARAM wParam, LPARAM lParam);
