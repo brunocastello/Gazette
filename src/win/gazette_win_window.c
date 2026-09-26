@@ -2519,7 +2519,8 @@ static BOOL TreeRowRect(int row, RECT *r)
     if (row < 0 || row >= gTreeRowCount) {
         return FALSE;
     }
-    *(HTREEITEM *)r = gTreeRows[row].item;
+    /* TVM_GETITEMRECT takes the item in the rectangle's first field. */
+    memcpy(r, &gTreeRows[row].item, sizeof(HTREEITEM));
     return (BOOL)SendMessage(gSidebar, TVM_GETITEMRECT, FALSE, (LPARAM)r);
 }
 
@@ -2843,7 +2844,7 @@ static void ShowDropSpot(const DropSpot *spot)
     if (spot->valid && spot->into) {
         target = gTreeRows[spot->row].item;
     }
-    SendMessage(gSidebar, TVM_SELECTDROPTARGET, TVGN_DROPHILITE,
+    SendMessage(gSidebar, TVM_SELECTITEM, TVGN_DROPHILITE,
                 (LPARAM)target);
     UpdateWindow(gSidebar);
 
@@ -2913,7 +2914,7 @@ static void BeginRowDrag(const NM_TREEVIEWA *tree)
        text. */
     gDragImage = (HIMAGELIST)SendMessage(gSidebar, TVM_CREATEDRAGIMAGE, 0,
                                          (LPARAM)tree->itemNew.hItem);
-    *(HTREEITEM *)&text = tree->itemNew.hItem;
+    memcpy(&text, &tree->itemNew.hItem, sizeof(HTREEITEM));
     if (!SendMessage(gSidebar, TVM_GETITEMRECT, TRUE, (LPARAM)&text)) {
         SetRectEmpty(&text);
     }
@@ -2947,7 +2948,7 @@ static void EndRowDrag(BOOL drop)
     ImageList_DragShowNolock(FALSE);
     InvertDropLine();
     gDropLineY = -1;
-    SendMessage(gSidebar, TVM_SELECTDROPTARGET, TVGN_DROPHILITE, 0);
+    SendMessage(gSidebar, TVM_SELECTITEM, TVGN_DROPHILITE, 0);
     if (gDragImage != NULL) {
         ImageList_DragLeave(gSidebar);
         ImageList_EndDrag();
@@ -3035,7 +3036,7 @@ static BOOL RowDragMessage(UINT message, WPARAM wParam, LPARAM lParam)
             ImageList_DragShowNolock(FALSE);
             InvertDropLine();
             gDropLineY = -1;
-            SendMessage(gSidebar, TVM_SELECTDROPTARGET, TVGN_DROPHILITE, 0);
+            SendMessage(gSidebar, TVM_SELECTITEM, TVGN_DROPHILITE, 0);
             ZeroMemory(&gDropShown, sizeof(gDropShown));
             SendMessage(gSidebar, WM_VSCROLL, (WPARAM)step, 0);
             UpdateWindow(gSidebar);
@@ -3350,8 +3351,8 @@ void GazetteUIArticleTextChanged(void)
     GazetteWinReaderCompose(gSelectedArticle);
 }
 
-/* Windows draws no photographs yet (TASKS.md W2 step 4); when it does, a
-   picture landing recomposes the article where the reader has it. */
+/* A picture landing, or not coming after all: the article composed again
+   where the reader has it, with the picture's room made or closed. */
 void GazetteUIPhotosChanged(void)
 {
     int was;
