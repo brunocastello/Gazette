@@ -66,6 +66,14 @@
 
 #define IDM_HELP_ABOUT         40600
 
+/* The contextual menus' own commands -- the ones no menu in the bar has.
+   Everything else on them sends the bar's command. */
+#define IDM_CTX_REFRESH        40700  /* what is selected, not every feed */
+#define IDM_CTX_OPEN_HOME      40701
+#define IDM_CTX_COPY_FEED_URL  40702
+#define IDM_CTX_COPY_HOME_URL  40703
+#define IDM_CTX_COPY_ARTICLE_URL 40704
+
 /* Child window identifiers. */
 #define IDC_TOOLBAR             999
 #define IDC_SIDEBAR            1000

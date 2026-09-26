@@ -216,6 +216,7 @@ BEGIN
     VK_F5,      IDM_FILE_REFRESH,       VIRTKEY
     "E",        IDM_FILE_EXPORT,        VIRTKEY, CONTROL
     "Q",        IDM_FILE_QUIT,          VIRTKEY, CONTROL
+    "C",        IDM_EDIT_COPY,          VIRTKEY, CONTROL
     "F",        IDM_EDIT_FIND,          VIRTKEY, CONTROL
     "H",        IDM_VIEW_HIDE_READ,     VIRTKEY, CONTROL
     "H",        IDM_VIEW_HIDE_FEEDS,    VIRTKEY, CONTROL, SHIFT

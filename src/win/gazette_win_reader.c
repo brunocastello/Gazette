@@ -7,9 +7,9 @@
  * words and scrolls them -- a rich edit control is not on a clean Windows
  * 95 -- so this pane lays the text out itself: words wrapped across runs of
  * a few faces, a line at a time, into a list of lines it paints and
- * scrolls. It is small because the job is: no editing, no selection yet,
- * one column, and the article's photographs set into it between
- * paragraphs.
+ * scrolls. It is small because the job is: no editing, one column, the
+ * article's photographs set into it between paragraphs, and a selection
+ * to copy from, as the Mac's TextEdit pane has.
  *
  * What goes in is composed exactly as the Mac composes it (SetReaderText
  * and AppendBody there): the headline, the byline, a rule, then the
@@ -83,6 +83,7 @@ typedef struct {
 } Piece;
 
 typedef struct {
+    int start;              /* the text offset it begins at */
     int first;              /* its first piece */
     int count;
     int top;                /* from the top of the text, unscrolled */
@@ -98,6 +99,20 @@ static Piece gPieces[kMaxPieces];
 static int   gPieceCount;
 static Line  gLines[kMaxLines];
 static int   gLineCount;
+
+/*
+ * The selection, as offsets into gText: where the drag began and where it
+ * is now, either way round. Empty when the two are the same. It survives a
+ * recomposition of the same text -- a picture landing while text is
+ * selected -- and nothing else.
+ */
+static int   gSelAnchor;
+static int   gSelCaret;
+static BOOL  gSelecting;        /* the mouse is down and dragging */
+static int   gComposedArticle = -2;
+static int   gParaStart;        /* the paragraph being laid out */
+
+enum { kSelectTimer = 1, kSelectTick = 50 };
 
 static int   gRuleY = -1;   /* where the rule under the byline goes, or -1 */
 static int   gLeading;      /* extra height on each line of this paragraph */
@@ -410,6 +425,8 @@ static int gBodyStart;
 void GazetteWinReaderCompose(int article)
 {
     const GazetteArticle *a = GazetteFeedsArticleAt(article);
+    int                   wasLen = gTextLen;
+    int                   wasArticle = gComposedArticle;
 
     gTextLen    = 0;
     gText[0]    = '\0';
@@ -502,6 +519,13 @@ void GazetteWinReaderCompose(int article)
         }
     }
 
+    /* The same article at the same length keeps what was selected in it;
+       anything else starts with nothing selected. */
+    gComposedArticle = article;
+    if (article != wasArticle || gTextLen != wasLen) {
+        gSelAnchor = gSelCaret = 0;
+    }
+
     if (gPane != NULL) {
         GazetteWinReaderLayout();
         InvalidateRect(gPane, NULL, TRUE);
@@ -554,6 +578,7 @@ static void EndLine(HDC dc, int *y, int firstPiece, int emptyFace)
     line = &gLines[gLineCount];
     line->first = firstPiece;
     line->count = gPieceCount - firstPiece;
+    line->start = (line->count > 0) ? gPieces[firstPiece].start : gParaStart;
 
     if (line->count == 0) {
         MeasureFace(dc, emptyFace);
@@ -619,6 +644,8 @@ static void LayoutParagraph(HDC dc, int start, int end, int left, int width,
     int x         = 0;
     int at        = start;
     int emptyFace = 0;
+
+    gParaStart = start;
 
     {
         int runEnd;
@@ -871,6 +898,66 @@ void GazetteWinReaderScrollTo(int offset)
 /* Painting and scrolling                                              */
 /* ------------------------------------------------------------------ */
 
+static int SelStart(void)
+{
+    return (gSelAnchor < gSelCaret) ? gSelAnchor : gSelCaret;
+}
+
+static int SelEnd(void)
+{
+    return (gSelAnchor < gSelCaret) ? gSelCaret : gSelAnchor;
+}
+
+/* A run of one piece, from start for len, drawn at x: selected or not. */
+static void PaintRun(HDC dc, const Piece *piece, int start, int len,
+                     int top, const Line *line, BOOL selected)
+{
+    int x = piece->x + Width(dc, piece->face, piece->start,
+                             start - piece->start);
+
+    if (len <= 0) {
+        return;
+    }
+    SelectObject(dc, FaceFont(piece->face));
+    if (selected) {
+        RECT band;
+
+        band.left   = x;
+        band.top    = top;
+        band.right  = x + Width(dc, piece->face, start, len);
+        band.bottom = top + line->height;
+        FillRect(dc, &band, GetSysColorBrush(COLOR_HIGHLIGHT));
+        SelectObject(dc, FaceFont(piece->face));
+        SetTextColor(dc, GetSysColor(COLOR_HIGHLIGHTTEXT));
+    } else {
+        SetTextColor(dc, GetSysColor(COLOR_WINDOWTEXT));
+    }
+    TextOutA(dc, x, top + line->baseline, gText + start, len);
+}
+
+/* A piece, in up to three runs: before the selection, in it, after it --
+   the system's highlight colours, as an edit control shows a selection. */
+static void PaintPiece(HDC dc, const Piece *piece, int top, const Line *line)
+{
+    int end = piece->start + piece->len;
+    int a   = SelStart();
+    int b   = SelEnd();
+
+    if (a >= b || b <= piece->start || a >= end) {
+        PaintRun(dc, piece, piece->start, piece->len, top, line, FALSE);
+        return;
+    }
+    if (a < piece->start) {
+        a = piece->start;
+    }
+    if (b > end) {
+        b = end;
+    }
+    PaintRun(dc, piece, piece->start, a - piece->start, top, line, FALSE);
+    PaintRun(dc, piece, a, b - a, top, line, TRUE);
+    PaintRun(dc, piece, b, end - b, top, line, FALSE);
+}
+
 static void Paint(HDC dc, const RECT *client, const RECT *dirty)
 {
     int i;
@@ -891,12 +978,7 @@ static void Paint(HDC dc, const RECT *client, const RECT *dirty)
             break;
         }
         for (k = line->first; k < line->first + line->count; k++) {
-            const Piece *piece = &gPieces[k];
-
-            SelectObject(dc, FaceFont(piece->face));
-            SetTextColor(dc, GetSysColor(COLOR_WINDOWTEXT));
-            TextOutA(dc, piece->x, top + line->baseline,
-                     gText + piece->start, piece->len);
+            PaintPiece(dc, &gPieces[k], top, line);
         }
     }
 
@@ -958,6 +1040,8 @@ static void Paint(HDC dc, const RECT *client, const RECT *dirty)
     }
 }
 
+static int  LineStep(void);
+
 static void ScrollBy(int delta)
 {
     RECT client;
@@ -971,6 +1055,200 @@ static void ScrollBy(int delta)
                        SW_INVALIDATE | SW_ERASE);
         UpdateWindow(gPane);
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* Selecting and copying                                               */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The text offset under a point in the pane: the line whose band it is in,
+ * then the character whose nearer half it is in. Above the text is its
+ * start, below it its end; a picture's band belongs to the line after it.
+ */
+static int OffsetAt(int x, int y)
+{
+    static int dx[1024];
+    const Line *line = NULL;
+    HDC         dc;
+    int         i, k, at;
+
+    y += gScroll;
+    if (gLineCount == 0 || y < gLines[0].top) {
+        return 0;
+    }
+    for (i = 0; i < gLineCount; i++) {
+        if (y < gLines[i].top + gLines[i].height) {
+            line = &gLines[i];
+            break;
+        }
+    }
+    if (line == NULL) {
+        return gTextLen;
+    }
+    if (line->count == 0) {
+        return line->start;
+    }
+    if (x <= gPieces[line->first].x) {
+        return gPieces[line->first].start;
+    }
+
+    dc = GetDC(gPane);
+    at = -1;
+    for (k = line->first; k < line->first + line->count && at < 0; k++) {
+        const Piece *piece = &gPieces[k];
+        int          len   = piece->len;
+        int          fit   = 0;
+        SIZE         size;
+
+        if (len > (int)(sizeof dx / sizeof dx[0])) {
+            len = (int)(sizeof dx / sizeof dx[0]);
+        }
+        SelectObject(dc, FaceFont(piece->face));
+        if (!GetTextExtentExPointA(dc, gText + piece->start, len, 32767,
+                                   &fit, dx, &size)) {
+            continue;
+        }
+        if (x >= piece->x + size.cx) {
+            continue;                       /* past this piece */
+        }
+        /* The character whose middle is right of the point: before it. */
+        for (i = 0; i < len; i++) {
+            int left  = (i == 0) ? 0 : dx[i - 1];
+            int right = dx[i];
+
+            if (x - piece->x < (left + right) / 2) {
+                break;
+            }
+        }
+        at = piece->start + i;
+    }
+    ReleaseDC(gPane, dc);
+
+    if (at < 0) {
+        const Piece *last = &gPieces[line->first + line->count - 1];
+
+        at = last->start + last->len;
+    }
+    return at;
+}
+
+static void SetCaret(int offset)
+{
+    if (offset != gSelCaret) {
+        gSelCaret = offset;
+        InvalidateRect(gPane, NULL, FALSE);
+    }
+}
+
+/* A word: the run of characters around the offset that are not spaces or
+   paragraph breaks. */
+static void SelectWord(int at)
+{
+    int a = at;
+    int b = at;
+
+    while (a > 0 && gText[a - 1] != ' ' && gText[a - 1] != '\n') {
+        a--;
+    }
+    while (b < gTextLen && gText[b] != ' ' && gText[b] != '\n') {
+        b++;
+    }
+    gSelAnchor = a;
+    gSelCaret  = b;
+    InvalidateRect(gPane, NULL, FALSE);
+}
+
+BOOL GazetteWinReaderHasSelection(void)
+{
+    return (BOOL)(SelStart() < SelEnd());
+}
+
+void GazetteWinReaderSelectAll(void)
+{
+    gSelAnchor = 0;
+    gSelCaret  = gTextLen;
+    if (gPane != NULL) {
+        InvalidateRect(gPane, NULL, FALSE);
+    }
+}
+
+/*
+ * The selection onto the clipboard as plain text in the ANSI code page
+ * (CF_TEXT, which every Windows reads). A line break in the article's text
+ * is a paragraph: CRLF after the headline and the byline, and a blank line
+ * between the body's paragraphs, as they stand on screen. A picture's
+ * empty paragraph adds nothing.
+ */
+BOOL GazetteWinReaderCopy(HWND owner)
+{
+    int     a = SelStart();
+    int     b = SelEnd();
+    int     i, n = 0;
+    HGLOBAL block;
+    char   *out;
+
+    if (a >= b) {
+        return FALSE;
+    }
+    block = GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE,
+                        (SIZE_T)(b - a) * 4 + 1);
+    if (block == NULL) {
+        return FALSE;
+    }
+    out = (char *)GlobalLock(block);
+    if (out == NULL) {
+        GlobalFree(block);
+        return FALSE;
+    }
+    for (i = a; i < b; i++) {
+        if (gText[i] != '\n') {
+            out[n++] = gText[i];
+            continue;
+        }
+        if (i > a && gText[i - 1] == '\n') {
+            continue;                       /* a picture's paragraph */
+        }
+        out[n++] = '\r';
+        out[n++] = '\n';
+        if (i >= gBodyStart && gBodyStart > 0) {
+            out[n++] = '\r';
+            out[n++] = '\n';
+        }
+    }
+    out[n] = '\0';
+    GlobalUnlock(block);
+
+    if (!OpenClipboard(owner)) {
+        GlobalFree(block);
+        return FALSE;
+    }
+    EmptyClipboard();
+    if (SetClipboardData(CF_TEXT, block) == NULL) {
+        GlobalFree(block);
+        CloseClipboard();
+        return FALSE;
+    }
+    CloseClipboard();
+    return TRUE;
+}
+
+/* While the mouse is held beyond the pane's top or bottom, the text scrolls
+   under it and the selection follows. */
+static void DragSelect(void)
+{
+    RECT  client;
+    POINT pt;
+
+    GetCursorPos(&pt);
+    ScreenToClient(gPane, &pt);
+    GetClientRect(gPane, &client);
+    if (pt.y < 0) {
+        ScrollBy(-LineStep());
+    } else if (pt.y >= client.bottom) {
+        ScrollBy(LineStep());
+    }
+    SetCaret(OffsetAt(pt.x, pt.y));
 }
 
 static int LineStep(void)
@@ -1107,9 +1385,64 @@ LRESULT CALLBACK GazetteWinReaderProc(HWND hwnd, UINT message,
         return 0;
     }
 
-    case WM_LBUTTONDOWN:
+    case WM_LBUTTONDOWN: {
+        int at = OffsetAt((short)LOWORD(lParam), (short)HIWORD(lParam));
+
         SetFocus(hwnd);
+        /* Shift extends what is selected; a plain press starts afresh. */
+        if (!(wParam & MK_SHIFT)) {
+            gSelAnchor = at;
+        }
+        gSelCaret  = at;
+        gSelecting = TRUE;
+        SetCapture(hwnd);
+        SetTimer(hwnd, kSelectTimer, kSelectTick, NULL);
+        InvalidateRect(hwnd, NULL, FALSE);
         return 0;
+    }
+
+    case WM_LBUTTONDBLCLK:
+        SetFocus(hwnd);
+        SelectWord(OffsetAt((short)LOWORD(lParam), (short)HIWORD(lParam)));
+        return 0;
+
+    case WM_MOUSEMOVE:
+        if (gSelecting) {
+            SetCaret(OffsetAt((short)LOWORD(lParam), (short)HIWORD(lParam)));
+        }
+        return 0;
+
+    case WM_TIMER:
+        if (wParam == kSelectTimer && gSelecting) {
+            DragSelect();
+        }
+        return 0;
+
+    case WM_LBUTTONUP:
+    case WM_CAPTURECHANGED:
+        if (gSelecting) {
+            gSelecting = FALSE;
+            KillTimer(hwnd, kSelectTimer);
+            if (GetCapture() == hwnd) {
+                ReleaseCapture();
+            }
+        }
+        return 0;
+
+    case WM_SETCURSOR:
+        /* The text cursor over the text, as over any text you can select. */
+        if (LOWORD(lParam) == HTCLIENT) {
+            SetCursor(LoadCursor(NULL, IDC_IBEAM));
+            return TRUE;
+        }
+        break;
+
+    case WM_CHAR:
+        if (wParam == 1) {                  /* Ctrl+A */
+            GazetteWinReaderSelectAll();
+            return 0;
+        }
+        break;
 
     case WM_GETDLGCODE:
         return DLGC_WANTARROWS;

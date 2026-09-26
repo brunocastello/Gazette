@@ -60,6 +60,14 @@ void GazetteWindowSetCallbacks(GazetteUIFeedChosen onFeedChosen,
                                GazetteUISmartChosen onSmartChosen,
                                GazetteUICommandChosen onCommand);
 
+/* A right-click, or the keyboard's menu key, on a sidebar row or a
+   headline: the row has been chosen already, and the shell shows its menu
+   at x, y on the screen. kind is a GazetteRowKind, or kWinContextArticle
+   with the article's index. Before the window opens. */
+enum { kWinContextArticle = 100 };
+typedef void (*GazetteWindowContextMenu)(int kind, int index, int x, int y);
+void GazetteWindowSetContextMenu(GazetteWindowContextMenu handler);
+
 /* View menu. Each answers whether the item is showing "Hide" or "Show";
    the preferences hold the answer, and GazetteUIViewChanged reads it. */
 BOOL GazetteWindowSidebarHidden(void);
@@ -97,6 +105,11 @@ void GazetteWinReaderCompose(int article);
 void GazetteWinReaderLayout(void);
 int  GazetteWinReaderOffset(void);
 void GazetteWinReaderScrollTo(int offset);
+/* The reader's selection: whether there is one, all of it, and onto the
+   clipboard (Edit > Copy). */
+BOOL GazetteWinReaderHasSelection(void);
+void GazetteWinReaderSelectAll(void);
+BOOL GazetteWinReaderCopy(HWND owner);
 
 /* The dialogs, gazette_win_dialogs.c: the Mac's gazette_dialogs.h in
    Windows' controls. Each starts from what the buffers hold, runs modally

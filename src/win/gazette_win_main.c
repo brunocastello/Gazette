@@ -331,7 +331,8 @@ static void AdjustMenus(HMENU menu)
     Enable(menu, IDM_FILE_IMPORT, TRUE);
     Enable(menu, IDM_FILE_EXPORT, (BOOL)(GazetteCoreFeedCount() > 0));
 
-    /* Edit. */
+    /* Edit. Copy is the reader's selection, as on the Mac. */
+    Enable(menu, IDM_EDIT_COPY, GazetteWinReaderHasSelection());
     Enable(menu, IDM_EDIT_FIND, (BOOL)(GazetteFeedsTotalCount() > 0));
     Enable(menu, IDM_EDIT_PREFS, TRUE);
 
@@ -582,6 +583,217 @@ static void HandlePreferences(HWND hwnd)
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* The clipboard and the contextual menus                              */
+/* ------------------------------------------------------------------ */
+
+/* Text onto the clipboard as CF_TEXT, the one format every Windows reads:
+   main.cpp's CopyTextToClipboard. */
+static BOOL CopyTextToClipboard(HWND hwnd, const char *text)
+{
+    SIZE_T  len;
+    HGLOBAL block;
+    char   *out;
+
+    if (text == NULL) {
+        return FALSE;
+    }
+    len   = (SIZE_T)lstrlenA(text);
+    block = GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, len + 1);
+    if (block == NULL) {
+        return FALSE;
+    }
+    out = (char *)GlobalLock(block);
+    if (out == NULL) {
+        GlobalFree(block);
+        return FALSE;
+    }
+    CopyMemory(out, text, len + 1);
+    GlobalUnlock(block);
+    if (!OpenClipboard(hwnd)) {
+        GlobalFree(block);
+        return FALSE;
+    }
+    EmptyClipboard();
+    if (SetClipboardData(CF_TEXT, block) == NULL) {
+        GlobalFree(block);
+        CloseClipboard();
+        return FALSE;
+    }
+    CloseClipboard();
+    return TRUE;
+}
+
+static int SelectedFeed(void)
+{
+    int kind  = 0;
+    int index = 0;
+
+    if (!GazetteUISelection(&kind, &index) || kind != kGazetteRowFeed) {
+        return -1;
+    }
+    return index;
+}
+
+static void HandleCopyFeedURL(HWND hwnd)
+{
+    int feed = SelectedFeed();
+
+    if (feed >= 0 && CopyTextToClipboard(hwnd, GazetteCoreFeedURL(feed))) {
+        GazetteUISetStatus("The feed's address is on the clipboard.");
+    }
+}
+
+static void HandleCopyHomeURL(HWND hwnd)
+{
+    int feed = SelectedFeed();
+
+    if (feed >= 0 && GazetteCoreFeedHome(feed)[0] != '\0' &&
+        CopyTextToClipboard(hwnd, GazetteCoreFeedHome(feed))) {
+        GazetteUISetStatus("The site's address is on the clipboard.");
+    }
+}
+
+static void HandleCopyArticleURL(HWND hwnd)
+{
+    const char *url = GazetteUISelectedArticleLink();
+
+    if (url[0] != '\0' && CopyTextToClipboard(hwnd, url)) {
+        GazetteUISetStatus("The article's address is on the clipboard.");
+    }
+}
+
+static void HandleOpenHomePage(void)
+{
+    int feed = SelectedFeed();
+
+    if (feed < 0) {
+        return;
+    }
+    if (GazetteCoreFeedHome(feed)[0] == '\0') {
+        GazetteUISetStatus("This feed has not said where its site is yet; "
+                           "refresh it first.");
+        return;
+    }
+    if ((INT_PTR)ShellExecuteA(gMainWindow, "open", GazetteCoreFeedHome(feed),
+                               NULL, NULL, SW_SHOWNORMAL) <= 32) {
+        GazetteUISetStatus("No program is set up to open web addresses.");
+    }
+}
+
+/* Edit > Copy: the reader's selection. */
+static void HandleCopy(HWND hwnd)
+{
+    if (GazetteWinReaderHasSelection()) {
+        (void)GazetteWinReaderCopy(hwnd);
+    }
+}
+
+static void AddItem(HMENU menu, UINT id, const char *text, BOOL on)
+{
+    AppendMenuA(menu, MF_STRING | (on ? 0 : MF_GRAYED), id, text);
+}
+
+static void AddSeparator(HMENU menu)
+{
+    AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
+}
+
+/*
+ * The Mac's contextual menus, item for item (BuildMenuBar's kMenuCtx*
+ * sets, and ShowSidebarContextMenu / ShowArticleContextMenu's wording and
+ * enabling). The row is already chosen, so each item is the menu bar's
+ * command for it -- except Refresh, which here means the row, not every
+ * feed, and the three that no menu has.
+ */
+static void ShowContextMenu(int kind, int index, int x, int y)
+{
+    HMENU menu;
+    BOOL  canRefresh = (BOOL)(GazetteCoreFeedCount() > 0 &&
+                              GazetteFeedsRefreshGetState() !=
+                                  kGazetteRefreshRunning);
+    int   count = GazetteFeedsArticleCount();
+    const char *sort    = GazetteCoreOldestFirst() ? "Show &Newest First"
+                                                   : "Show &Oldest First";
+    const char *markAll = (count > 0 && GazetteFeedsUnreadCount() == 0)
+                              ? "&Mark All as Unread" : "&Mark All as Read";
+    int   chosen;
+
+    if (kind == kGazetteRowSmart && index == kGazetteSmartStarred) {
+        return;                     /* Starred has nothing to offer */
+    }
+    menu = CreatePopupMenu();
+    if (menu == NULL) {
+        return;
+    }
+
+    if (kind == kWinContextArticle) {
+        const GazetteArticle *open = GazetteFeedsArticleAt(index);
+        BOOL                  link;
+
+        if (open == NULL) {
+            DestroyMenu(menu);
+            return;
+        }
+        link = (BOOL)(open->link[0] != '\0');
+        AddItem(menu, IDM_ARTICLE_UNREAD,
+                open->read ? "Mark as &Unread" : "Mark as &Read", TRUE);
+        AddItem(menu, IDM_ARTICLE_STAR,
+                open->starred ? "Un&star Article" : "&Star Article", TRUE);
+        AddItem(menu, IDM_ARTICLE_ABOVE, "Mark &Above as Read",
+                (BOOL)(index > 0));
+        AddItem(menu, IDM_ARTICLE_BELOW, "Mark &Below as Read",
+                (BOOL)(index < count - 1));
+        AddSeparator(menu);
+        AddItem(menu, IDM_CTX_COPY_ARTICLE_URL, "&Copy Article URL", link);
+        AddSeparator(menu);
+        AddItem(menu, IDM_ARTICLE_BROWSER, "Open in &Browser", link);
+    } else {
+        AddItem(menu, IDM_CTX_REFRESH, "&Refresh", canRefresh);
+        AddItem(menu, IDM_FEEDS_OLDEST_FIRST, sort, TRUE);
+        AddItem(menu, IDM_FEEDS_MARK_ALL, markAll, (BOOL)(count > 0));
+
+        if (kind == kGazetteRowGroup) {
+            AddSeparator(menu);
+            AddItem(menu, IDM_FEEDS_EDIT, "&Edit Group...", TRUE);
+            AddItem(menu, IDM_FEEDS_TURN_OFF,
+                    GazetteCoreGroupEnabled(index) ? "Turn O&ff" : "Turn O&n",
+                    TRUE);
+            AddSeparator(menu);
+            AddItem(menu, IDM_FEEDS_DELETE, "&Delete Group", TRUE);
+        } else if (kind == kGazetteRowFeed) {
+            /* The site is learned from the feed on its first refresh;
+               until then there is nothing to open or to copy. */
+            BOOL home = (BOOL)(GazetteCoreFeedHome(index)[0] != '\0');
+
+            AddSeparator(menu);
+            AddItem(menu, IDM_CTX_OPEN_HOME, "Open &Home Page", home);
+            AddSeparator(menu);
+            AddItem(menu, IDM_CTX_COPY_FEED_URL, "&Copy Feed URL", TRUE);
+            AddItem(menu, IDM_CTX_COPY_HOME_URL, "Copy Home &Page URL", home);
+            AddSeparator(menu);
+            AddItem(menu, IDM_FEEDS_EDIT, "&Edit Feed...", TRUE);
+            AddItem(menu, IDM_FEEDS_TURN_OFF,
+                    GazetteCoreFeedEnabled(index) ? "Turn O&ff" : "Turn O&n",
+                    TRUE);
+            AddSeparator(menu);
+            AddItem(menu, IDM_FEEDS_DELETE, "&Delete Feed", TRUE);
+        }
+    }
+
+    chosen = (int)TrackPopupMenu(menu,
+                                 TPM_LEFTALIGN | TPM_TOPALIGN |
+                                 TPM_RIGHTBUTTON | TPM_RETURNCMD |
+                                 TPM_NONOTIFY,
+                                 x, y, 0, gMainWindow, NULL);
+    DestroyMenu(menu);
+    if (chosen != 0) {
+        /* Sent on as the menu bar's command would be, so it runs through
+           the same handler. */
+        PostMessageA(gMainWindow, WM_COMMAND, MAKEWPARAM(chosen, 0), 0);
+    }
+}
+
 /* The window's own commands -- the Find dialog's Find Next, and the two
    halves of the New button's menu -- by name, as the Mac's toolbar sends
    them. */
@@ -616,6 +828,7 @@ static BOOL MenuCommand(HWND hwnd, int id)
         GazetteAppSortOrder(GazetteCoreOldestFirst() ? false : true);
         return TRUE;
     case IDM_FEEDS_MARK_ALL:      GazetteAppMarkAllRead();          return TRUE;
+    case IDM_EDIT_COPY:           HandleCopy(hwnd);                 return TRUE;
     case IDM_EDIT_PREFS:          HandlePreferences(hwnd);          return TRUE;
 
     case IDM_FEEDS_EDIT:          HandleEdit(hwnd);                 return TRUE;
@@ -628,6 +841,12 @@ static BOOL MenuCommand(HWND hwnd, int id)
     case IDM_ARTICLE_BELOW:       GazetteAppMarkRange(true);        return TRUE;
     case IDM_ARTICLE_STAR:        GazetteAppToggleStar();           return TRUE;
     case IDM_ARTICLE_BROWSER:     HandleOpenInBrowser();            return TRUE;
+
+    case IDM_CTX_REFRESH:         GazetteAppRefreshSelection();     return TRUE;
+    case IDM_CTX_OPEN_HOME:       HandleOpenHomePage();             return TRUE;
+    case IDM_CTX_COPY_FEED_URL:   HandleCopyFeedURL(hwnd);          return TRUE;
+    case IDM_CTX_COPY_HOME_URL:   HandleCopyHomeURL(hwnd);          return TRUE;
+    case IDM_CTX_COPY_ARTICLE_URL: HandleCopyArticleURL(hwnd);      return TRUE;
     }
     return FALSE;
 }
@@ -973,6 +1192,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous,
        refreshes, as the Mac's does when Open Transport will not open. */
     (void)GazetteNetInit();
 
+    GazetteWindowSetContextMenu(ShowContextMenu);
     GazetteWindowSetCallbacks(GazetteAppShowFeed, GazetteAppShowArticle,
                               GazetteAppShowGroup, GazetteAppShowSmart,
                               WindowCommand);

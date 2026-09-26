@@ -196,6 +196,12 @@ static GazetteUIArticleChosen gOnArticleChosen;
 static GazetteUIGroupChosen   gOnGroupChosen;
 static GazetteUISmartChosen   gOnSmartChosen;
 static GazetteUICommandChosen gOnCommand;
+static GazetteWindowContextMenu gOnContextMenu;
+
+void GazetteWindowSetContextMenu(GazetteWindowContextMenu handler)
+{
+    gOnContextMenu = handler;
+}
 
 /* The selection, as platinum_window.c keeps it: one of a standing view, a
    group or a feed, and the article open in the reader. */
@@ -232,6 +238,8 @@ static int  RowKind(LPARAM param);
 static int  RowIndex(LPARAM param);
 static void ChooseRow(int kind, int index);
 static void BeginRowDrag(const NM_TREEVIEWA *tree);
+static void SidebarContextMenu(LPARAM where);
+static void HeadlineContextMenu(LPARAM where);
 static BOOL RowDragMessage(UINT message, WPARAM wParam, LPARAM lParam);
 static void HeadlineRowChosen(void);
 
@@ -1690,6 +1698,17 @@ BOOL GazetteWindowNotify(HWND frame, NMHDR *header, LRESULT *result)
         return TRUE;
     }
 
+    /* A right-click in the tree: its own notification, which a 4.0 tree
+       sends and a WM_CONTEXTMENU it may not. Answered, so it does not
+       send that as well. */
+    if (header->hwndFrom == gSidebar && header->code == NM_RCLICK) {
+        DWORD pos = GetMessagePos();
+
+        SidebarContextMenu(MAKELPARAM(LOWORD(pos), HIWORD(pos)));
+        *result = TRUE;
+        return TRUE;
+    }
+
     /* A feed or a group picked up. */
     if (header->hwndFrom == gSidebar && header->code == TVN_BEGINDRAGA) {
         BeginRowDrag((const NM_TREEVIEWA *)header);
@@ -1897,6 +1916,19 @@ static LRESULT CALLBACK PaneProc(HWND hwnd, UINT message,
     }
 
     switch (message) {
+    case WM_CONTEXTMENU:
+        /* The headline list's right-click, and either list's menu key or
+           Shift+F10, which come as this with no point (-1). */
+        if ((HWND)wParam == gHeadlines) {
+            HeadlineContextMenu(lParam);
+            return 0;
+        }
+        if ((HWND)wParam == gSidebar) {
+            SidebarContextMenu(lParam);
+            return 0;
+        }
+        break;
+
     case WM_SIZE:
         LayoutPane(hwnd);
         return 0;
@@ -1926,7 +1958,8 @@ BOOL GazetteWindowRegisterClasses(HINSTANCE instance)
     }
 
     ZeroMemory(&cls, sizeof(cls));
-    cls.style         = CS_HREDRAW | CS_VREDRAW;
+    /* Double-clicks for the reader: one selects a word. */
+    cls.style         = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
     cls.lpfnWndProc   = GazetteWinReaderProc;
     cls.hInstance     = instance;
     cls.hCursor       = LoadCursor(NULL, IDC_ARROW);
@@ -2406,6 +2439,108 @@ static void ChooseRow(int kind, int index)
             gOnFeedChosen(index);
         }
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* Contextual menus                                                    */
+/*                                                                     */
+/* The Mac's: the row under the mouse is chosen, as a click would       */
+/* choose it, and the shell shows the menu for it (main.cpp's           */
+/* ShowSidebarContextMenu and ShowArticleContextMenu). From the         */
+/* keyboard -- the menu key, Shift+F10 -- it is the row already chosen, */
+/* and the menu opens at it.                                            */
+/* ------------------------------------------------------------------ */
+
+static void SidebarContextMenu(LPARAM where)
+{
+    HTREEITEM item = NULL;
+    TVITEMA   tv;
+    RECT      r;
+    POINT     pt;
+
+    if (gOnContextMenu == NULL) {
+        return;
+    }
+    if (where == (LPARAM)-1) {
+        item = (HTREEITEM)SendMessage(gSidebar, TVM_GETNEXTITEM, TVGN_CARET, 0);
+        memcpy(&r, &item, sizeof(HTREEITEM));
+        if (item == NULL ||
+            !SendMessage(gSidebar, TVM_GETITEMRECT, TRUE, (LPARAM)&r)) {
+            return;
+        }
+        pt.x = r.left;
+        pt.y = r.bottom;
+        ClientToScreen(gSidebar, &pt);
+    } else {
+        TVHITTESTINFO hit;
+
+        pt.x = (short)LOWORD(where);
+        pt.y = (short)HIWORD(where);
+        ZeroMemory(&hit, sizeof(hit));
+        hit.pt = pt;
+        ScreenToClient(gSidebar, &hit.pt);
+        item = (HTREEITEM)SendMessage(gSidebar, TVM_HITTEST, 0, (LPARAM)&hit);
+        if (item == NULL || !(hit.flags & TVHT_ONITEM)) {
+            return;                 /* nothing for the space between rows */
+        }
+        /* Chosen as a click chooses it: the tree reports the change and
+           the list shows the row. */
+        SendMessage(gSidebar, TVM_SELECTITEM, TVGN_CARET, (LPARAM)item);
+    }
+
+    ZeroMemory(&tv, sizeof(tv));
+    tv.mask  = TVIF_PARAM;
+    tv.hItem = item;
+    if (!SendMessage(gSidebar, TVM_GETITEMA, 0, (LPARAM)&tv)) {
+        return;
+    }
+    gOnContextMenu(RowKind(tv.lParam), RowIndex(tv.lParam), pt.x, pt.y);
+}
+
+static void HeadlineContextMenu(LPARAM where)
+{
+    LRESULT row;
+    RECT    r;
+    POINT   pt;
+
+    if (gOnContextMenu == NULL) {
+        return;
+    }
+    if (where == (LPARAM)-1) {
+        row = SendMessage(gHeadlines, LB_GETCURSEL, 0, 0);
+        if (row == LB_ERR ||
+            SendMessage(gHeadlines, LB_GETITEMRECT, (WPARAM)row,
+                        (LPARAM)&r) == LB_ERR) {
+            return;
+        }
+        pt.x = r.left + gLineHeight;
+        pt.y = r.bottom;
+        ClientToScreen(gHeadlines, &pt);
+    } else {
+        POINT local;
+        DWORD hit;
+
+        pt.x = (short)LOWORD(where);
+        pt.y = (short)HIWORD(where);
+        local = pt;
+        ScreenToClient(gHeadlines, &local);
+        hit = (DWORD)SendMessage(gHeadlines, LB_ITEMFROMPOINT, 0,
+                                 MAKELPARAM(local.x, local.y));
+        if (HIWORD(hit) != 0) {
+            return;                 /* below the last row */
+        }
+        row = (LRESULT)LOWORD(hit);
+    }
+    if (row < 0 || row >= gHeadRowCount ||
+        gHeadRows[row].kind != kHeadlineArticle) {
+        return;                     /* a date band has no menu */
+    }
+    /* The article is chosen first, as a click chooses it. */
+    if (SendMessage(gHeadlines, LB_GETCURSEL, 0, 0) != row) {
+        SendMessage(gHeadlines, LB_SETCURSEL, (WPARAM)row, 0);
+        HeadlineRowChosen();
+    }
+    gOnContextMenu(kWinContextArticle, gHeadRows[row].article, pt.x, pt.y);
 }
 
 /* ------------------------------------------------------------------ */
