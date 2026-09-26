@@ -74,7 +74,13 @@ enum {
     /* Enough for kGazetteMaxFeeds full-length feed lines, every group name,
        and the settings block, so serialising can never be the thing that
        fails. gazette_prefs.c has the arithmetic as a compile-time check. */
-    kGazettePrefsTextMax = 128 * 1024
+    kGazettePrefsTextMax = 128 * 1024,
+
+    /* The most pictures an article may show, and the default. It is the
+       extractor's kGazetteMaxPhotos -- the photo job's budget and its
+       memory are sized for this many -- and app/gazette_app.c checks the
+       two agree at compile time. This header stays free of the extractor's. */
+    kGazettePhotoLimit = 3
 };
 
 /*
@@ -141,6 +147,7 @@ typedef struct {
     int  hideSidebar;
     int  hideToolbar;
     int  showPhotos;        /* the pictures in an article; off for a modem */
+    int  maxPhotos;         /* how many of them: 1..kGazettePhotoLimit */
 
     /*
      * Where the window stood when Gazette last quit, and how wide its

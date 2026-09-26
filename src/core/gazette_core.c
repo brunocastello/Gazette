@@ -355,6 +355,26 @@ void GazetteCoreSetRefreshMinutes(long minutes)
     gPrefsDirty           = true;
 }
 
+int GazetteCoreMaxPhotos(void)
+{
+    return gInited ? gPrefs.maxPhotos : kGazettePhotoLimit;
+}
+
+void GazetteCoreSetMaxPhotos(int photos)
+{
+    if (photos < 1) {
+        photos = 1;
+    }
+    if (photos > kGazettePhotoLimit) {
+        photos = kGazettePhotoLimit;
+    }
+    if (!gInited || gPrefs.maxPhotos == photos) {
+        return;
+    }
+    gPrefs.maxPhotos = photos;
+    gPrefsDirty      = true;
+}
+
 void GazetteCoreSetMaxArticles(long articles)
 {
     if (articles < 0) {

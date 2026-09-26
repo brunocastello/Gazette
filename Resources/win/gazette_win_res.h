@@ -97,6 +97,7 @@
 #define IDC_NAME_TEXT          1111
 #define IDC_PREFS_MINUTES      1120
 #define IDC_PREFS_ARTICLES     1121
+#define IDC_PREFS_PHOTOS       1122
 #define IDC_SEARCH_TEXT        1130
 #define IDC_SEARCH_CLEAR       1131
 

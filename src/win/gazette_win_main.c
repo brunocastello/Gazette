@@ -571,15 +571,16 @@ static void HandleEdit(HWND hwnd)
 static void HandlePreferences(HWND hwnd)
 {
     const GazettePrefs *prefs = GazetteCoreGetPrefs();
-    long minutes, articles;
+    long minutes, articles, photos;
 
     if (prefs == NULL) {
         return;
     }
     minutes  = prefs->refreshMinutes;
     articles = prefs->maxArticles;
-    if (GazetteWinAskPreferences(hwnd, &minutes, &articles)) {
-        GazetteAppSetPreferences(minutes, articles);
+    photos   = prefs->maxPhotos;
+    if (GazetteWinAskPreferences(hwnd, &minutes, &articles, &photos)) {
+        GazetteAppSetPreferences(minutes, articles, photos);
     }
 }
 

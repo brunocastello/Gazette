@@ -127,7 +127,7 @@ BOOL GazetteWinAskFeed(HWND owner, const char *windowTitle,
 BOOL GazetteWinAskName(HWND owner, const char *windowTitle,
                        const char *prompt, char *name, size_t cap);
 BOOL GazetteWinAskPreferences(HWND owner, long *refreshMinutes,
-                              long *maxArticles);
+                              long *maxArticles, long *maxPhotos);
 
 /* A photograph, decoded by gazette_win_image.c (stb_image) into a 24-bit
    bottom-up DIB, shrunk to fit maxWidth x maxHeight and never enlarged.

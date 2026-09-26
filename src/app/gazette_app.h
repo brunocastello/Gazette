@@ -91,7 +91,8 @@ void GazetteAppEditFeed(int feedIndex, const char *url, const char *title,
                         int group);
 void GazetteAppAddGroup(const char *name);
 void GazetteAppRenameGroup(int groupIndex, const char *name);
-void GazetteAppSetPreferences(long refreshMinutes, long maxArticles);
+void GazetteAppSetPreferences(long refreshMinutes, long maxArticles,
+                              long maxPhotos);
 
 /* What the view on screen is called, for the headline list's heading and
    the status line: a feed by the name in the user's list -- which they may

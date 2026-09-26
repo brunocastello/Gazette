@@ -34,7 +34,9 @@ enum {
     kPrefsItemMinutes      = 4,
     kPrefsItemMinutesNote  = 6,     /* a user item: see DrawItemControl */
     kPrefsItemArticles     = 8,
-    kPrefsItemArticlesNote = 10
+    kPrefsItemArticlesNote = 10,
+    kPrefsItemPhotos       = 12,
+    kPrefsItemPhotosNote   = 14
 };
 
 /* Item numbers, in the order the DITLs list them. */
@@ -77,7 +79,7 @@ enum {
 };
 
 static ControlHandle gFeedPopup;    /* while the feed dialog is up */
-static ControlHandle gNotes[2];     /* a dialog's notes, while it is up */
+static ControlHandle gNotes[3];     /* a dialog's notes, while it is up */
 static UserItemUPP   gDrawItem;     /* made once, kept */
 
 /* The user items' draw procedure: whichever control stands on the item. */
@@ -504,12 +506,13 @@ static void SetItemNumber(DialogRef dialog, short item, long value)
     SetItemText(dialog, item, text);
 }
 
-Boolean GazetteAskPreferences(long *refreshMinutes, long *maxArticles)
+Boolean GazetteAskPreferences(long *refreshMinutes, long *maxArticles,
+                              long *maxPhotos)
 {
     DialogRef dialog;
     Boolean   ok;
 
-    if (refreshMinutes == NULL || maxArticles == NULL) {
+    if (refreshMinutes == NULL || maxArticles == NULL || maxPhotos == NULL) {
         return false;
     }
 
@@ -522,22 +525,31 @@ Boolean GazetteAskPreferences(long *refreshMinutes, long *maxArticles)
                          "Zero never refreshes by itself.");
     gNotes[1] = MakeNote(dialog, kPrefsItemArticlesNote,
                          "Zero keeps every article the feed offers.");
+    gNotes[2] = MakeNote(dialog, kPrefsItemPhotosNote,
+                         "From 1 to 3. Hide Photos in the View menu turns "
+                         "them off.");
 
     SetItemNumber(dialog, kPrefsItemMinutes, *refreshMinutes);
     SetItemNumber(dialog, kPrefsItemArticles, *maxArticles);
+    SetItemNumber(dialog, kPrefsItemPhotos, *maxPhotos);
     SelectDialogItemText(dialog, kPrefsItemMinutes, 0, 32767);
 
     ok = RunDialog(dialog);
     if (ok) {
         long minutes  = ItemNumber(dialog, kPrefsItemMinutes);
         long articles = ItemNumber(dialog, kPrefsItemArticles);
+        long photos   = ItemNumber(dialog, kPrefsItemPhotos);
 
         *refreshMinutes = minutes < 0 ? 0 : minutes;
         *maxArticles    = articles < 0 ? 0 : articles;
+        /* 1 to 3, as the note says: the core clamps the same way, and this
+           is only so the number that comes back is the one that will be. */
+        *maxPhotos      = photos < 1 ? 1 : (photos > 3 ? 3 : photos);
     }
 
     gNotes[0] = NULL;
     gNotes[1] = NULL;
+    gNotes[2] = NULL;
     DisposeDialog(dialog);              /* takes the notes with the window */
     return ok;
 }

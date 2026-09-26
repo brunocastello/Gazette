@@ -55,6 +55,11 @@
 
 static void StartPhotos(void);
 
+/* The preference's ceiling is the photo job's: prefs/gazette_prefs.h keeps
+   its own copy of the number so as not to include the extractor. */
+typedef char gazette_photo_limits_agree[
+    (kGazettePhotoLimit == kGazetteMaxPhotos) ? 1 : -1];
+
 
 /* When the running refresh started, so it can be timed, and when the last one
    finished, so auto-refresh knows how long it has been. Both in ticks. */
@@ -472,6 +477,11 @@ static void StartPhotos(void)
     count = GazetteFeedsFullTextPhotos(&refs);
     if (count <= 0) {
         return;
+    }
+    /* As many as the user asked for in Preferences, first ones first: the
+       article's own order is the order they matter in. */
+    if (count > GazetteCoreMaxPhotos()) {
+        count = GazetteCoreMaxPhotos();
     }
     (void)GazettePhotosStart(article, GazetteFeedsFullTextFinalURL(),
                              refs, count);
@@ -1249,22 +1259,34 @@ void GazetteAppRenameGroup(int index, const char *name)
  * with the new limit; the clock starts over, so a shorter interval is not
  * already overdue.
  */
-void GazetteAppSetPreferences(long refreshMinutes, long maxArticles)
+void GazetteAppSetPreferences(long refreshMinutes, long maxArticles,
+                              long maxPhotos)
 {
     const GazettePrefs *prefs = GazetteCoreGetPrefs();
+    Boolean             photosChanged;
 
     if (prefs == NULL) {
         return;
     }
+    photosChanged = (Boolean)(maxPhotos != prefs->maxPhotos);
     if (refreshMinutes == prefs->refreshMinutes &&
-        maxArticles == prefs->maxArticles) {
+        maxArticles == prefs->maxArticles && !photosChanged) {
         return;
     }
     GazetteCoreSetRefreshMinutes(refreshMinutes);
     GazetteCoreSetMaxArticles(maxArticles);
+    GazetteCoreSetMaxPhotos((int)maxPhotos);
     GazetteAppSavePrefs();
     GazetteAppRestartClock();
     GazetteAppReloadView();
+
+    /* A different number of pictures: the open article's are fetched again
+       to the new count, as turning photos on fetches them. */
+    if (photosChanged && GazetteCoreShowPhotos()) {
+        GazettePhotosCancel();
+        StartPhotos();
+        GazetteUIArticleTextChanged();
+    }
 }
 
 /* ------------------------------------------------------------------ */

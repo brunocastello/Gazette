@@ -365,6 +365,7 @@ static void TestPrefsModel(void)
     CheckLong("nor is the sidebar", p.hideSidebar, 0);
     CheckLong("nor is the toolbar", p.hideToolbar, 0);
     CheckLong("photos are shown by default", p.showPhotos, 1);
+    CheckLong("three of them by default", p.maxPhotos, 3);
     CheckLong("no window is remembered by default", p.windowWidth, 0);
     CheckLong("nor a sidebar width", p.sidebarWidth, 0);
     CheckTrue("the default feed is Google News",
@@ -457,6 +458,24 @@ static void TestPrefsParse(void)
               GazettePrefsParse(text, sizeof text - 1, &p), 4);
     CheckLong("parse reads refresh-minutes", p.refreshMinutes, 5);
     CheckLong("parse reads max-articles", p.maxArticles, 25);
+
+    {
+        static const char two[]  = "max-photos = 2\r";
+        static const char none[] = "max-photos = 0\r";
+        static const char many[] = "max-photos = 9\r";
+        static char       out[kGazettePrefsTextMax];
+        GazettePrefs      q;
+
+        GazettePrefsParse(two, sizeof two - 1, &q);
+        CheckLong("parse reads max-photos", q.maxPhotos, 2);
+        CheckTrue("and writes it back",
+                  GazettePrefsSerialize(&q, out, sizeof out) > 0 &&
+                  strstr(out, "max-photos         = 2") != NULL);
+        GazettePrefsParse(none, sizeof none - 1, &q);
+        CheckLong("max-photos below one is one", q.maxPhotos, 1);
+        GazettePrefsParse(many, sizeof many - 1, &q);
+        CheckLong("max-photos above the limit is the limit", q.maxPhotos, 3);
+    }
 
     /* File order, exactly — including the disabled one, which keeps its place
        rather than being sorted to the end. The order of the lines is the order

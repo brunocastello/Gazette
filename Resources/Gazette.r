@@ -169,7 +169,7 @@ resource 'DITL' (kNameDialogID, "Name") {
  * box itself.
  */
 resource 'DLOG' (kPrefsDialogID, "Preferences") {
-    { 0, 0, 160, 400 },
+    { 0, 0, 210, 400 },
     noGrowDocProc,
     invisible,
     goAway,
@@ -185,16 +185,18 @@ resource 'dlgx' (kPrefsDialogID) {
     }
 };
 
-/* Two numbers, each with a unit after it and a note under it — the note
+/* Three numbers, each with a unit after it and a note under it — the note
    a user item the dialog code stands a small-system-font control on, as
    the feed dialog's is, aligned with the label. Item 1 is OK, item 2
-   Cancel; 4 and 8 the fields, 6 and 10 the notes. */
+   Cancel; 4, 8 and 12 the fields, 6, 10 and 14 the notes. The photos row
+   (Bruno, 2026-09-26) is last in the list so the others keep their
+   numbers, and first-to-last is still top-to-bottom. */
 resource 'DITL' (kPrefsDialogID, "Preferences") {
     {
-        { 126, 324, 146, 384 },
+        { 176, 324, 196, 384 },
         Button { enabled, "OK" };
 
-        { 126, 252, 146, 312 },
+        { 176, 252, 196, 312 },
         Button { enabled, "Cancel" };
 
         { 18, 16, 34, 152 },
@@ -219,6 +221,18 @@ resource 'DITL' (kPrefsDialogID, "Preferences") {
         StaticText { disabled, "articles per feed" };
 
         { 88, 16, 102, 384 },
+        UserItem { disabled };
+
+        { 118, 16, 134, 152 },
+        StaticText { disabled, "Show at most" };
+
+        { 116, 156, 132, 204 },
+        EditText { enabled, "" };
+
+        { 118, 212, 134, 384 },
+        StaticText { disabled, "photos per article" };
+
+        { 138, 16, 152, 384 },
         UserItem { disabled };
     }
 };

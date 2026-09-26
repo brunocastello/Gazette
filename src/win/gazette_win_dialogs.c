@@ -323,6 +323,7 @@ BOOL GazetteWinAskName(HWND owner, const char *windowTitle,
 typedef struct {
     long minutes;
     long articles;
+    long photos;
 } PrefsAsk;
 
 /* Six digits is more than either number means: 999999 minutes is nearly
@@ -361,6 +362,7 @@ static INT_PTR CALLBACK PrefsDialogProc(HWND dialog, UINT message,
         SetWindowLongA(dialog, DWL_USER, (LONG)lParam);
         SetNumber(dialog, IDC_PREFS_MINUTES, ask->minutes);
         SetNumber(dialog, IDC_PREFS_ARTICLES, ask->articles);
+        SetNumber(dialog, IDC_PREFS_PHOTOS, ask->photos);
         CentreOnOwner(dialog);
         StartIdle(dialog);
         FocusField(dialog, IDC_PREFS_MINUTES);
@@ -371,6 +373,14 @@ static INT_PTR CALLBACK PrefsDialogProc(HWND dialog, UINT message,
         case IDOK:
             ask->minutes  = ReadNumber(dialog, IDC_PREFS_MINUTES);
             ask->articles = ReadNumber(dialog, IDC_PREFS_ARTICLES);
+            /* 1 to 3, as the note says; the core clamps the same way. */
+            ask->photos   = ReadNumber(dialog, IDC_PREFS_PHOTOS);
+            if (ask->photos < 1) {
+                ask->photos = 1;
+            }
+            if (ask->photos > 3) {
+                ask->photos = 3;
+            }
             EndDialog(dialog, IDOK);
             return TRUE;
         case IDCANCEL:
@@ -387,15 +397,16 @@ static INT_PTR CALLBACK PrefsDialogProc(HWND dialog, UINT message,
 }
 
 BOOL GazetteWinAskPreferences(HWND owner, long *refreshMinutes,
-                              long *maxArticles)
+                              long *maxArticles, long *maxPhotos)
 {
     PrefsAsk ask;
 
-    if (refreshMinutes == NULL || maxArticles == NULL) {
+    if (refreshMinutes == NULL || maxArticles == NULL || maxPhotos == NULL) {
         return FALSE;
     }
     ask.minutes  = *refreshMinutes;
     ask.articles = *maxArticles;
+    ask.photos   = *maxPhotos;
 
     if (DialogBoxParamA(GetModuleHandleA(NULL),
                         MAKEINTRESOURCEA(IDD_PREFS), owner, PrefsDialogProc,
@@ -404,5 +415,6 @@ BOOL GazetteWinAskPreferences(HWND owner, long *refreshMinutes,
     }
     *refreshMinutes = ask.minutes;
     *maxArticles    = ask.articles;
+    *maxPhotos      = ask.photos;
     return TRUE;
 }

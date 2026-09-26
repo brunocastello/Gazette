@@ -38,8 +38,8 @@ enum {
  * + a 511-byte URL + " | " (3) + a 127-byte title + " | " (3) + a 255-byte
  * home page + CR, and a group line is "group-closed = " (15) + a 63-byte name
  * + CR. Plus the settings block and
- * comments, for which 768 is generous — the block is eight settings and
- * three comment lines, and comes to under four hundred bytes.
+ * comments, for which 768 is generous — the block is a dozen settings and
+ * three comment lines, and comes to under five hundred bytes.
  *
  * The array below has a negative size if that ever stops holding, which turns
  * the bug into a compile error on the line that raised the limit.
@@ -258,6 +258,7 @@ void GazettePrefsSetDefaults(GazettePrefs *p)
     p->hideSidebar      = 0;
     p->hideToolbar      = 0;
     p->showPhotos       = 1;
+    p->maxPhotos        = kGazettePhotoLimit;
 
     /* No window remembered, no column widths: the window's own numbers. */
     p->windowLeft   = 0;
@@ -1038,6 +1039,8 @@ int GazettePrefsParse(const char *text, size_t len, GazettePrefs *p)
                                            p->hideToolbar) ? 1 : 0;
     p->showPhotos       = gz_prefs_get_num(text, len, "show-photos",
                                            p->showPhotos) ? 1 : 0;
+    p->maxPhotos        = (int)gz_prefs_get_num(text, len, "max-photos",
+                                                p->maxPhotos);
 
     /* The window's rectangle is all four numbers or nothing: three of them
        would place a window nobody described. */
@@ -1066,6 +1069,14 @@ int GazettePrefsParse(const char *text, size_t len, GazettePrefs *p)
     }
     if (p->maxArticles < 0) {
         p->maxArticles = 0;         /* 0: as many as the feed offers */
+    }
+    /* At least one -- none is what Hide Photos is for -- and no more than
+       the photo job was built to hold. */
+    if (p->maxPhotos < 1) {
+        p->maxPhotos = 1;
+    }
+    if (p->maxPhotos > kGazettePhotoLimit) {
+        p->maxPhotos = kGazettePhotoLimit;
     }
     if (p->country[0] == '\0') {
         gz_copy_n(p->country, sizeof p->country, "US", 2);
@@ -1260,6 +1271,10 @@ size_t GazettePrefsSerialize(const GazettePrefs *p, char *out, size_t cap)
 
     Append(out, cap, &len, "show-photos        = ");
     AppendNum(out, cap, &len, p->showPhotos ? 1 : 0);
+    Append(out, cap, &len, "\r");
+
+    Append(out, cap, &len, "max-photos         = ");
+    AppendNum(out, cap, &len, p->maxPhotos);
     Append(out, cap, &len, "\r\r");
 
     /* Where the window was. Written only once there is one to write: a file

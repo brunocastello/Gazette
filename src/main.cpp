@@ -1811,26 +1811,26 @@ static void HandleOpenInBrowser(void)
 }
 
 /*
- * The Preferences window. Two numbers: how often the clock refreshes, and
- * how much of a feed is kept. Saved on OK, and the view shown again with
- * the new limit; the clock starts over, so a shorter interval is not
- * already overdue.
+ * The Preferences window. Three numbers: how often the clock refreshes,
+ * how much of a feed is kept, and how many of an article's photos are
+ * shown. What OK does with them is GazetteAppSetPreferences's.
  */
 static void HandlePreferences(void)
 {
     const GazettePrefs *prefs = GazetteCoreGetPrefs();
-    long minutes, articles;
+    long minutes, articles, photos;
 
     if (prefs == nil) {
         return;
     }
     minutes  = prefs->refreshMinutes;
     articles = prefs->maxArticles;
+    photos   = prefs->maxPhotos;
 
-    if (!GazetteAskPreferences(&minutes, &articles)) {
+    if (!GazetteAskPreferences(&minutes, &articles, &photos)) {
         return;
     }
-    GazetteAppSetPreferences(minutes, articles);
+    GazetteAppSetPreferences(minutes, articles, photos);
 }
 
 static void HandleHideSidebar(void)
