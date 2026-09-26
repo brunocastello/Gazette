@@ -211,6 +211,18 @@ jobs:
           sleep 45
           import -window root shot/window.png
           wineserver -k || true
+
+          # Again with a feed whose pages carry photographs first, so its
+          # first article opens with its pictures fetched and decoded by
+          # stb_image (gazette_win_image.c) -- Google News's first story is
+          # often a summary only. A fresh folder: no cache, no read marks.
+          mkdir -p shot2 && cp build-win/Gazette.exe shot2/
+          printf '%s\r\n' \
+            'feed     = https://9to5mac.com/feed/ | 9to5Mac' > "shot2/Gazette Preferences.txt"
+          (cd shot2 && wine Gazette.exe >/dev/null 2>&1 &)
+          sleep 60
+          import -window root shot/photos.png
+          wineserver -k || true
           ls -l shot
 
       - name: Upload the photograph
@@ -219,7 +231,9 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: Gazette-win32-screenshot
-          path: shot/window.png
+          path: |
+            shot/window.png
+            shot/photos.png
           if-no-files-found: ignore
 
       - name: Package release assets (.zip and floppy .img)
