@@ -23,6 +23,7 @@ on:
       - 'v*'
     paths:
       - 'src/win/**'
+      - 'src/app/**'
       - 'src/portable/**'
       - 'src/prefs/**'
       - 'src/feeds/**'
@@ -31,6 +32,7 @@ on:
       - 'src/store/**'
       - 'src/core/**'
       - 'third_party/certainly/**'
+      - 'third_party/stb/**'
       - 'tests/win/**'
       - 'Resources/win/**'
       - 'cmake/**'
@@ -40,6 +42,7 @@ on:
   pull_request:
     paths:
       - 'src/win/**'
+      - 'src/app/**'
       - 'src/portable/**'
       - 'src/prefs/**'
       - 'src/feeds/**'
@@ -48,6 +51,7 @@ on:
       - 'src/store/**'
       - 'src/core/**'
       - 'third_party/certainly/**'
+      - 'third_party/stb/**'
       - 'tests/win/**'
       - 'Resources/win/**'
       - 'cmake/**'
