@@ -58,7 +58,7 @@ static void StartPhotos(void);
 /* The preference's ceiling is the photo job's: prefs/gazette_prefs.h keeps
    its own copy of the number so as not to include the extractor. */
 typedef char gazette_photo_limits_agree[
-    (kGazettePhotoLimit == kGazetteMaxPhotos) ? 1 : -1];
+    ((int)kGazettePhotoLimit == (int)kGazetteMaxPhotos) ? 1 : -1];
 
 
 /* When the running refresh started, so it can be timed, and when the last one
