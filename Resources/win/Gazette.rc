@@ -140,16 +140,21 @@ END
 /* The Mac's three DLOGs (Resources/Gazette.r) with the same fields,    */
 /* words and order, laid out as Windows lays a dialog out: dialog       */
 /* units, 7-unit margins, 14-unit fields and 50x14 buttons, OK then     */
-/* Cancel at the bottom right, in "MS Shell Dlg" 8 -- MS Sans Serif on  */
-/* every version, the font Windows' own dialogs of the time use. The    */
-/* Mac sets its notes in the small system font; here they are the       */
-/* dialog font, which is already that size.                            */
+/* Cancel at the bottom right.                                          */
+/*                                                                     */
+/* DIALOGEX with DS_SHELLFONT and "MS Shell Dlg": the newer dialog,     */
+/* Bruno's call (2026-09-26), so 2000 and XP set it in Tahoma, as their */
+/* own dialogs are. DS_SHELLFONT is DS_SETFONT | DS_FIXEDSYS, a pair    */
+/* that meant nothing before 2000, so 95, 98, Me and NT 4 take the      */
+/* named font and show MS Sans Serif -- theirs. The Mac sets its notes  */
+/* in the small system font; here they are the dialog font, which is    */
+/* already that size.                                                  */
 /* ------------------------------------------------------------------ */
 
-IDD_FEED DIALOG 0, 0, 240, 110
-STYLE DS_MODALFRAME | DS_SETFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_FEED DIALOGEX 0, 0, 240, 110
+STYLE DS_MODALFRAME | DS_SETFONT | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "New Feed"
-FONT 8, "MS Shell Dlg"
+FONT 8, "MS Shell Dlg", 0, 0, 1
 BEGIN
     LTEXT           "The address of an RSS or Atom feed. Leave the name empty to use the feed's own.",
                     IDC_FEED_NOTE, 7, 7, 226, 18
@@ -164,10 +169,10 @@ BEGIN
     PUSHBUTTON      "Cancel", IDCANCEL, 183, 89, 50, 14
 END
 
-IDD_NAME DIALOG 0, 0, 200, 66
-STYLE DS_MODALFRAME | DS_SETFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_NAME DIALOGEX 0, 0, 200, 66
+STYLE DS_MODALFRAME | DS_SETFONT | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "New Group"
-FONT 8, "MS Shell Dlg"
+FONT 8, "MS Shell Dlg", 0, 0, 1
 BEGIN
     LTEXT           "", IDC_NAME_PROMPT, 7, 7, 186, 10
     EDITTEXT        IDC_NAME_TEXT, 7, 20, 186, 14, ES_AUTOHSCROLL
@@ -175,10 +180,10 @@ BEGIN
     PUSHBUTTON      "Cancel", IDCANCEL, 143, 45, 50, 14
 END
 
-IDD_PREFS DIALOG 0, 0, 220, 100
-STYLE DS_MODALFRAME | DS_SETFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_PREFS DIALOGEX 0, 0, 220, 100
+STYLE DS_MODALFRAME | DS_SETFONT | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Preferences"
-FONT 8, "MS Shell Dlg"
+FONT 8, "MS Shell Dlg", 0, 0, 1
 BEGIN
     LTEXT           "&Refresh feeds every", -1, 7, 9, 72, 8
     EDITTEXT        IDC_PREFS_MINUTES, 82, 7, 32, 14, ES_NUMBER

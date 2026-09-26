@@ -226,6 +226,8 @@ static int         gHeadRowCount;
 static int  RowKind(LPARAM param);
 static int  RowIndex(LPARAM param);
 static void ChooseRow(int kind, int index);
+static void BeginRowDrag(const NM_TREEVIEWA *tree);
+static BOOL RowDragMessage(UINT message, WPARAM wParam, LPARAM lParam);
 static void HeadlineRowChosen(void);
 
 static LRESULT CALLBACK SplitterProc(HWND, UINT, WPARAM, LPARAM);
@@ -1683,6 +1685,12 @@ BOOL GazetteWindowNotify(HWND frame, NMHDR *header, LRESULT *result)
         return TRUE;
     }
 
+    /* A feed or a group picked up. */
+    if (header->hwndFrom == gSidebar && header->code == TVN_BEGINDRAGA) {
+        BeginRowDrag((const NM_TREEVIEWA *)header);
+        return TRUE;
+    }
+
     /* A group opened or shut: remembered, as the Mac's triangle is. */
     if (header->hwndFrom == gSidebar && header->code == TVN_ITEMEXPANDEDA) {
         NM_TREEVIEWA *tree = (NM_TREEVIEWA *)header;
@@ -1878,6 +1886,11 @@ static void LayoutPane(HWND pane)
 static LRESULT CALLBACK PaneProc(HWND hwnd, UINT message,
                                  WPARAM wParam, LPARAM lParam)
 {
+    /* A row being dragged: the sidebar's pane has the mouse. */
+    if (hwnd == gSidebarPane && RowDragMessage(message, wParam, lParam)) {
+        return 0;
+    }
+
     switch (message) {
     case WM_SIZE:
         LayoutPane(hwnd);
@@ -2388,6 +2401,650 @@ static void ChooseRow(int kind, int index)
             gOnFeedChosen(index);
         }
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* Dragging a row                                                      */
+/*                                                                     */
+/* platinum_window.c's TrackSidebarDrag: a feed or a group picked up    */
+/* and put down somewhere else in the sidebar. The rules for what a     */
+/* place between two rows means are the Mac's, word for word, worked    */
+/* against the tree's visible items instead of the List Manager's       */
+/* cells -- the two are the same rows in the same order: the standing   */
+/* views, then the groups with their feeds, a shut group's feeds not    */
+/* among them.                                                          */
+/*                                                                     */
+/* What the user sees is Windows': the tree's own drag image of the     */
+/* row (TVM_CREATEDRAGIMAGE and the image-list drag, both in 95's        */
+/* comctl32), the tree's drop highlight on a group the row would go     */
+/* into, and a line between rows where it would land. The tree's own    */
+/* insertion mark would be the line, but it is comctl32 4.71's, so the  */
+/* line is inverted onto the tree here, as the Mac's is XORed.          */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    HTREEITEM item;
+    int       kind;
+    int       index;
+} TreeRow;
+
+typedef struct {
+    BOOL         valid;
+    BOOL         into;      /* into a group: its row is highlighted */
+    BOOL         inner;     /* the line starts at a group's feeds' indent */
+    int          row;       /* the highlighted group's row, when into */
+    int          gap;       /* else before row `gap`; the count means after the last */
+    GazettePlace place;     /* what the drop means to the model */
+} DropSpot;
+
+enum {
+    kDragTimer   = 7,
+    kDragTick    = 60,      /* ms between scrolls at an edge */
+    kDropLine    = 2        /* the insertion line's thickness */
+};
+
+static TreeRow      gTreeRows[kGazetteSmartCount + kGazetteMaxFeeds +
+                              kGazetteMaxGroups];
+static int          gTreeRowCount;
+static BOOL         gRowDragging;
+static int          gDragKind;
+static int          gDragIndex;
+static GazettePlace gDragNow;       /* where the row is before it moves */
+static DropSpot     gDropShown;
+static int          gDropLineY = -1;
+static int          gDropLineLeft;
+static HIMAGELIST   gDragImage;
+
+/* Every row the tree shows, open groups' feeds included, top to bottom. */
+static void CollectTreeRows(void)
+{
+    HTREEITEM item = (HTREEITEM)SendMessage(gSidebar, TVM_GETNEXTITEM,
+                                            TVGN_ROOT, 0);
+
+    gTreeRowCount = 0;
+    while (item != NULL &&
+           gTreeRowCount < (int)(sizeof gTreeRows / sizeof gTreeRows[0])) {
+        TVITEMA tv;
+
+        ZeroMemory(&tv, sizeof(tv));
+        tv.mask  = TVIF_PARAM;
+        tv.hItem = item;
+        if (SendMessage(gSidebar, TVM_GETITEMA, 0, (LPARAM)&tv)) {
+            gTreeRows[gTreeRowCount].item  = item;
+            gTreeRows[gTreeRowCount].kind  = RowKind(tv.lParam);
+            gTreeRows[gTreeRowCount].index = RowIndex(tv.lParam);
+            gTreeRowCount++;
+        }
+        item = (HTREEITEM)SendMessage(gSidebar, TVM_GETNEXTITEM,
+                                      TVGN_NEXTVISIBLE, (LPARAM)item);
+    }
+}
+
+static BOOL TreeRowAt(int row, TreeRow *out)
+{
+    if (row < 0 || row >= gTreeRowCount) {
+        return FALSE;
+    }
+    *out = gTreeRows[row];
+    return TRUE;
+}
+
+static int TreeRowFor(int kind, int index)
+{
+    int i;
+
+    for (i = 0; i < gTreeRowCount; i++) {
+        if (gTreeRows[i].kind == kind && gTreeRows[i].index == index) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int TreeRowForItem(HTREEITEM item)
+{
+    int i;
+
+    for (i = 0; i < gTreeRowCount; i++) {
+        if (gTreeRows[i].item == item) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* A row's whole line, in the tree's coordinates. */
+static BOOL TreeRowRect(int row, RECT *r)
+{
+    if (row < 0 || row >= gTreeRowCount) {
+        return FALSE;
+    }
+    *(HTREEITEM *)r = gTreeRows[row].item;
+    return (BOOL)SendMessage(gSidebar, TVM_GETITEMRECT, FALSE, (LPARAM)r);
+}
+
+static BOOL SameDropSpot(const DropSpot *a, const DropSpot *b)
+{
+    if (a->valid != b->valid) {
+        return FALSE;
+    }
+    if (!a->valid) {
+        return TRUE;
+    }
+    return (BOOL)(a->into == b->into && a->inner == b->inner &&
+                  (a->into ? a->row == b->row : a->gap == b->gap));
+}
+
+static BOOL SamePlace(GazettePlace a, GazettePlace b)
+{
+    return (BOOL)(a.where == b.where &&
+                  (a.where == kGazettePlaceListStart ||
+                   a.where == kGazettePlaceListEnd || a.ref == b.ref));
+}
+
+/* Where a group's feeds begin, which is where the line for a place inside
+   a group starts, and the column that says which of the two places a gap
+   can mean the mouse means. With lines at the root, a top-level row's
+   icon stands one indent in and a group's feed's two. */
+static int InnerIndent(void)
+{
+    return 2 * (int)SendMessage(gSidebar, TVM_GETINDENT, 0, 0);
+}
+
+/*
+ * Where between the rows the mouse is: the gap above the row it is on when
+ * it is in that row's upper half, the gap below otherwise. A group's own
+ * row has three parts rather than two -- its middle is into the group.
+ * Above the tree is the gap above its first row on screen; below the tree,
+ * or below its last row, the gap after the last row shown.
+ */
+static void GapAtPoint(POINT pt, DropSpot *out)
+{
+    TVHITTESTINFO hit;
+    RECT          client, r;
+    HTREEITEM     item;
+    int           row;
+
+    out->valid = TRUE;
+    out->into  = FALSE;
+    out->inner = FALSE;
+    out->row   = -1;
+    GetClientRect(gSidebar, &client);
+
+    if (pt.y < 0) {
+        item = (HTREEITEM)SendMessage(gSidebar, TVM_GETNEXTITEM,
+                                      TVGN_FIRSTVISIBLE, 0);
+        row  = TreeRowForItem(item);
+        out->gap = (row >= 0) ? row : 0;
+        return;
+    }
+    if (pt.y >= client.bottom) {
+        item = (HTREEITEM)SendMessage(gSidebar, TVM_GETNEXTITEM,
+                                      TVGN_FIRSTVISIBLE, 0);
+        row  = TreeRowForItem(item);
+        row += (int)SendMessage(gSidebar, TVM_GETVISIBLECOUNT, 0, 0);
+        out->gap = (row >= 0 && row < gTreeRowCount) ? row : gTreeRowCount;
+        return;
+    }
+
+    ZeroMemory(&hit, sizeof(hit));
+    hit.pt.x = (pt.x < 0) ? 0 : pt.x;
+    hit.pt.y = pt.y;
+    item = (HTREEITEM)SendMessage(gSidebar, TVM_HITTEST, 0, (LPARAM)&hit);
+    row  = TreeRowForItem(item);
+    if (row < 0 || !TreeRowRect(row, &r)) {
+        out->gap = gTreeRowCount;          /* the empty space under them */
+        return;
+    }
+
+    if (gTreeRows[row].kind == kGazetteRowGroup) {
+        int quarter = (r.bottom - r.top) / 4;
+
+        if (pt.y < r.top + quarter) {
+            out->gap = row;
+        } else if (pt.y >= r.bottom - quarter) {
+            out->gap = row + 1;
+        } else {
+            out->into = TRUE;
+            out->row  = row;
+            out->gap  = row;
+        }
+        return;
+    }
+    out->gap = (pt.y < (r.top + r.bottom) / 2) ? row : row + 1;
+}
+
+/* Whether a feed is the last of its group's rows. */
+static BOOL LastRowOfGroup(int row, int group)
+{
+    TreeRow next;
+
+    if (!TreeRowAt(row + 1, &next)) {
+        return TRUE;
+    }
+    return (BOOL)(next.kind != kGazetteRowFeed ||
+                  GazetteCoreFeedGroup(next.index) != group);
+}
+
+/* The row after the last of a group's rows -- its own, if it is shut. */
+static int RowAfterGroup(int groupRow, int group)
+{
+    TreeRow row;
+    int     r = groupRow + 1;
+
+    while (TreeRowAt(r, &row) && row.kind == kGazetteRowFeed &&
+           GazetteCoreFeedGroup(row.index) == group) {
+        r++;
+    }
+    return r;
+}
+
+/* The place a row is at now, said the way a drop is said: what it stands
+   after. A drop that names the same place is not a move. */
+static GazettePlace CurrentPlace(int kind, int index)
+{
+    TreeRow      above;
+    GazettePlace place;
+    int          row = TreeRowFor(kind, index);
+
+    place.where = kGazettePlaceListStart;
+    place.ref   = 0;
+    if (row <= 0 || !TreeRowAt(row - 1, &above)) {
+        return place;
+    }
+
+    switch (above.kind) {
+        case kGazetteRowFeed:
+            if (kind == kGazetteRowFeed &&
+                GazetteCoreFeedGroup(above.index) ==
+                    GazetteCoreFeedGroup(index)) {
+                place.where = kGazettePlaceAfterFeed;
+                place.ref   = above.index;
+            } else if (GazetteCoreFeedGroup(above.index) < 0) {
+                place.where = kGazettePlaceAfterFeed;
+                place.ref   = above.index;
+            } else {
+                place.where = kGazettePlaceAfterGroup;
+                place.ref   = GazetteCoreFeedGroup(above.index);
+            }
+            break;
+        case kGazetteRowGroup:
+            if (kind == kGazetteRowFeed &&
+                GazetteCoreFeedGroup(index) == above.index) {
+                place.where = kGazettePlaceGroupStart;
+            } else {
+                place.where = kGazettePlaceAfterGroup;
+            }
+            place.ref = above.index;
+            break;
+        default:
+            break;
+    }
+    return place;
+}
+
+/*
+ * What a gap means for a feed -- the Mac's ResolveFeedDrop. The row above
+ * the gap decides: after a standing view is the top of the list; after a
+ * top-level feed is after it; after a group's feed is after it, in the
+ * group -- unless it is the group's last, when left of the feeds' indent
+ * means below the group and out of it. After an open group's row is the
+ * top of the group; after a shut one's is below it. And the middle of a
+ * group's row is the group itself, at the end.
+ */
+static BOOL ResolveFeedDrop(DropSpot *spot, int from, POINT pt)
+{
+    TreeRow before;
+    int     gap = spot->gap;
+
+    if (spot->into) {
+        if (!TreeRowAt(spot->row, &before) ||
+            before.kind != kGazetteRowGroup) {
+            return FALSE;
+        }
+        spot->place.where = kGazettePlaceGroupEnd;
+        spot->place.ref   = before.index;
+        return (BOOL)!(GazetteCoreFeedGroup(from) == before.index &&
+                       LastRowOfGroup(TreeRowFor(kGazetteRowFeed, from),
+                                      before.index));
+    }
+
+    /* Nothing goes above, or between, the three standing views. */
+    if (gap < kGazetteSmartCount) {
+        gap = kGazetteSmartCount;
+        spot->gap = gap;
+    }
+    if (!TreeRowAt(gap - 1, &before)) {
+        return FALSE;
+    }
+
+    switch (before.kind) {
+        case kGazetteRowSmart:
+            spot->place.where = kGazettePlaceListStart;
+            spot->place.ref   = 0;
+            break;
+
+        case kGazetteRowFeed: {
+            int group = GazetteCoreFeedGroup(before.index);
+
+            if (before.index == from) {
+                return FALSE;
+            }
+            if (group >= 0 && LastRowOfGroup(gap - 1, group) &&
+                pt.x < InnerIndent()) {
+                spot->place.where = kGazettePlaceAfterGroup;
+                spot->place.ref   = group;
+            } else {
+                spot->place.where = kGazettePlaceAfterFeed;
+                spot->place.ref   = before.index;
+                spot->inner       = (BOOL)(group >= 0);
+            }
+            break;
+        }
+
+        case kGazetteRowGroup:
+            if (GazetteCoreGroupCollapsed(before.index)) {
+                spot->place.where = kGazettePlaceAfterGroup;
+            } else {
+                spot->place.where = kGazettePlaceGroupStart;
+                spot->inner       = TRUE;
+            }
+            spot->place.ref = before.index;
+            break;
+
+        default:
+            return FALSE;
+    }
+    return TRUE;
+}
+
+/*
+ * What a gap means for a group -- the Mac's ResolveGroupDrop. A group
+ * lands only among the top-level things, and after anything of another
+ * group is below that group, the line drawn under its last row.
+ */
+static BOOL ResolveGroupDrop(DropSpot *spot, int from)
+{
+    TreeRow before;
+    int     gap = spot->gap;
+    int     other;
+
+    spot->into  = FALSE;
+    spot->inner = FALSE;
+    if (gap < kGazetteSmartCount) {
+        gap = kGazetteSmartCount;
+        spot->gap = gap;
+    }
+    if (!TreeRowAt(gap - 1, &before)) {
+        return FALSE;
+    }
+
+    switch (before.kind) {
+        case kGazetteRowSmart:
+            spot->place.where = kGazettePlaceListStart;
+            spot->place.ref   = 0;
+            return TRUE;
+
+        case kGazetteRowFeed:
+            other = GazetteCoreFeedGroup(before.index);
+            if (other < 0) {
+                spot->place.where = kGazettePlaceAfterFeed;
+                spot->place.ref   = before.index;
+                return TRUE;
+            }
+            break;
+
+        case kGazetteRowGroup:
+            other = before.index;
+            break;
+
+        default:
+            return FALSE;
+    }
+
+    if (other == from) {
+        return FALSE;               /* somewhere in its own rows */
+    }
+    spot->place.where = kGazettePlaceAfterGroup;
+    spot->place.ref   = other;
+    spot->gap = RowAfterGroup(TreeRowFor(kGazetteRowGroup, other), other);
+    return TRUE;
+}
+
+/* The insertion line, inverted onto the tree so that doing it again takes
+   it away. */
+static void InvertDropLine(void)
+{
+    RECT client;
+    HDC  dc;
+
+    if (gDropLineY < 0) {
+        return;
+    }
+    GetClientRect(gSidebar, &client);
+    dc = GetDC(gSidebar);
+    PatBlt(dc, gDropLineLeft, gDropLineY - kDropLine / 2,
+           client.right - gDropLineLeft, kDropLine, DSTINVERT);
+    ReleaseDC(gSidebar, dc);
+}
+
+/* Put up the mark for a spot, taking the last one down: the drop
+   highlight on a group, or the line across a gap. The drag image is
+   lifted while the tree is drawn on, or it would be drawn over. */
+static void ShowDropSpot(const DropSpot *spot)
+{
+    HTREEITEM target = NULL;
+    RECT      r;
+
+    ImageList_DragShowNolock(FALSE);
+    InvertDropLine();
+    gDropLineY = -1;
+
+    if (spot->valid && spot->into) {
+        target = gTreeRows[spot->row].item;
+    }
+    SendMessage(gSidebar, TVM_SELECTDROPTARGET, TVGN_DROPHILITE,
+                (LPARAM)target);
+    UpdateWindow(gSidebar);
+
+    if (spot->valid && !spot->into) {
+        if (spot->gap < gTreeRowCount && TreeRowRect(spot->gap, &r)) {
+            gDropLineY = r.top;
+        } else if (gTreeRowCount > 0 &&
+                   TreeRowRect(gTreeRowCount - 1, &r)) {
+            gDropLineY = r.bottom;
+        }
+        gDropLineLeft = spot->inner ? InnerIndent()
+                                    : InnerIndent() / 2;
+        InvertDropLine();
+    }
+    ImageList_DragShowNolock(TRUE);
+    gDropShown = *spot;
+}
+
+/* The mouse, in the tree's coordinates, has moved: follow it. */
+static void DragTo(POINT pt)
+{
+    DropSpot spot;
+
+    ImageList_DragMove(pt.x, pt.y);
+
+    GapAtPoint(pt, &spot);
+    if (gDragKind == kGazetteRowFeed) {
+        spot.valid = ResolveFeedDrop(&spot, gDragIndex, pt);
+    } else {
+        spot.valid = ResolveGroupDrop(&spot, gDragIndex);
+    }
+    /* The place it is in already is not somewhere to move it to. */
+    if (spot.valid && SamePlace(spot.place, gDragNow)) {
+        spot.valid = FALSE;
+    }
+    if (!SameDropSpot(&spot, &gDropShown)) {
+        ShowDropSpot(&spot);
+    }
+}
+
+static void CursorInTree(POINT *pt)
+{
+    GetCursorPos(pt);
+    ScreenToClient(gSidebar, pt);
+}
+
+static void BeginRowDrag(const NM_TREEVIEWA *tree)
+{
+    int   kind  = RowKind(tree->itemNew.lParam);
+    int   index = RowIndex(tree->itemNew.lParam);
+    RECT  text;
+    POINT pt = tree->ptDrag;
+
+    /* The three standing views stay where they are. */
+    if (gRowDragging || kind == kGazetteRowSmart) {
+        return;
+    }
+    CollectTreeRows();
+    gDragKind  = kind;
+    gDragIndex = index;
+    gDragNow   = CurrentPlace(kind, index);
+    ZeroMemory(&gDropShown, sizeof(gDropShown));
+    gDropLineY = -1;
+
+    /* The row as the tree draws it, picked up where it was pressed: the
+       image begins at the icon, a small icon and its gap left of the
+       text. */
+    gDragImage = (HIMAGELIST)SendMessage(gSidebar, TVM_CREATEDRAGIMAGE, 0,
+                                         (LPARAM)tree->itemNew.hItem);
+    *(HTREEITEM *)&text = tree->itemNew.hItem;
+    if (!SendMessage(gSidebar, TVM_GETITEMRECT, TRUE, (LPARAM)&text)) {
+        SetRectEmpty(&text);
+    }
+    if (gDragImage != NULL) {
+        int dx = pt.x - (text.left - GetSystemMetrics(SM_CXSMICON) - 3);
+        int dy = pt.y - text.top;
+
+        ImageList_BeginDrag(gDragImage, 0, dx > 0 ? dx : 0,
+                            dy > 0 ? dy : 0);
+        ImageList_DragEnter(gSidebar, pt.x, pt.y);
+    }
+
+    gRowDragging = TRUE;
+    SetCapture(gSidebarPane);
+    SetTimer(gSidebarPane, kDragTimer, kDragTick, NULL);
+    DragTo(pt);
+}
+
+/* Put everything the drag put up away; then, when asked, make the move. */
+static void EndRowDrag(BOOL drop)
+{
+    DropSpot spot = gDropShown;
+    int      moved;
+
+    if (!gRowDragging) {
+        return;
+    }
+    gRowDragging = FALSE;          /* first: ReleaseCapture calls back */
+    KillTimer(gSidebarPane, kDragTimer);
+
+    ImageList_DragShowNolock(FALSE);
+    InvertDropLine();
+    gDropLineY = -1;
+    SendMessage(gSidebar, TVM_SELECTDROPTARGET, TVGN_DROPHILITE, 0);
+    if (gDragImage != NULL) {
+        ImageList_DragLeave(gSidebar);
+        ImageList_EndDrag();
+        ImageList_Destroy(gDragImage);
+        gDragImage = NULL;
+    }
+    if (GetCapture() == gSidebarPane) {
+        ReleaseCapture();
+    }
+
+    if (!drop || !spot.valid) {
+        return;
+    }
+    if (gDragKind == kGazetteRowFeed) {
+        moved = GazetteCoreMoveFeed(gDragIndex, spot.place);
+    } else {
+        moved = GazetteCoreMoveGroup(gDragIndex, spot.place);
+    }
+    if (moved < 0) {
+        return;
+    }
+    (void)GazetteCoreSavePrefs();
+
+    /* The row that was carried stays chosen, where it landed, and the
+       list shows what the sidebar says is chosen. The indexes under the
+       old selection may have moved, so it is chosen afresh. */
+    gSelectedFeed  = -1;
+    gSelectedGroup = -1;
+    gSelectedSmart = -1;
+    GazetteUIFeedsChanged();
+    ChooseRow(gDragKind, moved);
+    ShowSelectionInTree();
+}
+
+/* The pane's messages while a row is carried. */
+static BOOL RowDragMessage(UINT message, WPARAM wParam, LPARAM lParam)
+{
+    POINT pt;
+
+    (void)lParam;
+    if (!gRowDragging) {
+        return FALSE;
+    }
+    switch (message) {
+    case WM_MOUSEMOVE:
+        CursorInTree(&pt);
+        DragTo(pt);
+        return TRUE;
+
+    case WM_LBUTTONUP:
+        EndRowDrag(TRUE);
+        return TRUE;
+
+    case WM_RBUTTONDOWN:
+    case WM_CAPTURECHANGED:
+    case WM_CANCELMODE:
+        EndRowDrag(FALSE);
+        return TRUE;
+
+    case WM_TIMER:
+        if (wParam != kDragTimer) {
+            return FALSE;
+        }
+        /* Escape puts it back. The tree has the keyboard, so the key is
+           looked at rather than waited for. */
+        if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) {
+            EndRowDrag(FALSE);
+            return TRUE;
+        }
+        /* At either edge the tree scrolls a row at a time, with the
+           marks lifted while it does. */
+        CursorInTree(&pt);
+        {
+            RECT client;
+            int  step = 0;
+
+            GetClientRect(gSidebar, &client);
+            if (pt.y < 0) {
+                step = SB_LINEUP;
+            } else if (pt.y >= client.bottom) {
+                step = SB_LINEDOWN;
+            } else {
+                return TRUE;
+            }
+            ImageList_DragShowNolock(FALSE);
+            InvertDropLine();
+            gDropLineY = -1;
+            SendMessage(gSidebar, TVM_SELECTDROPTARGET, TVGN_DROPHILITE, 0);
+            ZeroMemory(&gDropShown, sizeof(gDropShown));
+            SendMessage(gSidebar, WM_VSCROLL, (WPARAM)step, 0);
+            UpdateWindow(gSidebar);
+            ImageList_DragShowNolock(TRUE);
+            DragTo(pt);
+        }
+        return TRUE;
+    }
+    return FALSE;
 }
 
 /* ------------------------------------------------------------------ */

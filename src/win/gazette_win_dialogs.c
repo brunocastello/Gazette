@@ -5,8 +5,9 @@
  * The counterpart of src/ui/gazette_dialogs.c. The fields, their order and
  * their words are the Mac's; the layout is Windows' -- DIALOG templates in
  * Resources/win/Gazette.rc, measured in dialog units with the usual 7-unit
- * margins, OK then Cancel along the bottom right, "MS Shell Dlg" 8, which
- * is MS Sans Serif on every version. Nothing here draws.
+ * margins, OK then Cancel along the bottom right, DIALOGEX with
+ * DS_SHELLFONT so 2000 and XP use Tahoma and the earlier versions MS Sans
+ * Serif, each its own dialog font. Nothing here draws.
  *
  * What a dialog's answer then does is app/gazette_app.c's, shared with
  * the Mac: this file only asks.
