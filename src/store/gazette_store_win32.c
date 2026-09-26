@@ -636,6 +636,22 @@ static const char kFilter[] =
     "All files (*.*)\0*.*\0";
 
 /*
+ * The size the Open and Save dialogs are told their structure is: the
+ * Windows 95 one. MinGW-w64's commdlg.h always declares OPENFILENAMEA with
+ * the three fields Windows 2000 added, whatever _WIN32_WINNT says, and 95,
+ * 98 and NT 4.0 answer a structure of that size with CDERR_STRUCTSIZE and
+ * no dialog at all. 2000, XP and Wine take either, which is how 0.2.0
+ * shipped with Import Feeds and Export Feeds that opened nothing on
+ * Windows 95 (Bruno's 86Box, 2026-09-26) and everything passed on CI.
+ * None of the later fields is used here, so the old size loses nothing.
+ */
+#define kOpenFileNameSize OPENFILENAME_SIZE_VERSION_400A
+
+/* 76 bytes on Win32, and the build stops if it is ever anything else. */
+typedef char gazette_open_file_name_is_the_95_size[
+    (kOpenFileNameSize == 76) ? 1 : -1];
+
+/*
  * A common dialog's own failure, as opposed to Cancel: both return FALSE,
  * and only CommDlgExtendedError tells them apart -- 0 is the user's Cancel.
  */
@@ -666,7 +682,7 @@ int GazetteStoreAskAndReadFile(const char *prompt, char *buf, long cap,
     path[0] = '\0';
 
     ZeroMemory(&ofn, sizeof(ofn));
-    ofn.lStructSize = sizeof(ofn);
+    ofn.lStructSize = kOpenFileNameSize;
     ofn.hwndOwner   = GetActiveWindow();
     ofn.lpstrFilter = kFilter;
     ofn.lpstrFile   = path;
@@ -703,7 +719,7 @@ int GazetteStoreAskAndWriteFile(const char *prompt, const char *defaultName,
     }
 
     ZeroMemory(&ofn, sizeof(ofn));
-    ofn.lStructSize = sizeof(ofn);
+    ofn.lStructSize = kOpenFileNameSize;
     ofn.hwndOwner   = GetActiveWindow();
     ofn.lpstrFilter = kFilter;
     ofn.lpstrFile   = path;
