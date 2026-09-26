@@ -181,10 +181,16 @@ jobs:
             "https://www.nbcnews.com/" \
             "https://9to5mac.com/feed/"
 
+      # Under a virtual display: the test also opens File > Import Feeds'
+      # and Export Feeds' Open and Save dialogs and answers them, which a
+      # console program cannot do with nowhere to draw.
       - name: The Windows file store, under Wine
         env:
           WINEDEBUG: -all
-        run: wine build-win/GazetteStoreTest.exe
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends xvfb
+          xvfb-run -a wine build-win/GazetteStoreTest.exe
 
       - name: The whole engine, under Wine (core, refresh, cache, read state)
         env:
