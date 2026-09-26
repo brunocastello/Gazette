@@ -627,9 +627,12 @@ static int Failed(const char *what)
 }
 
 /* The filter both dialogs offer: OPML first, since that is what Gazette
-   imports and exports, then anything. */
+   imports and exports, then anything. *.opm as well: a feed list the Mac
+   exported and copied to a PC floppy arrives with an 8.3 name, since
+   Mac OS 9 writes DOS disks without long names, and "Gazette Feeds.opml"
+   becomes something.OPM that *.opml alone would hide. */
 static const char kFilter[] =
-    "OPML files (*.opml; *.xml)\0*.opml;*.xml\0"
+    "OPML files (*.opml; *.opm; *.xml)\0*.opml;*.opm;*.xml\0"
     "All files (*.*)\0*.*\0";
 
 /*
