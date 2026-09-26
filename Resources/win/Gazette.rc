@@ -260,8 +260,8 @@ END
 /* ------------------------------------------------------------------ */
 
 VS_VERSION_INFO VERSIONINFO
-    FILEVERSION     0,1,0,0
-    PRODUCTVERSION  0,1,0,0
+    FILEVERSION     0,2,0,0
+    PRODUCTVERSION  0,2,0,0
     FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
     FILEFLAGS       0
     FILEOS          VOS__WINDOWS32
@@ -276,12 +276,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "brunocastello"
             VALUE "FileDescription",  "Gazette - RSS / Atom Reader"
-            VALUE "FileVersion",      "0.1.0"
+            VALUE "FileVersion",      "0.2.0"
             VALUE "InternalName",     "Gazette"
             VALUE "LegalCopyright",   "Copyright (c) 2026 brunocastello"
             VALUE "OriginalFilename", "GAZETTE.EXE"
             VALUE "ProductName",      "Gazette"
-            VALUE "ProductVersion",   "0.1.0"
+            VALUE "ProductVersion",   "0.2.0"
         END
     END
     BLOCK "VarFileInfo"

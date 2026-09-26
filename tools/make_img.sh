@@ -3,7 +3,7 @@
 # make_img.sh - package the Windows build the way a period machine can
 # actually take delivery of it.
 #
-#   make_img.sh <path to Gazette.exe> <output directory>
+#   make_img.sh <path to Gazette.exe> <output directory> [Setup.exe]
 #
 # Produces two files, which are the Windows answer to the Mac build's
 # .sit and .dsk:
@@ -29,9 +29,10 @@ set -eu
 
 EXE=${1:-}
 OUT=${2:-}
+SETUP=${3:-}
 
 if [ -z "$EXE" ] || [ -z "$OUT" ]; then
-    echo "usage: make_img.sh <Gazette.exe> <output directory>" >&2
+    echo "usage: make_img.sh <Gazette.exe> <output directory> [Setup.exe]" >&2
     exit 2
 fi
 
@@ -52,29 +53,26 @@ trap 'rm -rf "$STAGE"' EXIT
 # on a plain NT 4 command prompt's eye, and the floppy is read on both.
 cp "$EXE" "$STAGE/GAZETTE.EXE"
 
-# CRLF throughout: this file is read in Notepad, which before XP does
-# not break lines on a bare LF and shows the whole read-me as one line.
-sed 's/$/\r/' > "$STAGE/README.TXT" <<'TEXT'
-Gazette - RSS / Atom reader
-Windows 95, 98, Me, NT 4.0, 2000 and XP
+# The read-me and the licence, CRLF throughout: they are read in Notepad,
+# which before XP does not break lines on a bare LF and shows a whole file
+# as one line. The read-me is installer/README.TXT, the one the installer
+# carries, so the three ways of getting Gazette say the same thing.
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+sed 's/$/\r/' "$ROOT/installer/README.TXT" > "$STAGE/README.TXT"
+sed 's/$/\r/' "$ROOT/LICENSE"              > "$STAGE/LICENSE.TXT"
 
-Copy GAZETTE.EXE anywhere and run it. There is nothing to install: the
-application is one file, statically linked, and writes nothing until it
-is asked to.
-
-On XP the window is drawn in the themed common controls; on everything
-earlier it is drawn in the 3D chrome those versions have. That is the
-same binary either way.
-
-Copyright (c) 2026 brunocastello
-TEXT
+# The installer, when there is one: on the floppy and in the zip beside
+# the bare executable, which still runs from either with nothing installed.
+if [ -n "$SETUP" ]; then
+    cp "$SETUP" "$STAGE/SETUP.EXE"
+fi
 
 # ------------------------------------------------------------------ #
 # The archive                                                        #
 # ------------------------------------------------------------------ #
 
 rm -f "$OUT/Gazette.zip"
-(cd "$STAGE" && zip -q -X "$OUT/Gazette.zip" GAZETTE.EXE README.TXT)
+(cd "$STAGE" && zip -q -X "$OUT/Gazette.zip" *)
 
 # ------------------------------------------------------------------ #
 # The floppy                                                         #

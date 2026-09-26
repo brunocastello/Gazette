@@ -281,10 +281,10 @@ resource 'DITL' (kConfirmAlertID, "Confirm") {
    read that header. */
 resource 'vers' (1) {
     0x00,                           /* major revision, BCD    */
-    0x10,                           /* minor revision, BCD    */
+    0x20,                           /* minor revision, BCD    */
     final,                          /* release stage          */
     0x00,                           /* non-final release #    */
     0,                              /* region code: verUS     */
-    "0.1.0",
-    "0.1.0, Copyright 2026 brunocastello"
+    "0.2.0",
+    "0.2.0, Copyright 2026 brunocastello"
 };

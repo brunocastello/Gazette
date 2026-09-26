@@ -24,12 +24,19 @@ extern "C" {
  * names itself honestly is easier for an operator to interpret in a log than
  * one pretending to be Netscape.
  */
+/* The version comes from gazette_version.h, which is plain #defines and no
+   system header, so this header stays portable; it was a literal once, and
+   stayed at 0.1.0 after the About box had moved on. */
+#include "gazette_version.h"
+
 #ifdef GAZETTE_WIN32
 /* The Windows build says so: set by cmake/GazetteWindows.cmake, never by
    the host tests, so what they check is the Mac's. */
-#define kGazetteUserAgent "Gazette/0.1.0 (Windows; Win32)"
+#define kGazetteUserAgent \
+    "Gazette/" GAZETTE_VERSION_STRING " (Windows; Win32)"
 #else
-#define kGazetteUserAgent "Gazette/0.1.0 (Macintosh; Mac OS 9; PowerPC)"
+#define kGazetteUserAgent \
+    "Gazette/" GAZETTE_VERSION_STRING " (Macintosh; Mac OS 9; PowerPC)"
 #endif
 
 /* ------------------------------------------------------------------ */

@@ -38,6 +38,10 @@ on:
       - 'cmake/**'
       - 'CMakeLists.txt'
       - 'tools/make_img.sh'
+      - 'installer/**'
+      - 'LICENSE'
+      - 'src/gazette_version.h'
+      - 'docs/release-notes.md'
       - '.github/workflows/windows.yml'
   pull_request:
     paths:
@@ -57,12 +61,18 @@ on:
       - 'cmake/**'
       - 'CMakeLists.txt'
       - 'tools/make_img.sh'
+      - 'installer/**'
+      - 'LICENSE'
+      - 'src/gazette_version.h'
+      - 'docs/release-notes.md'
       - '.github/workflows/windows.yml'
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write        # only used by the release step, on tags
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -77,13 +87,14 @@ jobs:
           # application for these machines must not need.
           #
           # mtools writes the floppy image without root and without a
-          # loop mount; zip makes the archive.
+          # loop mount; zip makes the archive; nsis builds the installer.
           sudo apt-get install -y --no-install-recommends \
             gcc-mingw-w64-i686-win32 \
             g++-mingw-w64-i686-win32 \
             binutils-mingw-w64-i686 \
             mtools \
-            zip
+            zip \
+            nsis
 
       - name: Configure
         run: |
@@ -187,68 +198,74 @@ jobs:
           wine enginetest/GazetteEngineTest.exe | tee second.txt
           grep -q "read from the file" second.txt
 
-      - name: The window itself, under Wine, photographed
-        # Not a gate: Wine draws its own common controls, not Windows 95's,
-        # so this is for seeing what the window holds -- live headlines, the
-        # tree, the reader -- before a real machine does. In a folder of its
-        # own, with a feed list that has a group in it (its folder icon, a
-        # feed inside it, one switched off): Google News is fetched, its
-        # first article opened and its page read.
-        continue-on-error: true
-        env:
-          WINEDEBUG: -all
-          WINEDLLOVERRIDES: "mscoree,mshtml="
+      # NSIS, as Gateway's installer is built: the ANSI stub, since the
+      # Unicode one will not load on 95, 98 or Me. Built on every push, not
+      # only on a tag -- an asset that is only made during a release is one
+      # whose first test is the release.
+      - name: Build the installer
         run: |
-          set -eu
-          sudo apt-get install -y --no-install-recommends xvfb imagemagick
-          mkdir -p shot && cp build-win/Gazette.exe shot/
-          printf '%s\r\n' \
-            'feed     = https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en | Google News - Top Stories' \
-            'group        = Technology' \
-            'feed     = https://9to5mac.com/feed/ | 9to5Mac' \
-            'feed-off = https://feeds.nbcnews.com/nbcnews/public/news | NBC News' \
-            'group-end    = 1' > "shot/Gazette.ini"
-          Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 &
-          export DISPLAY=:99
-          sleep 3
-          (cd shot && wine Gazette.exe >/dev/null 2>&1 &)
-          sleep 45
-          import -window root shot/window.png
-          wineserver -k || true
+          set -euo pipefail
+          VERSION=$(sed -n 's/^#define GAZETTE_VERSION_STRING "\(.*\)"/\1/p' \
+                    src/gazette_version.h)
+          echo "Gazette $VERSION"
+          sed 's/$/\r/' installer/README.TXT > build-win/README.TXT
+          sed 's/$/\r/' LICENSE              > build-win/LICENSE.TXT
+          makensis -V2 -DVERSION="$VERSION" -DSRC=../build-win \
+                   installer/gazette.nsi
+          mv installer/Setup.exe build-win/Setup.exe
+          ls -l build-win/Setup.exe
 
-          # Again with a feed whose pages carry photographs first, so its
-          # first article opens with its pictures fetched and decoded by
-          # stb_image (gazette_win_image.c) -- Google News's first story is
-          # often a summary only. A fresh folder: no cache, no read marks.
-          mkdir -p shot2 && cp build-win/Gazette.exe shot2/
-          printf '%s\r\n' \
-            'feed     = https://9to5mac.com/feed/ | 9to5Mac' > "shot2/Gazette.ini"
-          (cd shot2 && wine Gazette.exe >/dev/null 2>&1 &)
-          sleep 60
-          import -window root shot/photos.png
-          wineserver -k || true
-          ls -l shot
+      - name: Will the installer run on Windows 95
+        run: |
+          set -euo pipefail
+          i686-w64-mingw32-objdump -p build-win/Setup.exe \
+            | grep -E 'MajorSubsystemVersion|MinorSubsystemVersion|Subsystem'
+          echo "DLLs imported:"
+          i686-w64-mingw32-objdump -p build-win/Setup.exe | grep -i 'DLL Name'
 
-      - name: Upload the photograph
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v6
-        with:
-          name: Gazette-win32-screenshot
-          path: |
-            shot/window.png
-            shot/photos.png
-          if-no-files-found: ignore
+      - name: Package the .zip and the floppy .img
+        run: tools/make_img.sh build-win/Gazette.exe package build-win/Setup.exe
 
-      - name: Package release assets (.zip and floppy .img)
-        run: tools/make_img.sh build-win/Gazette.exe package
-
-      - name: Upload executable, archive and disk image
+      - name: Upload the installer, archive and disk image
         uses: actions/upload-artifact@v6
         with:
           name: Gazette-win32
           path: |
             build-win/Gazette.exe
+            build-win/Setup.exe
             package/Gazette.zip
             package/Gazette.img
           if-no-files-found: error
+
+      # A tag's build becomes the Windows half of the release. The Mac's
+      # build.yml makes the same release from the same tag, and either may
+      # finish first: whichever arrives first creates it with the notes,
+      # and the other adds its files. --clobber makes a re-run refresh them.
+      - name: Publish release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp package/Gazette.zip "release/Gazette-${GITHUB_REF_NAME}-windows.zip"
+          cp package/Gazette.img "release/Gazette-${GITHUB_REF_NAME}-windows.img"
+          cp build-win/Setup.exe "release/Gazette-${GITHUB_REF_NAME}-windows-setup.exe"
+
+          for attempt in 1 2 3 4 5 6; do
+            if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$attempt" = 6 ]; then
+              gh release create "$GITHUB_REF_NAME" \
+                --title "Gazette $GITHUB_REF_NAME" \
+                --notes-file docs/release-notes.md
+              break
+            fi
+            sleep 20
+          done
+
+          gh release upload "$GITHUB_REF_NAME" --clobber \
+            "release/Gazette-${GITHUB_REF_NAME}-windows.zip" \
+            "release/Gazette-${GITHUB_REF_NAME}-windows.img" \
+            "release/Gazette-${GITHUB_REF_NAME}-windows-setup.exe"
