@@ -249,6 +249,7 @@ static void HeadlineRowChosen(void);
 
 static LRESULT CALLBACK SplitterProc(HWND, UINT, WPARAM, LPARAM);
 static void SyncSidebarRows(void);
+static void RebuildSidebarRows(void);
 static void AdjustToolbarState(void);
 static void MeasureToolbar(void);
 
@@ -2456,6 +2457,8 @@ static void RelabelRows(HTREEITEM item)
     }
 }
 
+static void ShedStaleScrollBar(void);
+
 /* How far right the furthest label on an open row reaches, as the tree
    itself has laid it out. */
 static int WidestLabel(void)
@@ -2504,6 +2507,49 @@ static void RelabelSidebar(void)
     }
     /* Anything that scrolled sideways before goes back to the left. */
     SendMessage(gSidebar, WM_HSCROLL, MAKEWPARAM(SB_THUMBPOSITION, 0), 0);
+
+    ShedStaleScrollBar();
+}
+
+/*
+ * A horizontal bar on a tree whose labels all fit is a stale one (Bruno,
+ * 86Box, 2026-09-26: the bar stayed with every label well short of the
+ * edge). Windows 95's tree keeps the widest width any label has had and
+ * does not bring it down when a label is shortened -- and the first labels
+ * go in at start-up, before the tree has a width to fit them to, so they
+ * go in whole. Wine's tree measures afresh, which is why its photographs
+ * never showed the bar.
+ *
+ * Two remedies, the lighter first: the tree's own font handed back to it,
+ * on which it measures every item again; and if the bar outlives that,
+ * the tree made again, which starts its widths from nothing. Once each,
+ * guarded, so neither can call the other round.
+ */
+static void ShedStaleScrollBar(void)
+{
+    static BOOL shedding;
+    static int  gaveUpAt = -1;      /* a width where neither remedy worked */
+    RECT        client;
+
+    if (shedding || gSidebar == NULL ||
+        !(GetWindowLongA(gSidebar, GWL_STYLE) & WS_HSCROLL) ||
+        !GetClientRect(gSidebar, &client) || client.right <= 0 ||
+        client.right == gaveUpAt || WidestLabel() > client.right) {
+        return;
+    }
+    shedding = TRUE;
+    SendMessage(gSidebar, WM_SETFONT,
+                (WPARAM)SendMessage(gSidebar, WM_GETFONT, 0, 0),
+                MAKELPARAM(TRUE, 0));
+    if (GetWindowLongA(gSidebar, GWL_STYLE) & WS_HSCROLL) {
+        RebuildSidebarRows();
+    }
+    /* Still there: something else is holding it, and making the tree again
+       on every relabel would be the flash of before. Not at this width. */
+    if (GetWindowLongA(gSidebar, GWL_STYLE) & WS_HSCROLL) {
+        gaveUpAt = client.right;
+    }
+    shedding = FALSE;
 }
 
 /* Which rows "Hide Read Feeds" leaves standing: platinum_window.c's
@@ -2671,14 +2717,12 @@ static int CurrentShape(TreeShape *out)
  * one). When they are not, the tree is made again with its painting held
  * off until it is done, scrolled back to where it was.
  */
+static TreeShape gWantedShape[kMaxTreeShape];
+
 static void SyncSidebarRows(void)
 {
-    static TreeShape wanted[kMaxTreeShape];
     static TreeShape current[kMaxTreeShape];
-    HTREEITEM        groupItem[kGazetteMaxGroups];
-    HTREEITEM        top;
-    int              count, have, i;
-    int              topKind = -1, topIndex = -1;
+    int              count, have;
 
     ApplyFeedVisibility();
     CountSmartRows();
@@ -2687,14 +2731,29 @@ static void SyncSidebarRows(void)
         return;
     }
 
-    count = WantedShape(wanted);
+    count = WantedShape(gWantedShape);
     have  = CurrentShape(current);
     if (have == count &&
-        memcmp(wanted, current, sizeof(TreeShape) * (size_t)count) == 0) {
+        memcmp(gWantedShape, current,
+               sizeof(TreeShape) * (size_t)count) == 0) {
         RelabelSidebar();
         ShowSelectionInTree();
         return;
     }
+    RebuildSidebarRows();
+    ShedStaleScrollBar();
+}
+
+/* The tree made again from the rows the preferences want, painting held
+   off until it is done, scrolled back to where it was. */
+static void RebuildSidebarRows(void)
+{
+    HTREEITEM groupItem[kGazetteMaxGroups];
+    HTREEITEM top;
+    int       count = WantedShape(gWantedShape);
+    int       i;
+    int       topKind = -1, topIndex = -1;
+    TreeShape *wanted = gWantedShape;
 
     /* The row at the top of the view, to scroll back to afterwards. */
     top = (HTREEITEM)SendMessage(gSidebar, TVM_GETNEXTITEM,
