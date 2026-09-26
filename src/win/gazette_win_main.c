@@ -338,6 +338,7 @@ static void AdjustMenus(HMENU menu)
     /* View. */
     Enable(menu, IDM_VIEW_HIDE_READ, TRUE);
     Enable(menu, IDM_VIEW_HIDE_FEEDS, TRUE);
+    Enable(menu, IDM_VIEW_SHOW_PHOTOS, TRUE);
     CheckMenuItem(menu, IDM_VIEW_HIDE_READ, MF_BYCOMMAND |
                   (GazetteCoreHideReadArticles() ? MF_CHECKED : MF_UNCHECKED));
     CheckMenuItem(menu, IDM_VIEW_HIDE_FEEDS, MF_BYCOMMAND |
@@ -580,6 +581,7 @@ static BOOL MenuCommand(HWND hwnd, int id)
 
     case IDM_VIEW_HIDE_READ:      GazetteAppHideReadArticles();     return TRUE;
     case IDM_VIEW_HIDE_FEEDS:     GazetteAppHideReadFeeds();        return TRUE;
+    case IDM_VIEW_SHOW_PHOTOS:    GazetteAppShowPhotos();           return TRUE;
     case IDM_VIEW_SIDEBAR:        HandleHideSidebar();              return TRUE;
     case IDM_VIEW_TOOLBAR:        HandleHideToolbar();              return TRUE;
 

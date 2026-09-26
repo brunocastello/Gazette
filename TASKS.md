@@ -62,7 +62,7 @@ Reuse Gateway’s Win32 networking and build patterns. Keep portable core pure.
 > 2. Edit > Copy: a text selection in `gazette_win_reader.c` (drag to select, Ctrl+C, the clipboard).
 > 3. Contextual menus on sidebar rows and headlines (the Mac's kMenuCtx* sets); Tab between the three panes.
 > 4. A way to clear a search (Find cannot send empty text).
-> 5. Photos: decide the JPEG path (OleLoadPicture vs a small decoder) before building (step 4 below).
+> 5. [~] Photos: decided 2026-09-26 -- stb_image (roytam1's suggestion, Bruno's go-ahead), v2.30 vendored in `third_party/stb/`, trimmed to JPEG/PNG/GIF (the engine's three), no SIMD/stdio/TLS. `src/win/gazette_win_image.c` decodes once to a 24-bit DIB shrunk to 560x420 (box average, alpha over white); the reader gives each picture an empty paragraph of its height, grey placeholder while it comes, caption in the byline face; View > Show Photos wired. WebP/AVIF would be roytam1's stbiview if ever wanted. A RichEdit reader (his Telegacy pointer) is not needed: the pane lays its own text out.
 > 6. Bruno's check on 86Box and XP.
 > Rules to keep: Windows styling is Windows-only (the Mac stays as in its last release, 0.3.6); nothing from 0x80-0x9F in Windows text; title is just "Gazette"; ask before touching anything outside the repo (never his VM disk images).
 - [~] Win32 window + message loop that polls the network layer. Loop done (PeekMessage + MsgWaitForMultipleObjects 100 ms, `PumpNetwork` idle slice); nothing to pump until the store and refresh join.

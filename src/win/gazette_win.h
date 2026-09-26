@@ -111,4 +111,20 @@ BOOL GazetteWinAskName(HWND owner, const char *windowTitle,
 BOOL GazetteWinAskPreferences(HWND owner, long *refreshMinutes,
                               long *maxArticles);
 
+/* A photograph, decoded by gazette_win_image.c (stb_image) into a 24-bit
+   bottom-up DIB, shrunk to fit maxWidth x maxHeight and never enlarged.
+   Painted at its own size or smaller. */
+typedef struct {
+    int              width;
+    int              height;
+    BITMAPINFOHEADER info;
+    unsigned char   *bits;
+} GazetteWinPicture;
+
+BOOL GazetteWinDecodePicture(const char *bytes, long len, int maxWidth,
+                             int maxHeight, GazetteWinPicture *out);
+void GazetteWinFreePicture(GazetteWinPicture *picture);
+void GazetteWinDrawPicture(HDC dc, const GazetteWinPicture *picture,
+                           int x, int y, int width, int height);
+
 #endif /* GAZETTE_WIN_H */

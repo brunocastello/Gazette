@@ -8,7 +8,8 @@
  * 95 -- so this pane lays the text out itself: words wrapped across runs of
  * a few faces, a line at a time, into a list of lines it paints and
  * scrolls. It is small because the job is: no editing, no selection yet,
- * one column.
+ * one column, and the article's photographs set into it between
+ * paragraphs.
  *
  * What goes in is composed exactly as the Mac composes it (SetReaderText
  * and AppendBody there): the headline, the byline, a rule, then the
@@ -31,6 +32,7 @@
 #include "extract/gazette_extract.h"
 #include "feeds/gazette_feed_parse.h"
 #include "feeds/gazette_feeds.h"
+#include "feeds/gazette_photos.h"
 #include "portable/gazette_portable.h"
 
 /* WM_MOUSEWHEEL is Windows 98 and NT 4's; on 95 it simply never arrives. */
@@ -48,7 +50,12 @@ enum {
     kMaxRuns     = 1024,
     kMaxPieces   = 8192,
     kMaxLines    = 4096,
-    kWheelLines  = 3
+    kWheelLines  = 3,
+    /* A photograph fills the column up to this, as on the Mac
+       (kPhotoMaxWidth / kPhotoMaxHeight there). */
+    kPhotoMaxWidth  = 560,
+    kPhotoMaxHeight = 420,
+    kCaptionGap     = 3     /* between a picture and its caption */
 };
 
 /* The faces a run can wear. The low three bits are the body's inline
@@ -97,6 +104,28 @@ static int   gLeading;      /* extra height on each line of this paragraph */
 static int   gTextHeight;
 static int   gScroll;
 static int   gLaidWidth = -1;
+
+/*
+ * The photographs, as they stand in the article. The text holds an empty
+ * paragraph where each one goes, and the layout gives that paragraph the
+ * picture's height instead of a line -- the Mac reserves a run of empty
+ * lines in its TextEdit record and paints over them, and this is the same
+ * idea without TextEdit in the way.
+ *
+ * A decoded picture is kept across recompositions -- the pane is composed
+ * again each time a picture lands -- and goes when the article does.
+ */
+typedef struct {
+    GazetteWinPicture picture;  /* decoded; bits NULL until then */
+    BOOL              undrawable;   /* could not be read: takes no space */
+    int               para;     /* offset of its empty paragraph, or -1 */
+    BOOL              placeholder;  /* still coming: a grey field */
+    BOOL              captioned;
+    RECT              box;      /* laid out, from the top of the text */
+} ReaderPhoto;
+
+static ReaderPhoto gPhotos[kGazetteMaxPhotos];
+static int         gPhotoArticle = -1;  /* whose the pictures are */
 
 static HWND  gPane;
 static HFONT gFonts[kFaceCount];
@@ -161,6 +190,73 @@ static void MeasureFace(HDC dc, int face)
 }
 
 /* ------------------------------------------------------------------ */
+/* Photographs                                                         */
+/* ------------------------------------------------------------------ */
+
+static void ForgetPhotos(void)
+{
+    int i;
+
+    for (i = 0; i < kGazetteMaxPhotos; i++) {
+        GazetteWinFreePicture(&gPhotos[i].picture);
+        gPhotos[i].undrawable = FALSE;
+        gPhotos[i].para       = -1;
+    }
+    gPhotoArticle = -1;
+}
+
+/*
+ * Whether a picture takes space in the article, decoding it the first time
+ * it is asked about once its bytes are here. While it is still coming it
+ * stands as a placeholder, so the page jumps no more than it must when the
+ * real one lands; not coming, or unreadable, it takes none and the text
+ * closes over it -- the Mac's PhotoSize.
+ */
+static BOOL PhotoTakesSpace(int slot)
+{
+    ReaderPhoto *p = &gPhotos[slot];
+
+    if (p->undrawable) {
+        return FALSE;
+    }
+    switch (GazettePhotosState(slot)) {
+    case kGazettePhotoLoaded:
+        if (p->picture.bits == NULL) {
+            long        len   = 0;
+            const char *bytes = GazettePhotosData(slot, &len);
+
+            if (!GazetteWinDecodePicture(bytes, len, kPhotoMaxWidth,
+                                         kPhotoMaxHeight, &p->picture)) {
+                p->undrawable = TRUE;
+                return FALSE;
+            }
+        }
+        p->placeholder = FALSE;
+        return TRUE;
+
+    case kGazettePhotoPending:
+        p->placeholder = TRUE;
+        return TRUE;
+
+    default:
+        return FALSE;
+    }
+}
+
+/* The slot whose picture stands in the empty paragraph at this offset. */
+static int PhotoAt(int offset)
+{
+    int i;
+
+    for (i = 0; i < kGazetteMaxPhotos; i++) {
+        if (gPhotos[i].para == offset) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* ------------------------------------------------------------------ */
 /* Composing                                                           */
 /* ------------------------------------------------------------------ */
 
@@ -199,15 +295,17 @@ static void NoteRun(int *runStart, unsigned char *runFace, unsigned char face)
 /*
  * The body, with the extractor's marks read out of it: paragraphs end at
  * newlines, and each becomes one line break here -- the gap between
- * paragraphs is laid out rather than typed. The Mac's AppendBody, with
- * one difference while Windows has no photographs: a picture's marker is
- * dropped and the text closes over it, which is what the Mac does too
- * when photos are off.
+ * paragraphs is laid out rather than typed. The Mac's AppendBody. A
+ * paragraph that is only the photo marker is where a picture stood: when
+ * the picture takes space it becomes an empty paragraph the layout makes
+ * the picture's height; when it does not -- not coming, photos off,
+ * unreadable -- it is dropped and the text closes over it.
  */
-static void AppendBody(const char *body)
+static void AppendBody(const char *body, BOOL photos)
 {
     const char   *p        = body;
     int           first    = 1;
+    int           marker   = 0;
     int           runStart = gTextLen;
     unsigned char runFace  = 0;
 
@@ -224,6 +322,19 @@ static void AppendBody(const char *body)
         }
 
         if (end - p == 1 && *p == (char)kGazettePhotoMarker) {
+            int slot = marker++;
+
+            if (photos && slot < GazettePhotosCount() &&
+                slot < kGazetteMaxPhotos && PhotoTakesSpace(slot)) {
+                if (!first) {
+                    AppendChar('\n');
+                }
+                first = 0;
+                NoteRun(&runStart, &runFace, 0);
+                gPhotos[slot].para      = gTextLen;
+                gPhotos[slot].captioned =
+                    (BOOL)(GazettePhotosCaption(slot)[0] != '\0');
+            }
             p = end;
             while (*p == '\n') {
                 p++;
@@ -307,6 +418,20 @@ void GazetteWinReaderCompose(int article)
     gScroll     = 0;
     gLaidWidth  = -1;
 
+    /* The pictures' places are composed afresh below; the decoded ones are
+       kept only while they are still this article's. */
+    if (gPhotoArticle != GazettePhotosArticle()) {
+        ForgetPhotos();
+        gPhotoArticle = GazettePhotosArticle();
+    }
+    {
+        int i;
+
+        for (i = 0; i < kGazetteMaxPhotos; i++) {
+            gPhotos[i].para = -1;
+        }
+    }
+
     if (a == NULL) {
         static const char kNothing[] = "Select a headline to read it.";
         int               start      = 0;
@@ -363,7 +488,11 @@ void GazetteWinReaderCompose(int article)
             AppendText(kWaiting, (int)sizeof(kWaiting) - 1);
             NoteRun(&start, &face, 0);
         } else if (body[0] != '\0') {
-            AppendBody(body);
+            /* Pictures only in the page they came from, and only when the
+               job fetching them is this article's. */
+            AppendBody(body, (BOOL)(GazetteCoreShowPhotos() &&
+                                    body != a->body &&
+                                    GazettePhotosArticle() == article));
         } else {
             static const char kNone[] = "(This feed carries no summary for "
                                         "this article.)";
@@ -576,10 +705,53 @@ static void LayoutWidth(HDC dc, int width)
 
     while (start <= gTextLen) {
         int end = start;
+        int slot;
 
         while (end < gTextLen && gText[end] != '\n') {
             end++;
         }
+
+        /* A picture's paragraph: the picture's height, and its caption's,
+           then the blank line a paragraph is followed by. */
+        slot = (end == start) ? PhotoAt(start) : -1;
+        if (slot >= 0) {
+            ReaderPhoto *ph     = &gPhotos[slot];
+            int          column = (width < kPhotoMaxWidth) ? width
+                                                           : kPhotoMaxWidth;
+            int          w, h;
+
+            if (ph->placeholder) {
+                w = column;
+                h = w * 2 / 3;
+                if (h > kPhotoMaxHeight) {
+                    h = kPhotoMaxHeight;
+                }
+            } else {
+                w = ph->picture.width;
+                h = ph->picture.height;
+                if (w > column) {               /* the column narrowed */
+                    h = (int)((long)h * column / w);
+                    w = column;
+                }
+            }
+            /* In the middle of the column when it does not fill it. */
+            ph->box.left   = kMargin + (width - w) / 2;
+            ph->box.top    = y;
+            ph->box.right  = ph->box.left + w;
+            ph->box.bottom = y + h;
+            y += h;
+            MeasureFace(dc, kFaceByline);
+            if (ph->captioned) {
+                y += kCaptionGap + gHeight[kFaceByline];
+            }
+            if (end < gTextLen) {
+                MeasureFace(dc, 0);
+                y += gHeight[0];
+            }
+            start = end + 1;
+            continue;
+        }
+
         if (end == start && end >= gTextLen) {
             break;
         }
@@ -725,6 +897,50 @@ static void Paint(HDC dc, const RECT *client, const RECT *dirty)
             SetTextColor(dc, GetSysColor(COLOR_WINDOWTEXT));
             TextOutA(dc, piece->x, top + line->baseline,
                      gText + piece->start, piece->len);
+        }
+    }
+
+    /* The pictures over their paragraphs: a grey field with a darker edge
+       while one is coming, the picture once it is here, and its caption
+       on the line under it in the byline's face. */
+    for (i = 0; i < kGazetteMaxPhotos; i++) {
+        const ReaderPhoto *ph = &gPhotos[i];
+        RECT               box, caption, hit;
+
+        if (ph->para < 0) {
+            continue;
+        }
+        box = ph->box;
+        OffsetRect(&box, 0, -gScroll);
+        caption = box;
+        caption.top    = box.bottom + kCaptionGap;
+        caption.bottom = caption.top + gHeight[kFaceByline];
+
+        if (IntersectRect(&hit, &box, dirty)) {
+            if (ph->placeholder) {
+                HBRUSH grey  = CreateSolidBrush(GazetteWindowLightTone());
+                HBRUSH frame = GetSysColorBrush(COLOR_BTNSHADOW);
+
+                FillRect(dc, &box, grey);
+                FrameRect(dc, &box, frame);
+                DeleteObject(grey);
+            } else {
+                GazetteWinDrawPicture(dc, &ph->picture, box.left, box.top,
+                                      box.right - box.left,
+                                      box.bottom - box.top);
+            }
+        }
+        if (ph->captioned && IntersectRect(&hit, &caption, dirty)) {
+            const char *alt = GazettePhotosCaption(i);
+
+            SetTextAlign(dc, TA_TOP | TA_LEFT);
+            SelectObject(dc, FaceFont(kFaceByline));
+            SetTextColor(dc, GetSysColor(COLOR_WINDOWTEXT));
+            /* Cut to the picture's width with three full stops -- not the
+               ellipsis character, which 95 draws as a black bar. */
+            DrawTextA(dc, alt, -1, &caption,
+                      DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+            SetTextAlign(dc, TA_BASELINE | TA_LEFT);
         }
     }
 

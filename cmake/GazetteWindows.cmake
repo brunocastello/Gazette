@@ -154,6 +154,7 @@ set(GAZETTE_WIN_SOURCES
     src/win/gazette_win_window.c
     src/win/gazette_win_reader.c   # the article pane's own layout
     src/win/gazette_win_dialogs.c  # src/ui/gazette_dialogs.c
+    src/win/gazette_win_image.c    # photographs, through stb_image
 )
 
 add_executable(Gazette WIN32
@@ -170,6 +171,13 @@ set_target_properties(Gazette PROPERTIES OUTPUT_NAME "Gazette")
 target_include_directories(Gazette PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/Resources/win
+)
+
+# stb_image (third_party/stb, public domain) is compiled inside
+# gazette_win_image.c. Its directory is a system one so that its own
+# warnings stay its own and ours still show.
+target_include_directories(Gazette SYSTEM PRIVATE
+    ${CMAKE_SOURCE_DIR}/third_party
 )
 
 target_compile_options(Gazette PRIVATE -Wall -Wextra -Wno-unused-parameter)
