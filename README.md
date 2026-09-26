@@ -33,8 +33,8 @@ is written twice.
   are standing views across every feed.
 - **The article**: opening a headline fetches the page it links to and
   extracts the story — headline, byline and furniture left out — with
-  headings, emphasis, lists and links kept, and up to three pictures drawn
-  in place. The feed's summary stands in when the page cannot be had.
+  headings, emphasis, lists and links kept, and its pictures drawn in
+  place — three by default, up to ten in Preferences. The feed's summary stands in when the page cannot be had.
 - **Offline**: every feed is cached, so the window is readable the moment it
   opens and works with the machine unplugged. Read and starred marks survive
   a refresh.

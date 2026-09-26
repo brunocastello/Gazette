@@ -462,7 +462,8 @@ static void TestPrefsParse(void)
     {
         static const char two[]  = "max-photos = 2\r";
         static const char none[] = "max-photos = 0\r";
-        static const char many[] = "max-photos = 9\r";
+        static const char nine[] = "max-photos = 9\r";
+        static const char many[] = "max-photos = 12\r";
         static char       out[kGazettePrefsTextMax];
         GazettePrefs      q;
 
@@ -473,8 +474,10 @@ static void TestPrefsParse(void)
                   strstr(out, "max-photos         = 2") != NULL);
         GazettePrefsParse(none, sizeof none - 1, &q);
         CheckLong("max-photos below one is one", q.maxPhotos, 1);
+        GazettePrefsParse(nine, sizeof nine - 1, &q);
+        CheckLong("nine photos are nine", q.maxPhotos, 9);
         GazettePrefsParse(many, sizeof many - 1, &q);
-        CheckLong("max-photos above the limit is the limit", q.maxPhotos, 3);
+        CheckLong("max-photos above the limit is the limit", q.maxPhotos, 10);
     }
 
     /* File order, exactly — including the disabled one, which keeps its place
@@ -2650,16 +2653,22 @@ static void TestExtractPhotos(void)
     CheckStr("the small candidate of a srcset", GazetteExtractPhoto(&e, 1)->url,
              "https://s/a-320.jpg");
 
-    /* The cap, and the article block starting the list over. */
+    /* The cap -- ten, the most Preferences offers -- and the article
+       block starting the list over. */
     text = Extract(&e, "<body><p>Page.</p><img src=\"https://s/page.jpg\">"
                        "<article><p>One.</p>"
                        "<img src=\"https://s/1.jpg\"><img src=\"https://s/2.jpg\">"
                        "<img src=\"https://s/3.jpg\"><img src=\"https://s/4.jpg\">"
+                       "<img src=\"https://s/5.jpg\"><img src=\"https://s/6.jpg\">"
+                       "<img src=\"https://s/7.jpg\"><img src=\"https://s/8.jpg\">"
+                       "<img src=\"https://s/9.jpg\"><img src=\"https://s/10.jpg\">"
+                       "<img src=\"https://s/11.jpg\">"
                        "<p>Two.</p></article></body>", 0);
-    CheckLong("three at most", GazetteExtractPhotoCount(&e), 3);
+    CheckLong("ten at most", GazetteExtractPhotoCount(&e), 10);
     CheckStr("the page's picture before the article went with the page",
              GazetteExtractPhoto(&e, 0)->url, "https://s/1.jpg");
-    CheckStr("three markers, no more", text, "One.\n\001\n\001\n\001\nTwo.");
+    CheckStr("ten markers, no more", text,
+             "One.\n\001\n\001\n\001\n\001\n\001\n\001\n\001\n\001\n\001\n\001\nTwo.");
 
     /* A rejected <img> is still an inline tag: it separates words. */
     CheckStr("a rejected image still separates words",

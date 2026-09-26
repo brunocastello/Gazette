@@ -25,14 +25,17 @@ extern "C" {
 
 enum {
     /*
-     * The bytes an article's pictures may add up to, and the most any one of
-     * them may be. A news photograph is 40–150 KB at the size a site serves
-     * it, so three fit under the budget; a page that serves the 2 MB
-     * original is cut off and shows that picture as not coming, which on a
-     * modem is the kinder outcome. The whole budget is one block, taken when
-     * the job starts.
+     * The bytes each picture asked for adds to an article's budget, and the
+     * most any one of them may be. A news photograph is 40–150 KB at the
+     * size a site serves it, so a share of 85 KB each leaves room for the
+     * large ones among the small; a page that serves the 2 MB original is
+     * cut off and shows that picture as not coming, which on a modem is the
+     * kinder outcome. The budget is one block, taken when the job starts and
+     * sized by how many pictures it was given: 255 KB for the three of the
+     * default, 850 KB for Preferences' most, ten -- for as long as that
+     * article is open, and no longer.
      */
-    kGazettePhotoBudget = 250L * 1024,
+    kGazettePhotoShare  = 85L * 1024,
     kGazettePhotoEach   = 120L * 1024
 };
 

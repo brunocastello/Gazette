@@ -13,6 +13,7 @@
 
 #include "core/gazette_sys.h"       /* GazetteSysAlloc, GazetteSysFree */
 
+#include <stddef.h>
 #include <string.h>
 
 typedef struct {
@@ -34,7 +35,7 @@ typedef struct {
 typedef struct {
     GazetteURL base;
     GazetteURL resolved;
-    char       data[kGazettePhotoBudget];
+    char       data[1];         /* gBudget bytes: allocated to fit */
 } Block;
 
 static Block               *gBlock;
@@ -44,6 +45,7 @@ static int                  gCount;
 static int                  gArticle   = -1;
 static int                  gCurrent   = -1;        /* the one being fetched */
 static long                 gUsed;                  /* of the block's data */
+static long                 gBudget;                /* the block's data size */
 static GazetteRefreshState  gState     = kGazetteRefreshIdle;
 static int                  gWanted;                /* a job held back */
 
@@ -105,8 +107,8 @@ static int PhotoSink(const char *data, size_t len, void *context)
     }
 
     room = kGazettePhotoEach - p->len;
-    if (kGazettePhotoBudget - gUsed < room) {
-        room = kGazettePhotoBudget - gUsed;
+    if (gBudget - gUsed < room) {
+        room = gBudget - gUsed;
     }
     if ((long)len > room) {
         /* Over the cap: the rest of it is not worth the line, and what was
@@ -193,7 +195,9 @@ int GazettePhotosStart(int articleIndex, const char *baseURL,
         count = kGazetteMaxPhotos;
     }
 
-    gBlock = (Block *)GazetteSysAlloc(sizeof(Block));
+    gBudget = (long)count * kGazettePhotoShare;
+    gBlock  = (Block *)GazetteSysAlloc(offsetof(Block, data) +
+                                       (size_t)gBudget);
     if (gBlock == NULL ||
         !GazetteURLSplit(baseURL, strlen(baseURL), &gBlock->base)) {
         GazettePhotosCancel();
@@ -261,6 +265,7 @@ void GazettePhotosCancel(void)
     gCount   = 0;
     gArticle = -1;
     gUsed    = 0;
+    gBudget  = 0;
     gWanted  = 0;
     gState   = kGazetteRefreshIdle;
 }

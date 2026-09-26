@@ -107,7 +107,7 @@ enum {
      * couple more — and it is also what a modem and an 8 MB partition can
      * be asked to carry for an article somebody may only glance at.
      */
-    kGazetteMaxPhotos   = 3,
+    kGazetteMaxPhotos   = 10,     /* Preferences chooses 1..10; 3 by default */
     kGazettePhotoURLLen = 512,
     kGazettePhotoAltLen = 160,
 

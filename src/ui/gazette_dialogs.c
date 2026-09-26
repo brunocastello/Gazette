@@ -526,7 +526,7 @@ Boolean GazetteAskPreferences(long *refreshMinutes, long *maxArticles,
     gNotes[1] = MakeNote(dialog, kPrefsItemArticlesNote,
                          "Zero keeps every article the feed offers.");
     gNotes[2] = MakeNote(dialog, kPrefsItemPhotosNote,
-                         "From 1 to 3. Hide Photos in the View menu turns "
+                         "From 1 to 10. Hide Photos in the View menu turns "
                          "them off.");
 
     SetItemNumber(dialog, kPrefsItemMinutes, *refreshMinutes);
@@ -542,9 +542,9 @@ Boolean GazetteAskPreferences(long *refreshMinutes, long *maxArticles,
 
         *refreshMinutes = minutes < 0 ? 0 : minutes;
         *maxArticles    = articles < 0 ? 0 : articles;
-        /* 1 to 3, as the note says: the core clamps the same way, and this
+        /* 1 to 10, as the note says: the core clamps the same way, and this
            is only so the number that comes back is the one that will be. */
-        *maxPhotos      = photos < 1 ? 1 : (photos > 3 ? 3 : photos);
+        *maxPhotos      = photos < 1 ? 1 : (photos > 10 ? 10 : photos);
     }
 
     gNotes[0] = NULL;

@@ -35,9 +35,9 @@ GETTING STARTED
 Gazette starts with Google News Top Stories. File > New Feed adds a feed
 by its address (a site's home page works too). Edit > Preferences sets how
 often feeds refresh, how many articles are kept and how many photos an
-article shows. Edit > Search filters the headlines; Clear Search, or Esc,
-shows them all again. Right-click a feed, a headline or the article for
-more.
+article shows (1 to 10). Edit > Search filters the headlines; Clear
+Search, or Esc, shows them all again. Right-click a feed, a headline or
+the article for more.
 
 REQUIREMENTS
 

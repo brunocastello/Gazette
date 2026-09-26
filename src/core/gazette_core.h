@@ -139,7 +139,7 @@ void    GazetteCoreSetShowPhotos(Boolean on);
    Articles: how many of a feed are kept, 0 for as many as it offers. */
 void    GazetteCoreSetRefreshMinutes(long minutes);
 void    GazetteCoreSetMaxArticles(long articles);
-/* How many of an article's pictures are shown, 1..kGazettePhotoLimit. */
+/* How many of an article's pictures are shown, 1..kGazettePhotoLimit (10). */
 int     GazetteCoreMaxPhotos(void);
 void    GazetteCoreSetMaxPhotos(int photos);
 

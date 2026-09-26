@@ -258,7 +258,7 @@ void GazettePrefsSetDefaults(GazettePrefs *p)
     p->hideSidebar      = 0;
     p->hideToolbar      = 0;
     p->showPhotos       = 1;
-    p->maxPhotos        = kGazettePhotoLimit;
+    p->maxPhotos        = kGazettePhotoDefault;
 
     /* No window remembered, no column widths: the window's own numbers. */
     p->windowLeft   = 0;

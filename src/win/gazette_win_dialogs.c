@@ -373,13 +373,13 @@ static INT_PTR CALLBACK PrefsDialogProc(HWND dialog, UINT message,
         case IDOK:
             ask->minutes  = ReadNumber(dialog, IDC_PREFS_MINUTES);
             ask->articles = ReadNumber(dialog, IDC_PREFS_ARTICLES);
-            /* 1 to 3, as the note says; the core clamps the same way. */
+            /* 1 to 10, as the note says; the core clamps the same way. */
             ask->photos   = ReadNumber(dialog, IDC_PREFS_PHOTOS);
             if (ask->photos < 1) {
                 ask->photos = 1;
             }
-            if (ask->photos > 3) {
-                ask->photos = 3;
+            if (ask->photos > kGazettePhotoLimit) {
+                ask->photos = kGazettePhotoLimit;
             }
             EndDialog(dialog, IDOK);
             return TRUE;

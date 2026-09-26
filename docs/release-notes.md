@@ -9,7 +9,7 @@ Gazette is an RSS and Atom reader for Mac OS 9 on PowerPC and for Windows 95 thr
 
 **Gazette for Windows.** The same reader for Windows 95, 98, Me, NT 4.0, 2000 and XP — one program for all of them, built from the Mac's own engine, in Windows' own controls: the sidebar a tree, a toolbar with captions, themed by XP where XP runs it. Feeds and groups dragged into order, the whole article with its photographs, selectable text, right-click menus, Preferences, OPML import and export, and a Search window in place of the Mac's search field. It installs with Setup.exe to C:\Gazette, or runs from the zip or the floppy with nothing installed. Your feeds live in Gazette.ini beside it, and an OPML file carries them between a Mac and a PC.
 
-**On both.** Preferences now sets how many photos an article shows, from one to three. A feed you have renamed is headed with your name for it, not the one it gives itself. The article's text has a contextual menu, with Copy and Select All. Refreshing keeps the article you are reading where it was, articles come in date order, and pictures whose addresses carry an ampersand load.
+**On both.** Preferences now sets how many photos an article shows, from one to ten (three unless you say otherwise). A feed you have renamed is headed with your name for it, not the one it gives itself. The article's text has a contextual menu, with Copy and Select All. Refreshing keeps the article you are reading where it was, articles come in date order, and pictures whose addresses carry an ampersand load.
 
 The Mac's window is otherwise as 0.1.0 left it.
 
