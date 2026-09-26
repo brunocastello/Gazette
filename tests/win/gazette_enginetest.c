@@ -47,19 +47,44 @@ int main(void)
     GazetteRefreshState state = kGazetteRefreshIdle;
     DWORD               started;
     int                 i, fetched;
+    Boolean             found;
 
     printf("== the core\n");
     Check("network up", GazetteNetInit());
     /* GazetteCoreInit answers whether a preferences file was there to read:
        no on a first run, which then writes the defaults out at shutdown. */
-    printf("   preferences: %s\n", GazetteCoreInit() ? "read from the file"
-                                                    : "first run, defaults");
+    found = GazetteCoreInit();
+    printf("   preferences: %s\n", found ? "read from the file"
+                                         : "first run, defaults");
     Check("at least one feed", GazetteCoreFeedCount() > 0);
     if (GazetteCoreFeedCount() <= 0) {
         return 1;
     }
     printf("   feed 0: \"%s\" %s\n", GazetteCoreFeedTitle(0),
            GazetteCoreFeedURL(0));
+
+    /* The Preferences window's numbers, across a relaunch (Bruno,
+       2026-09-26: photos per article did not stick on Windows). The first
+       run changes them and saves, as OK in the window does; the second
+       must come up with them. */
+    printf("== Preferences, kept\n");
+    if (!found) {
+        static char text[kGazettePrefsTextMax];
+        long        len = 0;
+
+        GazetteCoreSetMaxPhotos(1);
+        GazetteCoreSetMaxArticles(40);
+        Check("saved", GazetteCoreSavePrefs());
+        Check("max-photos is in the file",
+              GazetteStoreReadPrefs(text, (long)sizeof text, &len) &&
+              strstr(text, "max-photos         = 1") != NULL);
+    } else {
+        printf("   max-photos %d, max-articles %ld\n", GazetteCoreMaxPhotos(),
+               GazetteCoreGetPrefs()->maxArticles);
+        Check("photos per article came back", GazetteCoreMaxPhotos() == 1);
+        Check("articles kept came back",
+              GazetteCoreGetPrefs()->maxArticles == 40);
+    }
 
     printf("== a refresh, as the window's idle loop drives it\n");
     Check("started", GazetteFeedsRefreshStart(0, GazetteCoreFeedURL(0),
