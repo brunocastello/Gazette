@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>English</string>
+	<key>CFBundleExecutable</key>
+	<string>Gazette</string>
+	<key>CFBundleIconFile</key>
+	<string>Gazette.icns</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.brunocastello.gazette</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Gazette</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleSignature</key>
+	<string>Gzt9</string>
+	<!-- The version is src/gazette_version.h's; the workflow fails if the two
+	     disagree. -->
+	<key>CFBundleShortVersionString</key>
+	<string>0.2.0</string>
+	<key>CFBundleVersion</key>
+	<string>0.2.0</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>10.4</string>
+	<key>LSRequiresCarbon</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright 2026 brunocastello</string>
+</dict>
+</plist>

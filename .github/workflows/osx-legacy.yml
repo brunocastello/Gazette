@@ -1,0 +1,249 @@
+# Gazette — GitHub Actions CI Workflow (Mac OS X 10.4 - 10.14, PowerPC + Intel)
+#
+# The third build workflow. build.yml makes the Carbon PEF for Mac OS 9 and
+# windows.yml the Win32 executable; this one compiles the SAME Carbon shell
+# (src/main.cpp, src/ui/) again as Mach-O, as a Universal Binary of ppc and
+# i386, for every Mac OS X from 10.4 Tiger to 10.14 Mojave. Aqua comes from
+# Carbon itself. The recipe is iWordle's build-macosx.yml:
+#
+#   - Rez (Retro68's, in its container) compiles Resources/*.r into a
+#     data-fork .rsrc, which goes in Contents/Resources;
+#   - the PowerPC half is built by gcc 14 for powerpc-apple-darwin8 against
+#     the 10.4u SDK inside variantxyz's image;
+#   - that image's SDK has its i386 slices stripped, so the Intel half
+#     downloads a full MacOSX10.4u.sdk (phracker, pinned by SHA-256), compiles
+#     with the image's clang and links with the image's own ld64;
+#   - lipo joins them, libdmg-hfsplus makes the .dmg.
+#
+# The SDK is never committed: it is fetched here only. Nothing is built
+# locally; tools/build_osx_legacy.sh is the build and is run by this file.
+
+name: Build Gazette (Mac OS X 10.4-10.14, ppc + i386)
+
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - 'src/**'
+      - '!src/win/**'
+      - 'Resources/**'
+      - '!Resources/win/**'
+      - 'third_party/certainly/**'
+      - 'third_party/AUI/**'
+      - 'tools/build_osx_legacy.sh'
+      - 'tools/pascal_strings.py'
+      - 'tools/make_icns.py'
+      - 'tests/**'
+      - '.github/workflows/osx-legacy.yml'
+  workflow_dispatch:
+
+env:
+  GCC_IMAGE: ghcr.io/variantxyz/gcc-powerpc-apple-darwin8:build-gcc-14.2-MacOSXSDK10.4u
+  # While src/net/gazette_net_posix.c and Certainly's transport_posix.c and
+  # entropy_posix.c are missing, the link cannot succeed. 1 lets the script
+  # relink ignoring undefined symbols so the bundle, zip and dmg can still be
+  # proved; the script refuses it, whatever this says, once all three exist.
+  GAZETTE_ALLOW_UNDEFINED: "1"
+
+jobs:
+  # The same gate build.yml and windows.yml have: the portable code the
+  # Mach-O build links is the code these tests cover.
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Run host tests
+        run: make -C tests/host
+
+  build:
+    needs: host-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Check the bundle version against gazette_version.h
+        run: |
+          set -euo pipefail
+          v=$(sed -n 's/^#define GAZETTE_VERSION_STRING *"\(.*\)"/\1/p' src/gazette_version.h)
+          echo "gazette_version.h says $v"
+          grep -q "<string>$v</string>" Resources/osx/Info.plist
+          test "$(grep -c "<string>$v</string>" Resources/osx/Info.plist)" -eq 2
+
+      - name: Self-test the Pascal string converter
+        run: python3 -I tools/pascal_strings.py --self-test
+
+      # Retro68's Rez, as build.yml stages it, then Resources/*.r into a
+      # resource map. On Linux there are no resource forks, so Rez follows
+      # the BasiliskII sidecar convention: build/osx/Gazette.rsrc itself gets
+      # only an empty data fork, and the resource bytes land in
+      # build/osx/.rsrc/Gazette.rsrc, which is the file wanted. main.cpp
+      # opens it by the data-fork name (OpenBundleResources).
+      - name: Compile the resources (Rez)
+        run: |
+          set -euo pipefail
+          mkdir -p build/osx
+          docker run --rm \
+            -v "${{ github.workspace }}:/root/Gazette" \
+            -w /root/Gazette \
+            -i ghcr.io/autc04/retro68 /bin/bash <<'EOF'
+          set -euo pipefail
+          TOOLCHAIN=/Retro68-build/toolchain
+          AUI=/root/Gazette/third_party/AUI/Universal
+          RINCLUDES="$TOOLCHAIN/powerpc-apple-macos/RIncludes"
+          # build.yml's staging, for Dialogs.r and its friends; see there for
+          # why newlib's fenv.h goes first.
+          rm -f "$TOOLCHAIN/powerpc-apple-macos/include/fenv.h"
+          /Retro68-build/bin/interfaces-and-libraries.sh "$TOOLCHAIN" "$AUI" false true true
+          test -f "$RINCLUDES/Dialogs.r"
+          $TOOLCHAIN/bin/Rez -DTARGET_API_MAC_CARBON=1 \
+            Resources/Gazette.r Resources/Gazette_icon.r Resources/Gazette_ui_icons.r \
+            -I "$RINCLUDES" -o build/osx/Gazette.rsrc
+          cp build/osx/.rsrc/Gazette.rsrc build/osx/Gazette.rsrc.data
+          ls -l build/osx/Gazette.rsrc.data
+          test -s build/osx/Gazette.rsrc.data
+          EOF
+
+      # Retro68's gcc reads "\pFile" as a Pascal string; these compilers do
+      # not. Done once, here, so both halves compile the same converted copies.
+      - name: Convert the Pascal string literals
+        run: tools/build_osx_legacy.sh pascal
+
+      - name: Probe the PowerPC SDK (frameworks and headers)
+        run: |
+          set -euo pipefail
+          docker run --rm -i "$GCC_IMAGE" /bin/bash <<'EOF'
+          SDK=/usr/local/MacOSX10.4u.sdk
+          ls /usr/local/bin | grep -E 'powerpc-apple-darwin8-(gcc|g\+\+|ld|lipo)$|^clang$' || true
+          for h in MacWindows.h Lists.h Navigation.h QuickTimeComponents.h InternetConfig.h Folders.h; do
+            echo "$h: $(find "$SDK/System/Library/Frameworks" -name "$h" | head -3 | tr '\n' ' ')"
+          done
+          EOF
+
+      - name: Compile the PowerPC half
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${{ github.workspace }}:/root/Gazette" -w /root/Gazette \
+            -e SDK=/usr/local/MacOSX10.4u.sdk -e OUT=build/osx \
+            "$GCC_IMAGE" bash tools/build_osx_legacy.sh ppc compile
+
+      - name: Link the PowerPC half
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${{ github.workspace }}:/root/Gazette" -w /root/Gazette \
+            -e SDK=/usr/local/MacOSX10.4u.sdk -e OUT=build/osx \
+            -e GAZETTE_ALLOW_UNDEFINED \
+            "$GCC_IMAGE" bash tools/build_osx_legacy.sh ppc link
+
+      # The SDKs inside the cross-compiler images have their i386 slices
+      # stripped (crt1.o, libSystem and the frameworks are PowerPC-only), so
+      # the Intel half builds against a full 10.4u SDK instead.
+      - name: Fetch the full 10.4u SDK for the Intel half
+        run: |
+          set -euo pipefail
+          curl -fsSL -o sdk.tar.xz \
+            https://github.com/phracker/MacOSX-SDKs/releases/download/11.3/MacOSX10.4u.sdk.tar.xz
+          echo "d28276ce6b0f14af30f3bfdc171f8ef4033652da593578568f8be189506c1021  sdk.tar.xz" | sha256sum -c -
+          mkdir -p sdk-full
+          tar -xJf sdk.tar.xz -C sdk-full
+
+      - name: Compile the Intel half
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${{ github.workspace }}:/root/Gazette" -w /root/Gazette \
+            -e SDK=/root/Gazette/sdk-full/MacOSX10.4u.sdk -e OUT=build/osx \
+            "$GCC_IMAGE" bash tools/build_osx_legacy.sh i386 compile
+
+      - name: Link the Intel half
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${{ github.workspace }}:/root/Gazette" -w /root/Gazette \
+            -e SDK=/root/Gazette/sdk-full/MacOSX10.4u.sdk -e OUT=build/osx \
+            -e GAZETTE_ALLOW_UNDEFINED \
+            "$GCC_IMAGE" bash tools/build_osx_legacy.sh i386 link
+
+      - name: Join the halves (lipo)
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${{ github.workspace }}:/root/Gazette" -w /root/Gazette \
+            -i "$GCC_IMAGE" /bin/bash <<'EOF'
+          set -euo pipefail
+          LIPO=$(ls /usr/local/bin/*-lipo | head -1)
+          $LIPO -create build/osx/Gazette-ppc build/osx/Gazette-i386 -output build/osx/Gazette
+          $LIPO -info build/osx/Gazette
+          $LIPO -info build/osx/Gazette | grep -q ppc
+          $LIPO -info build/osx/Gazette | grep -q i386
+          EOF
+
+      # The Finder icon is the one Resources/Gazette_icon.r already holds,
+      # in an .icns container.
+      - name: Make Gazette.icns from the classic icon family
+        run: python3 -I tools/make_icns.py Resources/Gazette_icon.r build/osx/Gazette.icns
+
+      - name: Assemble the .app and the .zip
+        run: |
+          set -euo pipefail
+          APP=package/Gazette.app
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp build/osx/Gazette "$APP/Contents/MacOS/Gazette"
+          chmod +x "$APP/Contents/MacOS/Gazette"
+          cp build/osx/Gazette.rsrc.data "$APP/Contents/Resources/Gazette.rsrc"
+          cp build/osx/Gazette.icns "$APP/Contents/Resources/Gazette.icns"
+          cp Resources/osx/Info.plist "$APP/Contents/Info.plist"
+          cp Resources/osx/PkgInfo "$APP/Contents/PkgInfo"
+          (cd package && zip -r -y Gazette-mac-os-x.zip Gazette.app)
+
+      - name: Build libdmg-hfsplus (a real HFS+ .dmg without a Mac)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y cmake libssl-dev zlib1g-dev libbz2-dev
+          git clone --depth 1 https://github.com/mozilla/libdmg-hfsplus.git /tmp/libdmg-hfsplus
+          cd /tmp/libdmg-hfsplus
+          cmake .
+          make -j2 dmg-bin hfsplus
+          sudo install -m 755 dmg/dmg /usr/local/bin/dmg
+          sudo install -m 755 hfs/hfsplus /usr/local/bin/hfsplus
+
+      - name: Create the .dmg
+        run: |
+          set -euo pipefail
+          # The tool cannot create a volume, only grow an existing one, so
+          # this starts from its own test suite's empty template. That
+          # volume is named "Firefox"; "Gazette" is also seven characters,
+          # so the name is patched in place in UTF-16BE (the two catalog
+          # records that carry it), which leaves every B-tree offset valid.
+          # iWordle's build-macosx.yml has the longer account.
+          cp /tmp/libdmg-hfsplus/test/empty.hfs package/Gazette.hfs
+          python3 -I - <<'PYEOF'
+          path = "package/Gazette.hfs"
+          data = open(path, "rb").read()
+          old = "Firefox".encode("utf-16-be")
+          new = "Gazette".encode("utf-16-be")
+          assert len(old) == len(new)
+          count = data.count(old)
+          assert count == 2, "expected exactly 2 occurrences of Firefox, found %d" % count
+          open(path, "wb").write(data.replace(old, new))
+          PYEOF
+          hfsplus package/Gazette.hfs grow 8388608
+          hfsplus package/Gazette.hfs mkdir /Gazette.app
+          hfsplus package/Gazette.hfs addall package/Gazette.app /Gazette.app
+          dmg build package/Gazette.hfs package/Gazette.dmg
+          ls -l package
+
+      - name: Upload the app bundle and disk image
+        uses: actions/upload-artifact@v6
+        with:
+          name: Gazette-mac-os-x
+          path: |
+            package/Gazette-mac-os-x.zip
+            package/Gazette.dmg
+          if-no-files-found: error
