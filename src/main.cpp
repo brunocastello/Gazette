@@ -345,6 +345,15 @@ int main(void)
 {
 #ifdef GAZETTE_MACOSX
     OpenBundleResources();
+
+    /*
+     * Quartz text for QuickDraw and TextEdit: anti-aliased Lucida Grande and
+     * Helvetica in the panes, as in any Aqua application, instead of the old
+     * bitmap-hinted glyphs. The metrics flag makes TextWidth agree with what
+     * is drawn. Before InitGazette, which measures the fonts when the window
+     * is made.
+     */
+    (void)QDSwapTextFlags(kQDUseCGTextRendering | kQDUseCGTextMetrics);
 #endif
 
     if (!InitGazette()) {
