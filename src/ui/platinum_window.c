@@ -63,9 +63,11 @@
 #include <QDOffscreen.h>
 #include <QuickTimeComponents.h> /* kQTFileTypeJPEG and its neighbours */
 #include <Lists.h>
+#include <MacMemory.h>          /* handles: the icon family is built in one */
 #include <Menus.h>
 #include <Quickdraw.h>
 #include <QuickdrawText.h>
+#include <Resources.h>           /* GetResource, for the icon families */
 #include <Scrap.h>
 #include <TextEdit.h>
 
@@ -2991,15 +2993,17 @@ static void DrawDisclosure(const Rect *cell, short left, Boolean open)
  * A row's icon is one of two things, and they are drawn by two different
  * calls. The four above are the system's, reached through Icon Services by
  * constant and carried as IconRefs. The three standing views and the mark on
- * a starred headline are ours, drawn by tools/generate_ui_icons.py into
- * Resources/Gazette_ui_icons.r, and read out of the application's own
- * resource fork as icon suites. So is every one of the toolbar's, though
- * those go to the Bevel Button CDEF by resource ID rather than through here.
+ * a starred headline are ours, drawn by tools/generate_ui_icons_aqua.py into
+ * Resources/Gazette_ui_icons.r. So is every one of the toolbar's.
  *
- * Suites rather than a registration with Icon Services: GetIconSuite takes a
- * resource ID, which is exactly what we have, and registering four icons
- * under a creator code so that they could be asked for the same way as the
- * system's would be ceremony with nothing at the end of it.
+ * Ours are 16x16 families carrying 'is32' + 's8mk' (colour and 8-bit alpha,
+ * which is what makes the soft edges and shadows of the art show) as well as
+ * 'ics8' + 'ics#'. OwnIcon builds an icon family out of them and registers it
+ * with Icon Services (RegisterIconRefFromIconFamily, CarbonLib 1.0), so that
+ * PlotIconRef draws it with the alpha. If any of that fails it falls back to
+ * what it did before, an icon suite, whose PlotIconSuite uses the 'ics8' and
+ * 'ics#' members and the mask and has no alpha. Either way the one RowIcon
+ * type is plotted by PlotRowIcon.
  */
 static RowIcon gFolderIcon;
 static RowIcon gOpenFolderIcon;
@@ -3009,7 +3013,7 @@ static RowIcon gSmartIcon[kGazetteSmartCount];
 static RowIcon gStarIcon;       /* the mark on a starred headline */
 static RowIcon gFindIcon;       /* the glass beside the toolbar's search field */
 
-/* Resource IDs, and they have to agree with tools/generate_ui_icons.py.
+/* Resource IDs, and they have to agree with tools/generate_ui_icons_aqua.py.
    From 256, clear of the Finder icon family at 128: the desktop database
    reads the application's small icon by that ID out of this same resource
    fork, and a 'Today' sun numbered 128 was what the Apple menu showed. */
@@ -3038,7 +3042,10 @@ enum {
        a New button at the head of the row, and a Find beside the search
        field. */
     kIconNew           = 270,
-    kIconFind          = 271
+    kIconFind          = 271,
+
+    /* What the sidebar toggle wears while the sidebar is hidden. */
+    kIconSidebarShow   = 272
 };
 
 static void SystemIcon(RowIcon *out, OSType which)
@@ -3048,11 +3055,110 @@ static void SystemIcon(RowIcon *out, OSType which)
     (void)GetIconRef(kOnSystemDisk, kSystemIconsCreator, which, &out->ref);
 }
 
+/* A big-endian long, which is how an icon family is laid out in memory. */
+static void PutLong(unsigned char *p, unsigned long v)
+{
+    p[0] = (unsigned char)(v >> 24);
+    p[1] = (unsigned char)(v >> 16);
+    p[2] = (unsigned char)(v >> 8);
+    p[3] = (unsigned char)v;
+}
+
+/*
+ * An icon family -- 'icns' and its length, then each member as its type, its
+ * length counting these eight bytes, and its data -- put together from the
+ * four resources a Gazette icon ID carries. NULL if there are none.
+ */
+static Handle BuildIconFamily(short resID)
+{
+    static const OSType kMember[4] = {
+        kSmall32BitData, kSmall8BitMask, kSmall8BitData, kSmall1BitMask
+    };
+    Handle part[4];
+    Handle family;
+    long   total = 8;
+    long   at;
+    int    i;
+
+    for (i = 0; i < 4; i++) {
+        part[i] = GetResource(kMember[i], resID);
+        if (part[i] != NULL) {
+            total += 8 + GetHandleSize(part[i]);
+        }
+    }
+
+    family = NULL;
+    if (total > 8) {
+        family = NewHandle(total);
+    }
+    if (family != NULL) {
+        HLock(family);
+        PutLong((unsigned char *)*family, (unsigned long)kIconFamilyType);
+        PutLong((unsigned char *)*family + 4, (unsigned long)total);
+        at = 8;
+        for (i = 0; i < 4; i++) {
+            long size;
+
+            if (part[i] == NULL) {
+                continue;
+            }
+            size = GetHandleSize(part[i]);
+            PutLong((unsigned char *)*family + at, (unsigned long)kMember[i]);
+            PutLong((unsigned char *)*family + at + 4,
+                    (unsigned long)(size + 8));
+            HLock(part[i]);
+            BlockMoveData(*part[i], *family + at + 8, size);
+            HUnlock(part[i]);
+            at += 8 + size;
+        }
+        HUnlock(family);
+    }
+    for (i = 0; i < 4; i++) {
+        if (part[i] != NULL) {
+            ReleaseResource(part[i]);
+        }
+    }
+    return family;
+}
+
+/*
+ * The family registered with Icon Services under our creator and an icon type
+ * made from the resource ID, or NULL. Asked for first, because a registration
+ * outlives the reference that made it and a toolbar button that swaps its
+ * picture back asks again.
+ */
+static IconRef RegisteredIcon(short resID)
+{
+    const OSType kCreator = FOUR_CHAR_CODE('Gzt9');
+    OSType       type = (OSType)(0x477A0000UL | (unsigned long)(unsigned short)resID);
+    IconRef      ref = NULL;
+    Handle       family;
+
+    if (GetIconRef(kOnSystemDisk, kCreator, type, &ref) == noErr &&
+        ref != NULL) {
+        return ref;
+    }
+    ref = NULL;
+    family = BuildIconFamily(resID);
+    if (family != NULL) {
+        if (RegisterIconRefFromIconFamily(kCreator, type,
+                                          (IconFamilyHandle)family,
+                                          &ref) != noErr) {
+            ref = NULL;
+        }
+        DisposeHandle(family);      /* it was copied */
+    }
+    return ref;
+}
+
 static void OwnIcon(RowIcon *out, short resID)
 {
     out->ref   = NULL;
     out->suite = NULL;
-    (void)GetIconSuite(&out->suite, resID, svAllAvailableData);
+    out->ref   = RegisteredIcon(resID);
+    if (out->ref == NULL) {
+        (void)GetIconSuite(&out->suite, resID, svAllAvailableData);
+    }
 }
 
 static void LoadRowIcons(void)
@@ -3139,14 +3245,14 @@ static void PlotRowIcon(short left, short top, const RowIcon *icon,
         }
     }
 
-    if (icon->suite != NULL) {
-        (void)PlotIconSuite(&box, kAlignAbsoluteCenter,
-                            enabled ? kTransformNone : kTransformDisabled,
-                            icon->suite);
-    } else if (icon->ref != NULL) {
+    if (icon->ref != NULL) {
         (void)PlotIconRef(&box, kAlignAbsoluteCenter,
                           enabled ? kTransformNone : kTransformDisabled,
                           kIconServicesNormalUsageFlag, icon->ref);
+    } else if (icon->suite != NULL) {
+        (void)PlotIconSuite(&box, kAlignAbsoluteCenter,
+                            enabled ? kTransformNone : kTransformDisabled,
+                            icon->suite);
     }
 }
 
@@ -4313,7 +4419,7 @@ typedef struct {
 
 static const ToolSpec kToolSpec[kToolbarButtons] = {
     { kIconNew,         0,                  "New",                NULL },
-    { kIconSidebar,     0,                  "Hide Sidebar",       "Show Sidebar" },
+    { kIconSidebar,     kIconSidebarShow,   "Hide Sidebar",       "Show Sidebar" },
     { kIconRefresh,     0,                  "Refresh",            NULL },
     { kIconMarkAllRead, kIconMarkAllUnread, "Mark All as Read",   "Mark All as Unread" },
     { kIconHideRead,    kIconShowRead,      "Hide Read Articles", "Show Read Articles" },
@@ -4689,7 +4795,8 @@ static void AdjustToolbarState(void)
     SetToolState(kTBSidebar, true,
                  GazetteCoreHideSidebar() ? kToolSpec[kTBSidebar].otherCaption
                                           : kToolSpec[kTBSidebar].caption,
-                 kToolSpec[kTBSidebar].icon);
+                 GazetteCoreHideSidebar() ? kToolSpec[kTBSidebar].otherIcon
+                                          : kToolSpec[kTBSidebar].icon);
     SetToolState(kTBRefresh, (Boolean)(GazetteCoreFeedCount() > 0),
                  kToolSpec[kTBRefresh].caption, kToolSpec[kTBRefresh].icon);
 
