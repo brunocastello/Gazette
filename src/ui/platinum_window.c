@@ -3135,6 +3135,7 @@ static void LabelBox(const Rect *cell, short left, short width,
         box->right = cell->right;
     }
 }
+#endif
 
 /*
  * Platinum's disclosure triangle, drawn by the Appearance Manager rather
