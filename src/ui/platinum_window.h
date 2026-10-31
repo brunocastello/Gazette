@@ -86,6 +86,17 @@ Boolean GazetteUIKey(short key, EventModifiers modifiers);
  */
 void GazetteUIAdjustToolbar(void);
 
+#ifdef GAZETTE_MACOSX
+/*
+ * OS X only. The toolbar is the system's HIToolbar and lives in the window's
+ * title bar, outside the content region, so its clicks arrive from
+ * FindWindow as inStructure, inDrag or inToolbarButton rather than
+ * inContent. The event loop offers every mouse-down on the window to this
+ * first; true means the toolbar took it. See docs/osx-port.md, Stage 2 A.
+ */
+Boolean GazetteUIToolbarMouseDown(const EventRecord *event, short part);
+#endif
+
 /*
  * The reader pane is a TextEdit record, so a drag in it selects text. These
  * two are the Edit menu's Copy: whether it should be enabled, and what it

@@ -193,6 +193,13 @@ jobs:
           cp build/osx/Gazette.icns "$APP/Contents/Resources/Gazette.icns"
           cp Resources/osx/Info.plist "$APP/Contents/Info.plist"
           cp Resources/osx/PkgInfo "$APP/Contents/PkgInfo"
+          # The toolbar's 32x32 PNGs, once they are drawn and approved. Until
+          # then the directory does not exist and the toolbar wears the
+          # 16x16 icon suites from Gazette.rsrc instead.
+          if [ -d Resources/osx/toolbar ]; then
+            mkdir -p "$APP/Contents/Resources/toolbar"
+            cp Resources/osx/toolbar/*.png "$APP/Contents/Resources/toolbar/"
+          fi
           (cd package && zip -r -y Gazette-mac-os-x.zip Gazette.app)
 
       - name: Build libdmg-hfsplus (a real HFS+ .dmg without a Mac)

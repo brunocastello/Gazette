@@ -817,6 +817,18 @@ static void HandleMouseDown(const EventRecord *event)
 
     part = FindWindow(event->where, &window);
 
+#ifdef GAZETTE_MACOSX
+    /* The toolbar is the system's, in the title bar: its clicks are not
+       inContent, and nothing below would route them. Offered first, and only
+       the toolbar's own band and its button are taken. */
+    if (window != nil && window == GazetteUIWindow() &&
+        (part == inContent || part == inDrag || part == inStructure ||
+         part == inToolbarButton) &&
+        GazetteUIToolbarMouseDown(event, part)) {
+        return;
+    }
+#endif
+
     switch (part) {
         case inMenuBar:
             AdjustMenus();
