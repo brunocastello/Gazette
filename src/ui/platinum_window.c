@@ -37,6 +37,9 @@
  */
 
 #include "ui/platinum_window.h"
+#ifdef GAZETTE_MACOSX
+#include "ui/aqua_draw.h"
+#endif
 
 /* For GazetteAppViewTitle alone: what the headline list is headed with is
    the application's to say, and the same on both systems. */
@@ -76,6 +79,34 @@
 /* Metrics                                                             */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Numbers the Aqua panes change and Platinum's keep.
+ *
+ * kDivHeadOff / kDivPaneOff: how far right of a divider's left edge the
+ * header, and the pane, beside it begin. Platinum's divider is a six-column
+ * groove with two columns of grab margin; Aqua's is one pixel, so the panes
+ * butt up to it. The hidden sidebar's offset is the same number negated.
+ *
+ * kFocusBorder: Mail has no focus ring round a pane (an inactive selection
+ * turns grey instead), so no room is kept for one.
+ *
+ * kTextInset: where a row's content starts. Aqua keeps the 6 pixels the
+ * 2-pixel focus border plus the 4 gave, so nothing moves sideways.
+ */
+#ifdef GAZETTE_MACOSX
+#define GZ_DIV_HEAD_OFF   1
+#define GZ_DIV_PANE_OFF   1
+#define GZ_DIV_WIDTH      1
+#define GZ_FOCUS_BORDER   0
+#define GZ_TEXT_INSET     6
+#else
+#define GZ_DIV_HEAD_OFF   5
+#define GZ_DIV_PANE_OFF   6
+#define GZ_DIV_WIDTH      8
+#define GZ_FOCUS_BORDER   2
+#define GZ_TEXT_INSET     4
+#endif
+
 enum {
     kScrollWidth   = 16,        /* Platinum's scroll bar, including its frame */
     kHeaderHeight  = 17,        /* floor for the header bar; see gHeaderHeight */
@@ -93,8 +124,10 @@ enum {
      * Across, where it meets list rows:  two grey, black, white, four grey,
      * black, white.
      */
-    kVDividerWidth = 8,
-    kTextInset     = 4,
+    kVDividerWidth = GZ_DIV_WIDTH,
+    kDivHeadOff    = GZ_DIV_HEAD_OFF,
+    kDivPaneOff    = GZ_DIV_PANE_OFF,
+    kTextInset     = GZ_TEXT_INSET,
     kBaseline      = 10,        /* likewise, until gRowBaseline is worked out */
 
     /* The sidebar is an outline: a column for the disclosure triangle, then
@@ -106,6 +139,7 @@ enum {
     kIconSize       = 16,       /* the small icon beside a row's name */
     kIconGap        = 3,
     kCountGap       = 8,        /* between the name and its unread count */
+    kAquaPillPad    = 5,        /* the pill's room each side of its number */
 
     kMinSidebar    = 120,
     kMinList       = 220,       /* divider to divider, the middle column      */
@@ -189,7 +223,7 @@ enum {
 
     /* The focus border's thickness, and therefore how far a row has to keep
        clear of the edge of the view it is in. */
-    kFocusBorder   = 2,
+    kFocusBorder   = GZ_FOCUS_BORDER,
 
     /* Which pane the keyboard is driving. The reader's scroll bar carries
        kRefReader as its control reference, so its action procedure and the
@@ -205,6 +239,39 @@ enum {
 
 /* Seconds between the Macintosh epoch (1904) and the Unix one (1970). */
 enum { kMacToUnixEpoch = 2082844800L };
+
+/*
+ * What the two lists are erased with. On Mac OS 9 both are the theme's
+ * list-view background. On Mac OS X the sidebar is Mail's source list
+ * (a colour of its own, passed as a pseudo-brush that EraseWith knows) and
+ * the headline list is plain white, with its stripes painted by the rows.
+ */
+#ifdef GAZETTE_MACOSX
+enum { kBrushAquaSource = 0x7F01 };
+#define kSidebarBrush  kBrushAquaSource
+#define kHeadlineBrush kThemeBrushWhite
+
+/* Mail 2.0's colours, measured: see docs/osx-port.md, stage 2. */
+static const AquaRGB kAquaSourceBack   = { 214, 221, 229 };
+static const AquaRGB kAquaSelTop       = {  92, 147, 213 };
+static const AquaRGB kAquaSelBottom    = {  22,  91, 187 };
+static const AquaRGB kAquaSelLine      = {  69, 128, 200 };
+static const AquaRGB kAquaSelDimTop    = { 138, 162, 190 };
+static const AquaRGB kAquaSelDimBottom = { 112, 137, 168 };
+static const AquaRGB kAquaPill         = { 152, 168, 202 };
+static const AquaRGB kAquaPillOnSel    = { 255, 255, 255 };
+static const AquaRGB kAquaStripe       = { 237, 243, 254 };
+static const AquaRGB kAquaListSel      = {  56, 117, 215 };
+static const AquaRGB kAquaListSelDim   = { 212, 212, 212 };
+static const AquaRGB kAquaHeadingRule  = { 220, 220, 220 };
+static const AquaRGB kAquaDivider      = { 165, 165, 165 };
+static const AquaRGB kAquaReaderRule   = { 200, 200, 200 };
+static const AquaRGB kAquaBylineGrey   = { 128, 128, 128 };
+static const AquaRGB kAquaStatusText   = {  64,  64,  64 };
+#else
+#define kSidebarBrush  kThemeBrushListViewBackground
+#define kHeadlineBrush kThemeBrushListViewBackground
+#endif
 
 /* ------------------------------------------------------------------ */
 /* State                                                               */
@@ -445,6 +512,15 @@ static short gReadSize  = 12;
 static short gLabelSize  = 9;             /* the byline under a headline */
 static short gStatusSize = 10;            /* the strip along the bottom  */
 
+#ifdef GAZETTE_MACOSX
+/*
+ * The small system font (Lucida Grande 11): the list headers, the date
+ * headings, the unread pills and the status strip are set in it.
+ */
+static short gSmallFont = 0;
+static short gSmallSize = 11;
+#endif
+
 static short gRowHeight    = kRowHeight;
 static short gRowBaseline  = kBaseline;
 static short gHeadRowHeight    = kRowHeight;  /* the headline list's own */
@@ -603,6 +679,30 @@ static void UseViewFont(void)
     TextFace(normal);
 }
 
+#ifdef GAZETTE_MACOSX
+/* The small system font, in the current port. */
+static void UseSmallFont(void)
+{
+    TextFont(gSmallFont);
+    TextSize(gSmallSize);
+    TextFace(normal);
+}
+#endif
+
+/*
+ * The face the headings over the panes (and a date heading in the headline
+ * list) are set in: the large system font on Mac OS 9, the small one on
+ * Mac OS X, where a table header is 11 point.
+ */
+static void UseHeadingFont(void)
+{
+#ifdef GAZETTE_MACOSX
+    UseSmallFont();
+#else
+    UseSysFont();
+#endif
+}
+
 /*
  * The background a selected row is painted with — the highlight colour from
  * the Appearance control panel, which is the colour the user has said a
@@ -671,6 +771,56 @@ static void MeasureFonts(void)
             }
         }
     }
+
+#ifdef GAZETTE_MACOSX
+    /*
+     * Aqua's fonts are the theme's own: Lucida Grande, at 12 for the views
+     * (the lists, the sidebar), 11 for the small system font (headers, dates,
+     * pills, the status strip). The article's body is Helvetica 12, as Mail's
+     * default is. Every height below is still measured from whichever fonts
+     * these turn out to be, so a user's different theme fonts cannot clip.
+     * A name GetFNum does not know answers 0, the system font, so a failed
+     * lookup falls back to something sensible by itself.
+     */
+    {
+        Str255 name;
+        SInt16 points = 0;
+        Style  face   = 0;
+        short  id     = 0;
+
+        gViewFont = gSysFont;
+        if (GetThemeFont(kThemeViewsFont, smSystemScript, name, &points,
+                         &face) == noErr && name[0] != 0) {
+            GetFNum(name, &id);
+            gViewFont = id;
+            if (points > 0) {
+                gViewSize = points;
+            }
+        }
+        gSysFont = gViewFont;       /* the sidebar's rows: the views font */
+        gSysSize = gViewSize;
+
+        gSmallFont = gViewFont;
+        gSmallSize = 11;
+        points = 0;
+        if (GetThemeFont(kThemeSmallSystemFont, smSystemScript, name,
+                         &points, &face) == noErr && name[0] != 0) {
+            id = 0;
+            GetFNum(name, &id);
+            gSmallFont = id;
+            if (points > 0) {
+                gSmallSize = points;
+            }
+        }
+        gLabelSize  = gSmallSize;
+        gStatusSize = gSmallSize;
+
+        id = 0;
+        GetFNum("\pHelvetica", &id);
+        gReadFont = (id != 0) ? id : gViewFont;
+        gReadSize = 12;
+    }
+#endif
 
     /* The sidebar's rows are set in it, so its metrics are the row's. */
     UseSysFont();
@@ -742,7 +892,7 @@ static void MeasureFonts(void)
         gHeadingBaseline  = gRowBaseline;
     }
     /* The headings are the system font too, so they measure in it. */
-    UseSysFont();
+    UseHeadingFont();
     GetFontInfo(&info);
     gHeaderHeight = (short)(info.ascent + info.descent + info.leading + 9);
     if (gHeaderHeight < kHeaderHeight) {
@@ -1659,7 +1809,7 @@ static void Layout(void)
             gSidebarWidth = kMinSidebar;
         }
 
-        width = noSidebar ? (short)(-kVDividerWidth + 2) : gSidebarWidth;
+        width = noSidebar ? (short)(-kDivPaneOff) : gSidebarWidth;
 
         most = (short)(room - width - kMinReader);
         if (gListWidth > most) {
@@ -1724,7 +1874,8 @@ static void Layout(void)
          */
         SetRect(&gSidebarHeader, (short)(bounds.left - 1), headTop,
                 split, headBot);
-        SetRect(&gListHeader, (short)(split + 5), headTop, split2, headBot);
+        SetRect(&gListHeader, (short)(split + kDivHeadOff), headTop, split2,
+                headBot);
 
         /* An empty rectangle is a divider that cannot be drawn on and cannot
            be grabbed — PtInRect answers false for every point in one — which
@@ -1783,7 +1934,7 @@ static void Layout(void)
          * bounds.right + 1 and was right only because the extra column fell
          * off the edge of the window.
          */
-        SetRect(&gListPane, (short)(split + 6), (short)(headBot - 1),
+        SetRect(&gListPane, (short)(split + kDivPaneOff), (short)(headBot - 1),
                 (short)(split2 - 1), contentBottom);
 
         /*
@@ -1800,7 +1951,7 @@ static void Layout(void)
          * bounds.top put the bar's edge directly under that line and the top
          * of the article's scroll bar came out two pixels thick.
          */
-        SetRect(&gReaderPane, (short)(split2 + 6), rule,
+        SetRect(&gReaderPane, (short)(split2 + kDivPaneOff), rule,
                 (short)(bounds.right + 1), (short)(contentBottom + 1));
 
         /*
@@ -2616,6 +2767,24 @@ static void ApplyRunFont(long start, long end, short font, short face,
     TESetStyle(doFont | doFace | doSize, &style, false, gReaderTE);
 }
 
+#ifdef GAZETTE_MACOSX
+/* A colour over a range already in the record (the byline's grey). */
+static void ApplyRunGrey(long start, long end, const AquaRGB *grey)
+{
+    TextStyle style;
+
+    if (gReaderTE == NULL || end <= start) {
+        return;
+    }
+    style.tsColor.red   = (unsigned short)(grey->r * 257);
+    style.tsColor.green = (unsigned short)(grey->g * 257);
+    style.tsColor.blue  = (unsigned short)(grey->b * 257);
+
+    TESetSelect(start, end, gReaderTE);
+    TESetStyle(doColor, &style, false, gReaderTE);
+}
+#endif
+
 /* The body's own face, which is what most of an article is set in. */
 static void ApplyRunStyle(long start, long end, short face, short size)
 {
@@ -2769,9 +2938,18 @@ static void SetReaderText(void)
          * style on it and the return is the last thing on the line.
          */
         ApplyRunStyle(0, (long)used, normal, gReadSize);
+#ifdef GAZETTE_MACOSX
+        /* Lucida Grande 14 bold for the title; the byline in the small
+           system font, grey. */
+        ApplyRunFont(0, (long)titleEnd, gSysFont, bold, 14);
+        ApplyRunFont((long)titleEnd, (long)byline, gSmallFont, normal,
+                     gLabelSize);
+        ApplyRunGrey((long)titleEnd, (long)byline, &kAquaBylineGrey);
+#else
         ApplyRunFont(0, (long)titleEnd, gSysFont, normal, gSysSize);
         ApplyRunFont((long)titleEnd, (long)byline, gViewFont, normal,
                      gLabelSize);
+#endif
         ApplyRunFont((long)byline, (long)gap, gReadFont, normal,
                      (short)(gReadSize + kReaderRuleAir));
         /* And what the body's markup asked for, over the body. */
@@ -2886,8 +3064,12 @@ static void DrawHeaderTitle(const Rect *r, const char *text,
         return;                 /* a column that is not being drawn */
     }
 
-    UseSysFont();
+    UseHeadingFont();
+#ifdef GAZETTE_MACOSX
+    ForeColor(blackColor);          /* Mail's headers are plain black text */
+#else
     SetThemeTextColor(kThemeTextColorWindowHeaderActive, 8, true);
+#endif
 
     inner.left  = (short)(inner.left + kTextInset + 2);
     inner.right = (short)(inner.right - kTextInset);
@@ -2962,6 +3144,13 @@ static void DrawDisclosure(const Rect *cell, short left, Boolean open)
     SetRect(&box, left, (short)(cell->top + inset),
             (short)(left + kTriangleSize),
             (short)(cell->top + inset + kTriangleSize));
+
+#ifdef GAZETTE_MACOSX
+    /* Aqua's triangle, drawn over the row (which may be a gradient) rather
+       than on a square of background. */
+    AquaDrawDisclosure(&box, open, gActive);
+    return;
+#endif
 
     info.state     = kThemeStateActive;
     info.value     = open ? kThemeDisclosureDown : kThemeDisclosureRight;
@@ -3238,10 +3427,75 @@ static short CountWidth(int count)
 {
     char text[16];
 
+#ifdef GAZETTE_MACOSX
+    /* A pill round a bare number, or nothing at all when there is none. */
+    if (count <= 0) {
+        return 0;
+    }
+    snprintf(text, sizeof text, "%d", count);
+    UseSmallFont();
+    TextFace(bold);
+    {
+        short w = (short)(TextWidth(text, 0, (short)strlen(text)) +
+                          kAquaPillPad * 2 + kCountGap);
+        TextFace(normal);
+        return w;
+    }
+#endif
     CountText(count, text, sizeof text);
     UseSysFont();
     return (short)(TextWidth(text, 0, (short)strlen(text)) + kCountGap);
 }
+
+#ifdef GAZETTE_MACOSX
+/*
+ * The unread count as Mail draws it: a rounded pill at the right of the row,
+ * a bare number in small bold white inside. On a selected row the pill goes
+ * white and the number takes the selection's colour. Nothing is drawn for
+ * zero.
+ */
+static void DrawCountPill(short right, short rowTop, short rowHeight,
+                          int count, Boolean selected, Boolean focused)
+{
+    char     text[16];
+    short    len;
+    short    w;
+    short    h;
+    Rect     pill;
+    FontInfo info;
+
+    if (count <= 0) {
+        return;
+    }
+    snprintf(text, sizeof text, "%d", count);
+    len = (short)strlen(text);
+
+    UseSmallFont();
+    TextFace(bold);
+    GetFontInfo(&info);
+    w = (short)(TextWidth(text, 0, len) + kAquaPillPad * 2);
+    h = (short)(info.ascent + info.descent + 2);
+    if (w < h) {
+        w = h;                  /* a one-digit count is a circle at least */
+    }
+    SetRect(&pill, (short)(right - w),
+            (short)(rowTop + (rowHeight - h) / 2),
+            right, (short)(rowTop + (rowHeight - h) / 2 + h));
+
+    AquaPaintPill(&pill, selected ? &kAquaPillOnSel : &kAquaPill);
+    if (selected) {
+        AquaForeRGB(focused ? &kAquaSelBottom : &kAquaSelDimBottom);
+    } else {
+        ForeColor(whiteColor);
+    }
+    MoveTo((short)(pill.left + (w - TextWidth(text, 0, len)) / 2),
+           (short)(pill.top + 1 + info.ascent));
+    DrawText(text, 0, len);
+
+    TextFace(normal);
+    ForeColor(blackColor);
+}
+#endif
 
 static void DrawCount(short right, short baseline, int count, Boolean enabled)
 {
@@ -3351,6 +3605,15 @@ static short BuildRowLabel(const char *name, int unread, short maxWidth,
  */
 static void EraseWith(const Rect *r, ThemeBrush brush)
 {
+#ifdef GAZETTE_MACOSX
+    /* The source list's blue-grey is no theme brush; it is set as a plain
+       background colour, which stays current for whoever draws next. */
+    if (brush == kBrushAquaSource) {
+        AquaBackRGB(&kAquaSourceBack);
+        EraseRect(r);
+        return;
+    }
+#endif
     SetThemeBackground(brush, 8, true);
     EraseRect(r);
 }
@@ -3442,10 +3705,16 @@ static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
     short             badge;
     int               unread = 0;
     Boolean           enabled = true;
+#ifdef GAZETTE_MACOSX
+    /* Blue only while this pane has the keyboard in the front window; a
+       selection anywhere else is the dimmer blue-grey. */
+    Boolean           focused = (Boolean)(gActive &&
+                                          PaneHasFocus(gSidebarCtl));
+#endif
 
     RowRect(full, &cellRect);
 
-    EraseWith(cell, kThemeBrushListViewBackground);
+    EraseWith(cell, kSidebarBrush);
     RestoreRowFocusEdges(full, gSidebarCtl);
 
     /*
@@ -3454,10 +3723,12 @@ static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
      * single white pixel as the last row of each cell — and it is what stops
      * a column of names reading as one block of text.
      */
+#ifndef GAZETTE_MACOSX      /* Mail's source list has no row rules */
     ForeColor(whiteColor);
     MoveTo(cell->left, (short)(cell->bottom - 1));
     LineTo((short)(cell->right - 1), (short)(cell->bottom - 1));
     ForeColor(blackColor);
+#endif
 
     if (!GazetteCoreSidebarRowAt(row, &r)) {
         return;
@@ -3498,6 +3769,11 @@ static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
     } else {
         UseSysFont();
     }
+#ifdef GAZETTE_MACOSX
+    if (selected) {
+        TextFace(bold);         /* the selected row is bold, as in Mail */
+    }
+#endif
 
     /* The badge is pinned right, so the name is truncated into what is left
        rather than the two overlapping. */
@@ -3522,12 +3798,26 @@ static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
      * exactly how it read — and the highlight colour is what the user chose
      * for a selection whether or not this list happens to have the focus.
      */
+#ifdef GAZETTE_MACOSX
+    /* The whole row, not a box behind the name: a vertical gradient with a
+       lighter line along its top. */
+    if (selected) {
+        if (focused) {
+            AquaFillGradient(full, &kAquaSelTop, &kAquaSelBottom,
+                             &kAquaSelLine);
+        } else {
+            AquaFillGradient(full, &kAquaSelDimTop, &kAquaSelDimBottom,
+                             &kAquaSelDimTop);
+        }
+    }
+#else
     if (selected) {
         Rect box;
 
         LabelBox(cell, textLeft, width, baseline, &box);
         FillHighlight(&box);
     }
+#endif
 
     if (r.kind == kGazetteRowSmart) {
         /* No disclosure triangle: there is nothing under it to disclose. */
@@ -3547,12 +3837,22 @@ static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
     SetThemeTextColor(enabled ? kThemeTextColorListView
                               : kThemeTextColorDialogInactive,
                       8, true);
+#ifdef GAZETTE_MACOSX
+    if (selected) {
+        ForeColor(whiteColor);
+    }
+#endif
     if (labelLen > 0) {
         MoveTo(textLeft, baseline);
         DrawText(label, 0, labelLen);
     }
 
+#ifdef GAZETTE_MACOSX
+    DrawCountPill((short)(cell->right - kTextInset), cell->top, gRowHeight,
+                  unread, selected, focused);
+#else
     DrawCount((short)(cell->right - kTextInset), baseline, unread, enabled);
+#endif
 
     TextFace(normal);
     ForeColor(blackColor);
@@ -3642,7 +3942,7 @@ static pascal void SidebarLDEF(short message, Boolean isSelected, Rect *cellRect
     if (RowFullyVisible(list, cellRect)) {
         DrawSidebarCell(cellRect, cell.v, isSelected);
     } else {
-        EraseWith(cellRect, kThemeBrushListViewBackground);
+        EraseWith(cellRect, kSidebarBrush);
     }
     UnclipList(saved);
 }
@@ -3664,7 +3964,10 @@ static void DrawDateHeading(const Rect *cell, int article)
         return;
     }
 
-    UseSysFont();
+    UseHeadingFont();
+#ifdef GAZETTE_MACOSX
+    TextFace(bold);             /* small and bold, as Mail's group rows are */
+#endif
     GetForeColor(&save);
     grey.red = grey.green = grey.blue = 110 * 257;
     RGBForeColor(&grey);
@@ -3685,6 +3988,12 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
     short                 textLeft;
     short                 textRight;
     int                   article;
+#ifdef GAZETTE_MACOSX
+    /* The selection is blue only while this pane has the keyboard in the
+       front window. */
+    Boolean               focused = (Boolean)(gActive &&
+                                              PaneHasFocus(gArticleCtl));
+#endif
 
     RowRect(full, &cellRect);
 
@@ -3699,14 +4008,24 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
      * thing in either list that is not a theme brush.
      */
     if (row < 0 || row >= gHeadRowCount) {
-        EraseWith(full, kThemeBrushListViewBackground);
+        EraseWith(full, kHeadlineBrush);
         return;
     }
+#ifdef GAZETTE_MACOSX
+    /* White, with every other article striped (both of its lines); a date
+       heading takes no stripe. */
+    EraseWith(full, kHeadlineBrush);
+    if (gHeadRows[row].kind != kHeadlineDate &&
+        (gHeadRows[row].article & 1) != 0) {
+        AquaPaintRGB(full, &kAquaStripe);
+    }
+#else
     if (gHeadRows[row].kind == kHeadlineDate) {
         PaintGrey(full, kBandGrey);
     } else {
         EraseWith(full, kThemeBrushListViewBackground);
     }
+#endif
 
     baseline = (short)(cell->top +
                        ((gHeadRows[row].kind == kHeadlineCont)
@@ -3717,6 +4036,15 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
            columns of focus border go back over it. */
         RestoreRowFocusEdges(full, gArticleCtl);
         DrawDateHeading(cell, gHeadRows[row].article);
+#ifdef GAZETTE_MACOSX
+        {
+            Rect rule;
+
+            SetRect(&rule, full->left, (short)(full->bottom - 1),
+                    full->right, full->bottom);
+            AquaPaintRGB(&rule, &kAquaHeadingRule);
+        }
+#endif
         TextFace(normal);
         ForeColor(blackColor);
         return;
@@ -3745,12 +4073,14 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
      * Before the highlight, so a selected headline covers its own rule
      * rather than having a line drawn across it.
      */
+#ifndef GAZETTE_MACOSX      /* Mail's table is striped, not ruled */
     if (row + 1 >= gHeadRowCount || gHeadRows[row + 1].kind != kHeadlineCont) {
         ForeColor(whiteColor);
         MoveTo(cell->left, (short)(cell->bottom - 1));
         LineTo((short)(cell->right - 1), (short)(cell->bottom - 1));
         ForeColor(blackColor);
     }
+#endif
 
     (void)selected;
     if (article == gSelectedArticle) {
@@ -3758,7 +4088,11 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
            not the part the text sits in. Down first, so the headline is
            drawn on top of it; and the border's two pixels go straight back
            over either end. */
+#ifdef GAZETTE_MACOSX
+        AquaPaintRGB(full, focused ? &kAquaListSel : &kAquaListSelDim);
+#else
         FillHighlight(full);
+#endif
     }
     RestoreRowFocusEdges(full, gArticleCtl);
 
@@ -3793,7 +4127,15 @@ static void DrawArticleCell(const Rect *full, short row, Boolean selected)
      */
     UseViewFont();
     TextFace(a->read ? normal : bold);
+#ifdef GAZETTE_MACOSX
+    if (article == gSelectedArticle && focused) {
+        ForeColor(whiteColor);
+    } else {
+        ForeColor(blackColor);
+    }
+#else
     ForeColor(blackColor);
+#endif
 
     MoveTo(textLeft, baseline);
     if (gHeadRows[row].kind == kHeadlineCont) {
@@ -3850,7 +4192,7 @@ static pascal void ArticleLDEF(short message, Boolean isSelected, Rect *cellRect
     if (RowFullyVisible(list, cellRect)) {
         DrawArticleCell(cellRect, cell.v, isSelected);
     } else {
-        EraseWith(cellRect, kThemeBrushListViewBackground);
+        EraseWith(cellRect, kHeadlineBrush);
     }
     UnclipList(saved);
 }
@@ -3973,10 +4315,10 @@ static pascal void PaneDraw(ControlRef control, SInt16 part)
 
     if (control == gSidebarCtl) {
         DrawListPane(control, gSidebarList, GazetteCoreSidebarRowCount(),
-                     kThemeBrushListViewBackground);
+                     kSidebarBrush);
     } else if (control == gArticleCtl) {
         DrawListPane(control, gArticleList, gHeadRowCount,
-                     kThemeBrushListViewBackground);
+                     kHeadlineBrush);
     }
 }
 
@@ -4099,7 +4441,11 @@ static void DrawReaderRule(void)
         return;                 /* scrolled out of the pane */
     }
     SetRect(&line, view.left, top, view.right, (short)(top + 1));
+#ifdef GAZETTE_MACOSX
+    AquaPaintRGB(&line, &kAquaReaderRule);
+#else
     PaintGrey(&line, kBandGrey);
+#endif
 }
 
 /*
@@ -4172,6 +4518,13 @@ static void DrawFocusBorder(const Rect *view, Boolean on)
     Rect     r = *view;
     short    i;
 
+#ifdef GAZETTE_MACOSX
+    /* Mail has no ring round a pane: the focused one is told by its
+       selection colour alone. */
+    (void)on;
+    return;
+#endif
+
     if (view->right <= view->left || view->bottom <= view->top) {
         return;
     }
@@ -4227,6 +4580,12 @@ static void DrawVDivider(const Rect *r)
      */
     Rect groove = *r;
 
+#ifdef GAZETTE_MACOSX
+    /* A single 1-px line between panes that keep their own backgrounds. */
+    AquaPaintRGB(r, &kAquaDivider);
+    return;
+#endif
+
     groove.right = (short)(r->left + 6);
     EraseWith(&groove, kThemeBrushDialogBackgroundActive);
 
@@ -4254,6 +4613,13 @@ static void DrawGrabHandle(const Rect *divider, Boolean vertical)
     RGBColor dark;
     RGBColor light;
     short    i;
+
+#ifdef GAZETTE_MACOSX
+    /* Aqua's divider has no grab handle. */
+    (void)divider;
+    (void)vertical;
+    return;
+#endif
 
     dark.red  = dark.green  = dark.blue  = 29 * 257;
     light.red = light.green = light.blue = 0xFFFF;
@@ -4952,9 +5318,15 @@ static void DrawStatusText(void)
      * rule, end to end, is also the line every scroll bar above it ends on.
      */
     EraseWith(&gStatusRect, kThemeBrushDialogBackgroundActive);
+#ifdef GAZETTE_MACOSX
+    /* The foot of Mail's window: the light Aqua header gradient, always in
+       its inactive state, with no rule. */
+    AquaDrawListHeader(&gStatusRect, false);
+#else
     ForeColor(blackColor);
     MoveTo(gStatusRect.left, gStatusRect.top);
     LineTo((short)(gStatusRect.right - 1), gStatusRect.top);
+#endif
 
     /* The text has the whole strip: the grooves end on its rule. */
     {
@@ -4962,7 +5334,11 @@ static void DrawStatusText(void)
 
         UseViewFont();
         TextSize(gStatusSize);
+#ifdef GAZETTE_MACOSX
+        AquaForeRGB(&kAquaStatusText);
+#else
         SetThemeTextColor(kThemeTextColorDialogActive, 8, true);
+#endif
         MoveTo((short)(gStatusRect.left + kTextInset + 4),
                (short)(gStatusRect.top + gStatusBase));
         DrawTruncated(gStatus,
@@ -5054,6 +5430,13 @@ void GazetteUIUpdate(void)
        frames, scroll bars and focus rings, the two window headers, the
        reader and its bar, and the status placard. */
     DrawControls(gWindow);
+
+#ifdef GAZETTE_MACOSX
+    /* The headers over the lists: the theme's own column header. The hidden
+       sidebar's is an empty rectangle and draws nothing. */
+    AquaDrawListHeader(&gSidebarHeader, gActive);
+    AquaDrawListHeader(&gListHeader, gActive);
+#endif
 
     /* Their titles go on top of them: a window header control and a placard
        have no text of their own. */
@@ -5152,6 +5535,28 @@ static void SelectArticle(int index)
 /* ------------------------------------------------------------------ */
 /* Dividers                                                            */
 /* ------------------------------------------------------------------ */
+
+/*
+ * Is the mouse on a divider? Platinum's groove is wide enough to grab as
+ * drawn. Aqua's is one pixel, so the hit rectangle is widened by a few
+ * pixels either side of the line; the divider is asked before the panes, so
+ * it wins over the edge of a scroll bar there. An empty divider (the hidden
+ * sidebar's) is never hit, which InsetRect would otherwise undo.
+ */
+static Boolean HitDivider(Point where, const Rect *divider)
+{
+#ifdef GAZETTE_MACOSX
+    Rect grab = *divider;
+
+    if (grab.right <= grab.left) {
+        return false;
+    }
+    InsetRect(&grab, -3, 0);
+    return PtInRect(where, &grab);
+#else
+    return PtInRect(where, divider);
+#endif
+}
 
 /*
  * Drag a divider. Tracking the mouse in a loop here is the same shape as
@@ -6068,11 +6473,11 @@ void GazetteUIClick(Point where, EventModifiers modifiers)
      * divider's rule — which means the two overlap, and the divider has to
      * win there or it could never be grabbed.
      */
-    if (PtInRect(where, &gVDivider)) {
+    if (HitDivider(where, &gVDivider)) {
         TrackDivider(where, false);
         return;
     }
-    if (PtInRect(where, &gVDivider2)) {
+    if (HitDivider(where, &gVDivider2)) {
         TrackDivider(where, true);
         return;
     }
@@ -7282,10 +7687,16 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
      */
     MakeToolbar();
 
+#ifndef GAZETTE_MACOSX
     gSidebarHeaderCtl = MakeControl(&gSidebarHeader,
                                     kControlWindowHeaderProc, 0);
     gListHeaderCtl    = MakeControl(&gListHeader,
                                     kControlWindowHeaderProc, 0);
+#endif
+    /* On Mac OS X the two header bars are not controls: GazetteUIUpdate has
+       the theme draw them (DrawThemeButton, kThemeListHeaderButton), which is
+       the column header Aqua puts over a table. The control pointers stay
+       NULL, and everything that touches them already checks. */
 
     if (!MakeListPane(gSidebarLDEF, &gSidebarPane, gRowHeight, &gSidebarCtl,
                       &gSidebarList) ||
