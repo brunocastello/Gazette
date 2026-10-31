@@ -34,6 +34,10 @@ extern "C" {
    the host tests, so what they check is the Mac's. */
 #define kGazetteUserAgent \
     "Gazette/" GAZETTE_VERSION_STRING " (Windows; Win32)"
+#elif defined(GAZETTE_MACOSX)
+/* The Mac OS X 10.4+ build; set by its own cmake, never by the host tests. */
+#define kGazetteUserAgent \
+    "Gazette/" GAZETTE_VERSION_STRING " (Macintosh; Mac OS X)"
 #else
 #define kGazetteUserAgent \
     "Gazette/" GAZETTE_VERSION_STRING " (Macintosh; Mac OS 9; PowerPC)"
