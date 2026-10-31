@@ -218,8 +218,14 @@ case $PHASE in
                      $FRAMEWORKS -o "$LINKOUT"; } ;;
       i386)
         LD=$(ls /usr/local/bin/*-ld | head -1)
+        # clang calls the compiler runtime for 64-bit division on i386
+        # (___udivdi3), and the link here bypasses the driver that would add
+        # it. The SDK's libgcc_s is that runtime; its install name,
+        # /usr/lib/libgcc_s.1.dylib, is on every 10.4 and later system.
+        ls "$SDK"/usr/lib/libgcc_s* || true
+        LIBGCC=-lgcc_s.10.4
         link() { $LD -arch i386 -macosx_version_min 10.4 -syslibroot "$SDK" \
-                     -o "$LINKOUT" "$SDK/usr/lib/crt1.o" "$@" $FRAMEWORKS -lSystem; } ;;
+                     -o "$LINKOUT" "$SDK/usr/lib/crt1.o" "$@" $FRAMEWORKS $LIBGCC -lSystem; } ;;
     esac
     if link "$OBJ"/*.o > "$OUT/link-$ARCH.log" 2>&1; then
         cat "$OUT/link-$ARCH.log"
@@ -241,7 +247,7 @@ case $PHASE in
       ppc)  $CC -arch ppc -isysroot "$SDK" -mmacosx-version-min=10.4 "$OBJ"/*.o \
                 $FRAMEWORKS -Wl,-undefined,dynamic_lookup -o "$LINKOUT" ;;
       i386) $LD -arch i386 -macosx_version_min 10.4 -syslibroot "$SDK" -undefined dynamic_lookup \
-                -o "$LINKOUT" "$SDK/usr/lib/crt1.o" "$OBJ"/*.o $FRAMEWORKS -lSystem ;;
+                -o "$LINKOUT" "$SDK/usr/lib/crt1.o" "$OBJ"/*.o $FRAMEWORKS $LIBGCC -lSystem ;;
     esac
     ;;
   *) echo "unknown phase $PHASE" >&2; exit 2 ;;
