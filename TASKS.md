@@ -113,6 +113,7 @@ Reuse Gateway’s Win32 networking and build patterns. Keep portable core pure.
 - [x] Icon (`.ico`) derived from the same artwork. (`Resources/win/Gazette.ico`, `tools/generate_win_assets.py`.)
 - [ ] Smoke-tested on at least one 9x/Me and one 2000/XP environment (86Box or real).
 - [ ] README section for Windows.
+- [ ] Check in 86Box (Bruno): the new 16 px icons (RGBA strip, mixed with the button face / window colour at start-up, `BuildIconList`). Disabled toolbar buttons are drawn from the image list's mask, and the toolbar list's cutoff (48/255) keeps faint shadow pixels in the mask, so a disabled icon may emboss a fatter silhouette than the art. If it looks wrong, raise the toolbar cutoff (or build a third, hard-edged list for disabled buttons).
 
 ---
 

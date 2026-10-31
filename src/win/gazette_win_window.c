@@ -1170,8 +1170,10 @@ static HIMAGELIST BuildIconList(HINSTANCE instance, COLORREF back, int cutoff)
                 int g = (in[1] * a + GetGValue(back) * (255 - a)) / 255;
                 int b = (in[2] * a + GetBValue(back) * (255 - a)) / 255;
 
-                if (r == 255 && g == 0 && b == 255) {
-                    b = 254;        /* never the key colour itself */
+                /* Never the key colour, or anything the display would round
+                   to it: at 16 or 8 bits per pixel magenta has neighbours. */
+                if (r > 240 && b > 240 && g < 8) {
+                    g = 8;
                 }
                 out[0] = (BYTE)b;
                 out[1] = (BYTE)g;
@@ -1220,6 +1222,14 @@ BOOL GazetteWindowCreate(HWND frame, HINSTANCE instance)
     gIcons     = BuildIconList(instance, GetSysColor(COLOR_WINDOW), 128);
     gToolIcons = BuildIconList(instance, GetSysColor(COLOR_BTNFACE), 48);
     if (gIcons == NULL || gToolIcons == NULL) {
+        if (gIcons != NULL) {
+            ImageList_Destroy(gIcons);
+            gIcons = NULL;
+        }
+        if (gToolIcons != NULL) {
+            ImageList_Destroy(gToolIcons);
+            gToolIcons = NULL;
+        }
         return FALSE;
     }
 

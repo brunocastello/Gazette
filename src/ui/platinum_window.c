@@ -3337,42 +3337,72 @@ static Handle BuildIconFamily(short resID)
         }
         HUnlock(family);
     }
-    for (i = 0; i < 4; i++) {
-        if (part[i] != NULL) {
-            ReleaseResource(part[i]);
-        }
-    }
+    /* The resources are purgeable and are left to the Resource Manager: a
+       GetIconSuite fallback for the same ID shares these handles, and
+       releasing them here would pull them out from under it. */
     return family;
 }
 
 /*
- * The family registered with Icon Services under our creator and an icon type
- * made from the resource ID, or NULL. Asked for first, because a registration
- * outlives the reference that made it and a toolbar button that swaps its
- * picture back asks again.
+ * Our families, registered with Icon Services once each and kept here for as
+ * long as the window lives. There is no lookup by (creator, type): Icon
+ * Services answers a request for a type it has never heard of with a generic
+ * document icon and no error, which would read as "registered". So the cache
+ * is ours. Each user of an icon takes its own reference (AcquireIconRef) and
+ * gives it back through ReleaseRowIcon; the cache keeps the reference the
+ * registration returned until ReleaseOwnIcons unregisters them all.
  */
+enum {
+    kOwnIconFirst = 256,
+    kOwnIconCount = 17          /* 256 to 272 */
+};
+#define kOwnIconCreator FOUR_CHAR_CODE('Gzt9')
+#define kOwnIconType(id) \
+    ((OSType)(0x477A0000UL | (unsigned long)(unsigned short)(id)))
+
+static IconRef gOwnRef[kOwnIconCount];
+static Boolean gOwnTried[kOwnIconCount];
+
 static IconRef RegisteredIcon(short resID)
 {
-    const OSType kCreator = FOUR_CHAR_CODE('Gzt9');
-    OSType       type = (OSType)(0x477A0000UL | (unsigned long)(unsigned short)resID);
-    IconRef      ref = NULL;
-    Handle       family;
+    int     slot = resID - kOwnIconFirst;
+    Handle  family;
 
-    if (GetIconRef(kOnSystemDisk, kCreator, type, &ref) == noErr &&
-        ref != NULL) {
-        return ref;
+    if (slot < 0 || slot >= kOwnIconCount) {
+        return NULL;
     }
-    ref = NULL;
-    family = BuildIconFamily(resID);
-    if (family != NULL) {
-        if (RegisterIconRefFromIconFamily(kCreator, type,
-                                          (IconFamilyHandle)family,
-                                          &ref) != noErr) {
-            ref = NULL;
+    if (!gOwnTried[slot]) {
+        gOwnTried[slot] = true;
+        family = BuildIconFamily(resID);
+        if (family != NULL) {
+            if (RegisterIconRefFromIconFamily(kOwnIconCreator,
+                                              kOwnIconType(resID),
+                                              (IconFamilyHandle)family,
+                                              &gOwnRef[slot]) != noErr) {
+                gOwnRef[slot] = NULL;
+            }
+            DisposeHandle(family);      /* it was copied */
         }
-        DisposeHandle(family);      /* it was copied */
     }
-    return ref;
+    if (gOwnRef[slot] != NULL) {
+        (void)AcquireIconRef(gOwnRef[slot]);
+    }
+    return gOwnRef[slot];
+}
+
+static void ReleaseOwnIcons(void)
+{
+    int i;
+
+    for (i = 0; i < kOwnIconCount; i++) {
+        if (gOwnRef[i] != NULL) {
+            (void)UnregisterIconRef(kOwnIconCreator,
+                                    kOwnIconType(kOwnIconFirst + i));
+            (void)ReleaseIconRef(gOwnRef[i]);
+            gOwnRef[i] = NULL;
+        }
+        gOwnTried[i] = false;
+    }
 }
 
 static void OwnIcon(RowIcon *out, short resID)
@@ -3428,6 +3458,7 @@ static void ReleaseRowIcons(void)
         ReleaseRowIcon(&gToolBtn[i].icon);
         gToolBtn[i].iconID = 0;
     }
+    ReleaseOwnIcons();
 }
 
 /*

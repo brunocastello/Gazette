@@ -12,10 +12,12 @@ blind downscale of the 32s turns every rim into grey porridge.
 
 They are the art of three places:
   * the Mac OS 9 toolbar (16 px icon over a caption), which keeps its
-    layout and changes only its pictures. Its sidebar toggle and its
-    browser button get Platinum-flavoured variants (a Platinum window with
-    square corners and a close box; a globe with the classic arrow), because
-    the Aqua window and the compass are OS X furniture;
+    layout and changes only its pictures. Its sidebar toggle, refresh and
+    browser button are variants of the Platinum drawings in the new style
+    (the window with its list pane shown or collapsed; the ring; a globe with
+    the classic arrow), because the Aqua window, ring and compass are OS X
+    furniture. The Windows build wears the same pictures (see
+    tools/generate_win_assets.py);
   * the sidebar's smart rows (Today, All Unread, Starred), on OS 9 and OS X;
   * the mark on a starred headline.
 
@@ -569,8 +571,9 @@ HEADER = """/*
  * DO NOT EDIT. Regenerate with:
  *   python3 tools/generate_ui_icons_aqua.py --out Resources/Gazette_ui_icons.r
  *
- * 16x16 families, drawn at 16 pixels in the Aqua-era style (the Mac OS 9
- * toolbar's sidebar toggle and browser button are Platinum variants). Each
+ * 16x16 families, drawn at 16 pixels in the Aqua-era style (IDs 260, 261,
+ * 269 and 272, the sidebar toggle, refresh and browser, are the Mac OS 9 /
+ * Windows variants rather than the OS X ones). Each
  * ID carries four members:
  *   'is32'  24-bit colour, RLE-packed per channel (no header at this size)
  *   's8mk'  the 8-bit alpha mask that goes with it

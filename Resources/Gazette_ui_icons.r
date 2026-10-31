@@ -4,8 +4,9 @@
  * DO NOT EDIT. Regenerate with:
  *   python3 tools/generate_ui_icons_aqua.py --out Resources/Gazette_ui_icons.r
  *
- * 16x16 families, drawn at 16 pixels in the Aqua-era style (the Mac OS 9
- * toolbar's sidebar toggle and browser button are Platinum variants). Each
+ * 16x16 families, drawn at 16 pixels in the Aqua-era style (IDs 260, 261,
+ * 269 and 272, the sidebar toggle, refresh and browser, are the Mac OS 9 /
+ * Windows variants rather than the OS X ones). Each
  * ID carries four members:
  *   'is32'  24-bit colour, RLE-packed per channel (no header at this size)
  *   's8mk'  the 8-bit alpha mask that goes with it

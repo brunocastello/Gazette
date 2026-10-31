@@ -91,7 +91,7 @@ set(GAZETTE_SOURCES
 # and the Finder icon family with the BNDL/FREF that binds it to 'Gzt9'.
 # Gazette_icon.r is generated -- see tools/generate_icon.py -- and so are the
 # sidebar's and the toolbar's own small icons in Gazette_ui_icons.r; see
-# tools/generate_ui_icons.py.
+# tools/generate_ui_icons_aqua.py.
 set(GAZETTE_RESOURCES
     Resources/Gazette.r
     Resources/Gazette_icon.r

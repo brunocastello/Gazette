@@ -43,7 +43,6 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import generate_icon as app          # noqa: E402
-import generate_ui_icons as ui       # noqa: E402
 import generate_ui_icons_aqua as aq  # noqa: E402
 
 # The colour a Win32 image list treats as nothing. Magenta because no
