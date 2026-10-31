@@ -2,6 +2,8 @@
 
 One 32-bit executable, cross-compiled with MinGW-w64 on CI (`.github/workflows/windows.yml`), for Windows 95, 98, Me, NT 4.0, 2000 and XP. NT 3.51 and earlier are out: tree and list views arrived with Windows 95 and NT 4.0.
 
+This document describes the **legacy** build. A second, modern build for Windows 10 / 11 (x64 / ARM64, Unicode, Per-Monitor V2 DPI, WinHTTP with native TLS) is planned from the same `src/win/` sources; see CLAUDE.md ("Windows — modern build", "Network layer strategy").
+
 The engine is the Mac's, compiled unchanged. Only the shell (`src/win/`), the network start-up (`src/net/gazette_net_win32.c`) and, next, the file store are Windows code.
 
 ## The event and network polling model

@@ -120,14 +120,19 @@ Reuse Gateway’s Win32 networking and build patterns. Keep portable core pure.
 
 Keep portable C core. Shells may differ by era.
 
-### X0 – Architecture audit (do this first)
+### X-CI0 – Prove the toolchains on GitHub Actions (do this first)
+- [x] 10.4u SDK source found: iWordle's `build-macosx.yml` (variantxyz PPC gcc image with SDK + phracker 10.4u for i386, SHA-256 pinned). 2026-10-31.
+- [ ] `osx-legacy` workflow copied from iWordle; first proof: Gazette's Carbon shell + engine links as a ppc + i386 Mach-O (C++17 shell, gcc 14 / clang).
+- [ ] `macos-universal` on `macos-latest`: Xcode, `-arch arm64 -arch x86_64`, deployment target 10.13, hello-world `.app`.
+
+### X0 – Architecture audit
 - [ ] Confirm every module that must stay pure C and free of Toolbox/Carbon headers.
 - [ ] List exact OS X / macOS APIs that replace Open Transport, File Manager, and Appearance Manager controls.
 - [ ] Produce `docs/osx-port.md` with ownership map and stage plan.
 - [ ] Host tests still pass.
 
 ### X1 – First runnable shell
-- [ ] Choose path for this stage: Carbon (older OS X) **or** Cocoa (modern). Document the choice.
+- [x] Choose path: 10.4–10.14 = existing Carbon shell as Mach-O (as iWordle); 10.13+ = AppKit shell (`src/cocoa/`). Decided 2026-10-31, see CLAUDE.md.
 - [ ] Open window, list feeds, fetch one feed over TLS.
 - [ ] Real Mach-O binary (not Retro68).
 
@@ -139,11 +144,92 @@ Keep portable C core. Shells may differ by era.
 
 ### X3 – PowerPC / early OS X path (if still desired)
 - [ ] Carbon or dual-target strategy documented and implemented, or explicitly deferred with reason.
+- [ ] `osx-legacy` (10.4–10.14, ppc + i386) keeps embedded Certainly/BearSSL over BSD sockets (`GAZETTE_USE_EMBEDDED_TLS`).
+- [x] CI host: cross toolchain in a container on GitHub Actions (all builds on Actions). Decided 2026-10-31.
+- [x] 10.6–10.10 covered, by `osx-legacy`'s i386 slice; `macos-universal` from 10.13. Decided 2026-10-31.
+- [ ] Carbon shell on Mach-O: BSD-sockets transport for Certainly, `~/Library` prefs/cache path, Mach-O frameworks instead of CarbonLib — behind a build flag, not a fork.
+- [ ] Tested on 10.4 PPC, 10.6 Intel and one of 10.7–10.10 (emulated or real).
 
 ### X4 – Ship
 - [ ] Icons (`.icns`).
-- [ ] CI artifacts / releases.
+- [ ] CI artifacts / releases. (`macos-universal`: Universal 2 `.app`, arm64 + x86_64, deployment target 10.13, new `macos.yml`.)
+- [ ] `macos-universal` uses `URLSession` (`GAZETTE_USE_NATIVE_TLS`); Certainly/BearSSL not linked.
 - [ ] README section for OS X / macOS.
+
+---
+
+## Network layer — native vs embedded TLS (cross-platform, do before K2 / M1 / X1)
+
+See CLAUDE.md "Network layer strategy". The seam is `src/net/gazette_fetch.h`.
+
+### N0 – Audit
+- [ ] Audit `src/net/` and the CMake / workflow setup: what in `gazette_fetch.c` is HTTP (redirects, de-chunking, POST, final URL) vs. stream; which callers depend on behaviour a native backend must reproduce (sink return 0 abandons, status, content type, error text).
+- [ ] List every hard-coded buffer / slice size in `src/net/` and Certainly that 68K must shrink.
+
+### N1 – Flags
+- [ ] CMake sets exactly one of `GAZETTE_USE_EMBEDDED_TLS` / `GAZETTE_USE_NATIVE_TLS` / `GAZETTE_USE_NO_TLS` per build; `#error` in `src/net/` on none or two.
+- [ ] Existing builds (`mac-ppc-carbon`, `win32-legacy`) set `GAZETTE_USE_EMBEDDED_TLS`, byte-identical behaviour.
+- [ ] `GAZETTE_HTTP_PROXY`: proxy host:port preference, plain HTTP to proxy (absolute-URI requests).
+
+### N2 – Native backends
+- [ ] `gazette_fetch_winhttp.c`: WinHTTP async, callbacks only queue + flag, advanced from the idle pump.
+- [ ] `gazette_fetch_urlsession.m`: main-queue delegate, body streamed to the sink.
+- [ ] Each backend passes the shared live net test (TLS 1.3, TLS 1.2, redirect, chunked, POST).
+
+---
+
+## Classic 68K port (System 7 / Mac OS 8) — Vector 1
+
+System 7.5.3 – Mac OS 8.1, 68020/030/040, Open Transport 1.3.1 + CFM-68K installed. No Carbon on 68K → classic Toolbox shell. Recipe: Gateway 0.4.0's 68K build (`build-mac68k.yml`, `GW_M68K` in its CMakeLists.txt).
+
+### K0 – Feasibility audit
+- [x] Code model: classic (non-CFM) 68K app, single segment, OT / IC as static `lib68k` glue, far-model IC glue, `-mcpu=68020 -msoft-float` — as Gateway. Decided 2026-10-31.
+- [ ] Check Gazette's code size fits Gateway's single-segment shape; fall back to far-model glue / segmentation if a near branch goes out of range.
+- [ ] Measure engine + Certainly/BearSSL code and static data size for 68K; identify tables to move into resources.
+- [x] Embedded TLS is the default (Gateway proves TLS 1.3 on 68K); HTTP proxy mode is an optional preference.
+- [ ] Time a handshake on an emulated 68030 / 68040 to size status feedback and fetch parallelism.
+- [x] Look: Appearance 1.0 controls on 8.0/8.1, System 7 standard controls on System 7, behind a Gestalt check — native on each. Decided 2026-10-31.
+- [x] No 68000 (OT needs 68020+), no MacTCP (OT 1.3.1 baseline). Decided 2026-10-31.
+- [x] No classic PowerPC build: PowerPC Macs on 7.5.3–8.0 run the 68K build under the built-in emulator. Decided 2026-10-31.
+
+### K1 – Build
+- [ ] `build-mac68k.yml` modelled on Gateway's (Retro68 container, `interfaces-and-libraries.sh ... true false false`, lib68k checks), after the host-test gate.
+- [ ] 68K `SIZE` budget measured and recorded (minimum under Gateway's 4 MB; must open on an 8 MB 7.5.3 + OT 1.3.1 machine).
+- [ ] Packaging as Gateway: `.sit` + partitioned hybrid `.iso` for UTM's Quadra 800; release upload.
+
+### K2 – Minimal classic shell
+- [ ] `src/classic/`: classic init, `WaitNextEvent` loop, menus, one window.
+- [ ] Open Transport start-up with 68K buffer sizes; fetch one feed (embedded TLS or via proxy).
+
+### K3 – Full UI
+- [ ] Three panes: Appearance 1.0 controls on 8.0/8.1 (hand-toggle where 1.1 variants are missing), System 7 standard controls on 7.5.3; nothing hand-drawn.
+- [ ] Caps: cache index, article buffer, concurrent fetches; photos reduced or off on 68K.
+
+### K4 – Ship
+- [ ] Tested in UTM's QEMU Quadra 800 on System 7.5.3 + OT 1.3.1 and on Mac OS 8.1, at a realistic RAM size.
+- [ ] CI artifact / release; 68K icon family (same artwork).
+
+---
+
+## Modern Windows (10 / 11, x64 / ARM64) — Vector 2
+
+Same `src/win/` shell, second build. The legacy 95–XP build stays untouched.
+
+### M0 – Toolchain
+- [x] Toolchain: llvm-mingw cross on Ubuntu, x64 + ARM64. Decided 2026-10-31.
+- [ ] `win-modern` matrix in `windows.yml`; own import check (WinHTTP present, no Certainly/BearSSL).
+
+### M1 – Unicode + DPI
+- [ ] `UNICODE` build: `W` APIs, UTF-8 ↔ UTF-16 at the shell edge, long/Unicode paths.
+- [ ] Per-Monitor V2 manifest + run-time `SetProcessDpiAwarenessContext`; `WM_DPICHANGED`; DPI-scaled metrics.
+- [ ] Common controls 6 manifest; settings under `%APPDATA%\Gazette`.
+
+### M2 – Network
+- [ ] WinHTTP backend (see N2) wired in; `GAZETTE_USE_NATIVE_TLS`.
+
+### M3 – Ship
+- [ ] Tested on Windows 10 and 11, x64 and ARM64 (or ARM64 under emulation, stated as such).
+- [ ] CI artifacts / release.
 
 ---
 
@@ -152,6 +238,8 @@ Keep portable C core. Shells may differ by era.
 - [ ] `CLAUDE.md` Opus 5.5 operating rules kept accurate.
 - [ ] `PROMPTS.md` prompts stay in sync with real workflow.
 - [ ] Portable core never gains platform `#ifdef`s that break host tests.
+- [ ] Portable core never sees a TLS flag; TLS / platform `#if`s live only in shells and `src/net/`.
+- [ ] Every build job (`mac-ppc-carbon`, `win32-legacy`, `mac-68k`, `win-modern`, `macos-universal`, `osx-legacy`) runs after the host-test gate.
 - [ ] Prefer one platform “done” definition at a time so Opus 5.5 can finish a clear finish line.
 
 ---
