@@ -11,6 +11,8 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[-]` deferred / delibe
 
 Goal: release-ready quality matching the 0.1.0 release notes, with known deliberate gaps documented.
 
+- [x] New Aqua-style 16 px icon art with alpha (Icon Services families, IDs 256–272), approved 2026-10-31. Bruno: OS 9 "99% ok".
+- [ ] Hide/Show Sidebar icon (260/272): the bottom edge of the little window is missing. Redraw in `tools/generate_ui_icons_aqua.py` (shared with Windows).
 - [x] Close remaining visual polish items called out in  Phase 5 / “Beyond Phase 5” (or document as deliberate).
   Every Phase 5 item is ✅ in the pre-rename AGENT.md (`git show de48c05:AGENT.md`); the window was signed off 2026-09-18 and nothing in the source is marked unfinished. “Beyond Phase 5” held two notes: groups merge every enabled feed newest first (deliberate), and Google News links unresolved (since fixed, see next item).
 - [x] Google News JS-redirect article links: best-effort decode (NewsProxy technique) **or** clear status-line fallback to feed summary.
@@ -113,6 +115,10 @@ Reuse Gateway’s Win32 networking and build patterns. Keep portable core pure.
 - [x] Icon (`.ico`) derived from the same artwork. (`Resources/win/Gazette.ico`, `tools/generate_win_assets.py`.)
 - [ ] Smoke-tested on at least one 9x/Me and one 2000/XP environment (86Box or real).
 - [ ] README section for Windows.
+- [x] New icon art on Windows (Aqua-style 16 px set, approved 2026-10-31; `ui_icons.rgba`, `BuildIconList`). Tested by Bruno on Win 95.
+- [ ] Hide/Show Sidebar icon: the bottom edge of the little window is missing (same fix as OS 9; Bruno, Win 95, 2026-10-31).
+- [ ] Sidebar adjustments on Win 95: Bruno will list them (2026-11-01).
+- [ ] Opening an article with photos froze Windows 95 (32 MB RAM) for at least a minute. Find out where (photo decode size, stb_image memory, synchronous work in the message loop) and cap or stream it for low-RAM machines.
 - [ ] Check in 86Box (Bruno): the new 16 px icons (RGBA strip, mixed with the button face / window colour at start-up, `BuildIconList`). Disabled toolbar buttons are drawn from the image list's mask, and the toolbar list's cutoff (48/255) keeps faint shadow pixels in the mask, so a disabled icon may emboss a fatter silhouette than the art. If it looks wrong, raise the toolbar cutoff (or build a third, hard-edged list for disabled buttons).
 
 ---
@@ -149,6 +155,9 @@ Keep portable C core. Shells may differ by era.
 - [x] CI host: cross toolchain in a container on GitHub Actions (all builds on Actions). Decided 2026-10-31.
 - [x] 10.6–10.10 covered, by `osx-legacy`'s i386 slice; `macos-universal` from 10.13. Decided 2026-10-31.
 - [x] Carbon shell on Mach-O: BSD-sockets transport for Certainly (osx-legacy-net), `~/Library/Preferences` via kUserDomain, Mach-O frameworks instead of CarbonLib, Quit left to the application menu, QDFlushPortBuffer in the tracking loops, bundle .rsrc opened by hand — behind `GAZETTE_MACOSX`, not a fork.
+- [x] Stage 2, the Aqua pass (docs/osx-port.md): HIToolbar + fixed-width HISearchField, Aqua panes, new icon art. Branch `osx-aqua`, CI green 2026-10-31 (runs 41244894637 / 41244894615).
+- [ ] Aqua pass round 2: Bruno tested on Tiger PPC (Uno theme) — "needs many UI adjustments"; his list comes 2026-11-01.
+- [ ] Articles load slowly on OS X (Bruno, Tiger PPC, 2026-10-31). Measure where the time goes (TLS handshake on the G4 in UTM, resolver lock, poll cadence of the WaitNextEvent loop / sleep value, socket buffer sizes) and compare with the OS 9 build on the same host.
 - [ ] Tested on 10.4 PPC, 10.6 Intel and one of 10.7–10.10 (emulated or real). **Needs Bruno (UTM)** — artifact `Gazette-mac-os-x` from `osx-legacy.yml`.
 - [ ] Application menu: wire its Preferences… item to the Preferences dialog and drop Edit > Preferences under Aqua layout (HIG; found in review 2026-10-31).
 - [ ] Cache folder: consider `~/Library/Caches/Gazette` instead of `~/Library/Preferences/Gazette Cache` (works as is; OS X convention).
