@@ -39,6 +39,7 @@ SHELL_SOURCES=(
     src/core/gazette_sys_mac.c
     src/ui/platinum_window.c
     src/ui/gazette_dialogs.c
+    src/ui/aqua_toolbar.c
     src/net/gazette_net.c
     src/net/gazette_net_posix.c
     src/net/gazette_fetch.c

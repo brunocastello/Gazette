@@ -72,6 +72,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifdef GAZETTE_MACOSX
+#include "ui/aqua_toolbar.h"    /* the HIToolbar that replaces the drawn one */
+#endif
+
 /* ------------------------------------------------------------------ */
 /* Metrics                                                             */
 /* ------------------------------------------------------------------ */
@@ -1628,11 +1632,21 @@ static void Layout(void)
         return;
     }
 
+#ifdef GAZETTE_MACOSX
+    /* Show or hide the real toolbar first, so that the content rectangle read
+       below is the one the window has now: the toolbar is in the window's
+       structure, and showing it moves where the content begins. */
+    GazetteAquaToolbarShow((Boolean)!GazetteCoreHideToolbar());
+#endif
     GetWindowPortBounds(gWindow, &bounds);
 
     contentBottom = (short)(bounds.bottom - gStatusHeight);
     noSidebar     = GazetteCoreHideSidebar();
+#ifdef GAZETTE_MACOSX
+    toolbar       = 0;      /* the toolbar is the window's own; see aqua_toolbar.c */
+#else
     toolbar       = GazetteCoreHideToolbar() ? 0 : kToolbarHeight;
+#endif
 
     SetRect(&gToolbarRect, bounds.left, bounds.top, bounds.right,
             (short)(bounds.top + toolbar));
@@ -4373,11 +4387,42 @@ static void SetToolIcon(ToolButton *b, short resID)
     b->dirty  = true;
 }
 
+#ifdef GAZETTE_MACOSX
+/*
+ * The Aqua toolbar's version of the same state. The picture for a toggling
+ * item is named for what it would do next, as the caption is: the first name
+ * is the resting one, the second the alternate (kToolSpec's otherCaption).
+ */
+static void AquaSetItem(int i, Boolean enabled, const char *caption,
+                        short resID)
+{
+    static const char *const kImage[kToolbarButtons][2] = {
+        { "new", "new" },
+        { "sidebar-hide", "sidebar-show" },
+        { "refresh", "refresh" },
+        { "markall-read", "markall-unread" },
+        { "hideread", "showread" },
+        { "mark-read", "mark-unread" },
+        { "star", "star" },
+        { "nextunread", "nextunread" },
+        { "browser", "browser" }
+    };
+    const ToolSpec *spec = &kToolSpec[i];
+    int             alt  = (spec->otherCaption != NULL && caption != NULL &&
+                            strcmp(caption, spec->otherCaption) == 0) ? 1 : 0;
+
+    GazetteAquaToolbarSetItem(i, enabled, caption, kImage[i][alt], resID);
+}
+#endif
+
 static void SetToolState(int i, Boolean enabled, const char *caption,
                          short resID)
 {
     ToolButton *b = &gToolBtn[i];
 
+#ifdef GAZETTE_MACOSX
+    AquaSetItem(i, enabled, caption, resID);
+#endif
     if (b->enabled != enabled) {
         b->enabled = enabled;
         b->dirty   = true;
@@ -4405,6 +4450,51 @@ static void RelayoutToolbar(void)
     LayoutToolbar(&bounds);
     gToolbarStale = false;
 }
+
+#ifdef GAZETTE_MACOSX
+static void ToolbarButtonPressed(int button);
+static void PopNewMenuAtMouse(void);
+
+/* An item of the Aqua toolbar was clicked: the same act as the Mac OS 9
+   bar's button, so the same two functions answer it. */
+static void AquaItemClicked(int item)
+{
+    if (item == kTBNew) {
+        PopNewMenuAtMouse();
+    } else {
+        ToolbarButtonPressed(item);
+    }
+}
+
+static void AquaSearchRequested(void)
+{
+    if (gOnCommand != NULL) {
+        gOnCommand(kGazetteCmdSearch);
+    }
+}
+
+/* The toolbar button in the title bar: View > Hide Toolbar by another door,
+   so the preference, the menu item and the window move together. */
+static void AquaToggleToolbar(void)
+{
+    GazetteCoreSetHideToolbar(GazetteCoreHideToolbar() ? false : true);
+    (void)GazetteCoreSavePrefs();
+    GazetteUIViewChanged();
+}
+
+static void AquaMakeToolbar(void)
+{
+    /* The nine items are the nine the shell's table names. */
+    typedef char kItemsMatch[(kToolbarButtons == kGazetteAquaItems) ? 1 : -1];
+
+    if (!GazetteAquaToolbarCreate(gWindow, AquaItemClicked,
+                                  AquaSearchRequested, AquaToggleToolbar)) {
+        return;
+    }
+    AdjustToolbarState();       /* labels and pictures before the first look */
+    Layout();                   /* the content begins where the toolbar ends */
+}
+#endif
 
 static void MakeToolbar(void)
 {
@@ -4444,6 +4534,17 @@ static void MakeToolbar(void)
         InsertMenu(gNewMenu, hierMenu);
     }
 
+#ifdef GAZETTE_MACOSX
+    /*
+     * On OS X the bar and the field are the system's: an HIToolbar in the
+     * window's title bar, with an HISearchField on it. No Edit Text is made
+     * (gSearchCtl stays NULL, which every use of it already allows), and the
+     * drawn buttons below are never laid out or drawn.
+     */
+    AquaMakeToolbar();
+    return;
+#endif
+
     /*
      * The field is set a size smaller than the lists, at 10, the way OE's
      * Find is a small thing at the end of the row rather than another
@@ -4476,6 +4577,9 @@ static void MakeToolbar(void)
 
 static void DisposeToolbar(void)
 {
+#ifdef GAZETTE_MACOSX
+    GazetteAquaToolbarDispose();
+#endif
     if (gNewMenu != NULL) {
         DeleteMenu(kToolbarNewMenuID);
         DisposeMenu(gNewMenu);
@@ -4506,6 +4610,9 @@ static void DrawToolButton(int i)
     short       baseline;
     short       x;
 
+#ifdef GAZETTE_MACOSX
+    return;                     /* the toolbar is the system's; see aqua_toolbar.c */
+#endif
     if (gWindow == NULL || GazetteCoreHideToolbar()) {
         return;
     }
@@ -4732,6 +4839,9 @@ static void AdjustToolbarState(void)
         HiliteControl(gSearchCtl,
                       (short)(GazetteFeedsTotalCount() > 0 ? 0 : 255));
     }
+#ifdef GAZETTE_MACOSX
+    GazetteAquaToolbarSetSearchEnabled((Boolean)(GazetteFeedsTotalCount() > 0));
+#endif
 }
 
 /*
@@ -4747,6 +4857,9 @@ void GazetteUIAdjustToolbar(void)
 
     AdjustToolbarState();
 
+#ifdef GAZETTE_MACOSX
+    return;                     /* nothing of ours to draw: the items update themselves */
+#endif
     if (gWindow == NULL || GazetteCoreHideToolbar()) {
         return;
     }
@@ -4783,6 +4896,9 @@ void GazetteUIIdle(void)
     short over = -1;
     short i;
 
+#ifdef GAZETTE_MACOSX
+    return;                     /* the system's items track the mouse themselves */
+#endif
     if (gWindow == NULL || !gActive || GazetteCoreHideToolbar() ||
         gToolPressed >= 0 || FrontWindow() != gWindow) {
         return;
@@ -4898,6 +5014,41 @@ static void PopNewMenu(void)
     }
 }
 
+#ifdef GAZETTE_MACOSX
+/*
+ * New, on OS X: the same menu, dropped where the mouse is. The item is the
+ * system's and its bounds are not ours to ask for; the click that opened the
+ * menu is still where the mouse is, directly under the item.
+ */
+static void PopNewMenuAtMouse(void)
+{
+    Point where;
+    long  choice;
+
+    if (gNewMenu == NULL) {
+        return;
+    }
+    GetGlobalMouse(&where);
+    choice = PopUpMenuSelect(gNewMenu, where.v, where.h, 0);
+
+    if ((short)(choice >> 16) == kToolbarNewMenuID && gOnCommand != NULL) {
+        switch ((short)(choice & 0xFFFF)) {
+            case 1:  gOnCommand(kGazetteCmdNewFeed);  break;
+            case 2:  gOnCommand(kGazetteCmdNewGroup); break;
+            default: break;
+        }
+    }
+}
+
+Boolean GazetteUIToolbarMouseDown(const EventRecord *event, short part)
+{
+    if (gWindow == NULL) {
+        return false;
+    }
+    return GazetteAquaToolbarMouseDown(gWindow, event, part);
+}
+#endif
+
 void GazetteUISearchText(char *out, size_t cap)
 {
     Size size = 0;
@@ -4906,6 +5057,10 @@ void GazetteUISearchText(char *out, size_t cap)
         return;
     }
     out[0] = '\0';
+#ifdef GAZETTE_MACOSX
+    GazetteAquaSearchText(out, cap);
+    return;
+#endif
     if (gSearchCtl == NULL) {
         return;
     }
@@ -4922,6 +5077,10 @@ void GazetteUISearchText(char *out, size_t cap)
 
 void GazetteUISetSearchText(const char *text)
 {
+#ifdef GAZETTE_MACOSX
+    GazetteAquaSetSearchText(text);
+    return;
+#endif
     if (gSearchCtl == NULL) {
         return;
     }
@@ -6355,6 +6514,28 @@ Boolean GazetteUIKey(short key, EventModifiers modifiers)
     {
         ControlRef focus = NULL;
 
+#ifdef GAZETTE_MACOSX
+        /*
+         * The field's keystrokes normally never get here: aqua_toolbar.c
+         * catches them as text input and hands them to the field. What does
+         * arrive is a keyDown the field declined, with the field still
+         * holding the keyboard; Return and Escape keep their meaning, and
+         * nothing else may reach the panes while someone is typing.
+         */
+        if (GazetteAquaSearchHasFocus()) {
+            if (key == '\r' || key == 3) {
+                if (gOnCommand != NULL) {
+                    gOnCommand(kGazetteCmdSearch);
+                }
+            } else if (key == 0x1B) {
+                GazetteUISetSearchText("");
+                if (gOnCommand != NULL) {
+                    gOnCommand(kGazetteCmdSearch);
+                }
+            }
+            return true;
+        }
+#endif
         (void)GetKeyboardFocus(gWindow, &focus);
         if (focus != NULL && focus == gSearchCtl) {
             if (key == '\r' || key == 3) {         /* Return, Enter */
@@ -7225,7 +7406,35 @@ Boolean GazetteUIOpen(GazetteUIFeedChosen onFeedChosen,
        WaitNextEvent loop in main.cpp. */
     attrs = kWindowStandardDocumentAttributes;
 
+#ifdef GAZETTE_MACOSX
+    /*
+     * The toolbar button (the pill) and, from Tiger on, the unified title bar
+     * and toolbar, which is the look of Mail's window. The unified bit is
+     * spelt out because the 10.4u SDK's MacWindows.h does not declare it
+     * (it is 1 << 7, between the toolbar button's and Metal's); and the plan's
+     * "kWindowToolbarAttribute" does not exist, a window gets its toolbar
+     * from SetWindowToolbar. If the system refuses the unified bit the window
+     * is made without it, and then without the pill.
+     */
+    {
+        const WindowAttributes kUnified = (1L << 7);
+
+        err = CreateNewWindow(kDocumentWindowClass,
+                              attrs | kWindowToolbarButtonAttribute | kUnified,
+                              &bounds, &gWindow);
+        if (err != noErr || gWindow == NULL) {
+            err = CreateNewWindow(kDocumentWindowClass,
+                                  attrs | kWindowToolbarButtonAttribute,
+                                  &bounds, &gWindow);
+        }
+        if (err != noErr || gWindow == NULL) {
+            err = CreateNewWindow(kDocumentWindowClass, attrs, &bounds,
+                                  &gWindow);
+        }
+    }
+#else
     err = CreateNewWindow(kDocumentWindowClass, attrs, &bounds, &gWindow);
+#endif
     if (err != noErr || gWindow == NULL) {
         gWindow = NULL;
         return false;
