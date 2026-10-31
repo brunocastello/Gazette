@@ -160,7 +160,8 @@ static HWND       gSplitLeft;
 static HWND       gSplitRight;
 static HWND       gStatus;
 
-static HIMAGELIST gIcons;        /* every 16x16 icon, in kIcon* order */
+static HIMAGELIST gIcons;        /* every 16x16 icon, in kIcon* order, on the window colour */
+static HIMAGELIST gToolIcons;    /* Gazette's own again, on the button face, for the toolbar */
 static HFONT      gUIFont;
 
 /* The widths the user chose, which are what is remembered, and the widths
@@ -1038,7 +1039,7 @@ static BOOL MakeToolbar(HWND parent)
        after 4.0; saying which one we compiled against is how a newer
        DLL knows what it was handed. */
     SendMessage(gToolbar, TB_BUTTONSTRUCTSIZE, sizeof(TBBUTTON), 0);
-    SendMessage(gToolbar, TB_SETIMAGELIST, 0, (LPARAM)gIcons);
+    SendMessage(gToolbar, TB_SETIMAGELIST, 0, (LPARAM)gToolIcons);
 
     AddToolStrings();
     for (i = 0; i < kToolbarButtons; i++) {
@@ -1102,6 +1103,107 @@ static int AddBlankSheet(void)
     return (at >= 0) ? at : AddShellIcon(0);
 }
 
+/*
+ * Gazette's own small icons have soft edges and a drop shadow, which is
+ * alpha, and an image list before comctl32 6 has a mask and no alpha: a
+ * pixel is there or it is not. So the strip (ui_icons.rgba, RGBA, 16 pixels
+ * tall) is mixed with the colour it will be drawn on, here, once, into a
+ * 24-bit bitmap, and what is too faint to count -- below `cutoff` out of
+ * 255 -- becomes magenta, which ImageList_AddMasked reads as the mask. The
+ * result is a smooth edge on that one colour and a hard one nowhere. The
+ * colour comes from the user's own scheme (the classic grey, XP's beige,
+ * whatever they chose) and is read at start-up; a scheme changed while the
+ * program runs leaves the old halo until the next launch.
+ *
+ * A low cutoff keeps the shadow (the toolbar's, which sits on one flat
+ * colour); a high one drops it (the lists', where the icon may land on a
+ * highlight and a grey fringe would show). Only kernel32 and gdi32 calls
+ * that Windows 95 has, and the two ImageList calls the code already made.
+ */
+static HIMAGELIST BuildIconList(HINSTANCE instance, COLORREF back, int cutoff)
+{
+    HRSRC           res;
+    HGLOBAL         loaded;
+    const BYTE     *src;
+    DWORD           size;
+    int             count, width, stride, x, y;
+    BYTE           *bits;
+    HBITMAP         bitmap;
+    HDC             dc;
+    BITMAPINFOHEADER bi;
+    HIMAGELIST      list = NULL;
+
+    res = FindResourceA(instance, MAKEINTRESOURCEA(IDR_UI_ICONS),
+                        (LPCSTR)RT_RCDATA);
+    if (res == NULL) {
+        return NULL;
+    }
+    loaded = LoadResource(instance, res);
+    size   = SizeofResource(instance, res);
+    src    = (loaded != NULL) ? (const BYTE *)LockResource(loaded) : NULL;
+    count  = (int)(size / (16 * 16 * 4));
+    if (src == NULL || count < 1) {
+        return NULL;
+    }
+
+    width  = 16 * count;
+    stride = (width * 3 + 3) & ~3;
+    bits   = (BYTE *)LocalAlloc(LPTR, (UINT)(stride * 16));
+    if (bits == NULL) {
+        return NULL;
+    }
+
+    for (y = 0; y < 16; y++) {
+        /* A bitmap's rows run bottom-up; the strip's top-down. */
+        BYTE       *out = bits + (15 - y) * stride;
+        const BYTE *in  = src + y * width * 4;
+
+        for (x = 0; x < width; x++, in += 4, out += 3) {
+            int a = in[3];
+
+            if (a < cutoff) {
+                out[0] = 255;       /* B, G, R: magenta */
+                out[1] = 0;
+                out[2] = 255;
+            } else {
+                int r = (in[0] * a + GetRValue(back) * (255 - a)) / 255;
+                int g = (in[1] * a + GetGValue(back) * (255 - a)) / 255;
+                int b = (in[2] * a + GetBValue(back) * (255 - a)) / 255;
+
+                if (r == 255 && g == 0 && b == 255) {
+                    b = 254;        /* never the key colour itself */
+                }
+                out[0] = (BYTE)b;
+                out[1] = (BYTE)g;
+                out[2] = (BYTE)r;
+            }
+        }
+    }
+
+    ZeroMemory(&bi, sizeof(bi));
+    bi.biSize        = sizeof(bi);
+    bi.biWidth       = width;
+    bi.biHeight      = 16;
+    bi.biPlanes      = 1;
+    bi.biBitCount    = 24;
+    bi.biCompression = BI_RGB;
+
+    dc     = GetDC(NULL);
+    bitmap = CreateDIBitmap(dc, &bi, CBM_INIT, bits, (const BITMAPINFO *)&bi,
+                            DIB_RGB_COLORS);
+    ReleaseDC(NULL, dc);
+    LocalFree((HLOCAL)bits);
+
+    if (bitmap != NULL) {
+        list = ImageList_Create(16, 16, ILC_COLOR24 | ILC_MASK, kIconCount, 0);
+        if (list != NULL) {
+            ImageList_AddMasked(list, bitmap, RGB(255, 0, 255));
+        }
+        DeleteObject(bitmap);
+    }
+    return list;
+}
+
 BOOL GazetteWindowCreate(HWND frame, HINSTANCE instance)
 {
     gInstance = instance;
@@ -1110,25 +1212,15 @@ BOOL GazetteWindowCreate(HWND frame, HINSTANCE instance)
     MeasureFonts(frame);
 
     /*
-     * One image list for every icon Gazette drew for itself, cut from
-     * the strip in Resources/win/ui_icons.bmp. Magenta is the colour
-     * that means nothing, which is what ImageList_AddMasked reads.
-     *
-     * LoadBitmap and ImageList_AddMasked rather than
-     * ImageList_LoadImage: the latter arrived with comctl32 4.70, and
-     * everything here has to work against the 4.0 that shipped on the
-     * Windows 95 CD.
+     * Two image lists of every icon Gazette drew for itself, made from the
+     * RGBA strip in Resources/win/ui_icons.rgba: one to be drawn on the
+     * window colour (the sidebar and the headlines, and where Windows' own
+     * icons are appended) and one on the button face (the toolbar).
      */
-    {
-        HBITMAP strip = LoadBitmapA(instance, MAKEINTRESOURCEA(IDB_UI_ICONS));
-
-        gIcons = ImageList_Create(16, 16, ILC_COLOR24 | ILC_MASK,
-                                  kIconCount, 0);
-        if (gIcons == NULL || strip == NULL) {
-            return FALSE;
-        }
-        ImageList_AddMasked(gIcons, strip, RGB(255, 0, 255));
-        DeleteObject(strip);
+    gIcons     = BuildIconList(instance, GetSysColor(COLOR_WINDOW), 128);
+    gToolIcons = BuildIconList(instance, GetSysColor(COLOR_BTNFACE), 48);
+    if (gIcons == NULL || gToolIcons == NULL) {
+        return FALSE;
     }
 
     /* And Windows' own: shell32's closed folder (3) and open folder (4),
@@ -1262,6 +1354,10 @@ void GazetteWindowDestroy(void)
     if (gIcons != NULL) {
         ImageList_Destroy(gIcons);
         gIcons = NULL;
+    }
+    if (gToolIcons != NULL) {
+        ImageList_Destroy(gToolIcons);
+        gToolIcons = NULL;
     }
     if (gBoldFont != NULL && gBoldFont != gUIFont) {
         DeleteObject(gBoldFont);

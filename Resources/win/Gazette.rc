@@ -35,7 +35,7 @@
 /* ------------------------------------------------------------------ */
 
 IDI_GAZETTE  ICON   "Gazette.ico"
-IDB_UI_ICONS BITMAP "ui_icons.bmp"
+IDR_UI_ICONS RCDATA "ui_icons.rgba"
 
 /* ------------------------------------------------------------------ */
 /* The menu bar                                                        */

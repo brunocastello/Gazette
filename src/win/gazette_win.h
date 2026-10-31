@@ -19,7 +19,7 @@
 
 /*
  * The icons, in the order tools/generate_win_assets.py lays them into
- * Resources/win/ui_icons.bmp -- which is resource-id order in
+ * Resources/win/ui_icons.rgba -- which is resource-id order in
  * Gazette_ui_icons.r, so index N here is id 256 + N there and the two
  * builds cannot drift apart without the generator saying so.
  */

@@ -312,37 +312,55 @@ def o_browser():
     return ic
 
 
-def window_os9(ic, pane_w):
-    """A Platinum window, 16 wide: square corners, pinstriped title bar, close box left, zoom and collapse right."""
-    ic.add(rect(0, 1, 16, 15), solid(56, 56, 56))                       # frame
-    ic.add(rect(1, 2, 15, 15 - 1), solid(255, 255, 255))
-    for row in range(2, 7):                                             # the pinstripes
-        ic.add(rect(1, row, 15, row + 1),
-               solid(255, 255, 255) if row % 2 == 0 else solid(190, 190, 196))
-    ic.add(rect(1, 7, 15, 8), solid(56, 56, 56))                        # rule under the title
-    for x0 in (2, 8, 11):                                               # close, zoom, collapse
-        ic.add(rect(x0, 3, x0 + 3, 6), solid(96, 96, 104))
-        ic.add(rect(x0 + 1, 4, x0 + 2, 5), solid(235, 235, 240))
-    ic.add(rect(1, 8, 1 + pane_w, 14), vgrad(8, 14, (214, 224, 242), (178, 192, 218)))
-    ic.add(rect(1 + pane_w, 8, 2 + pane_w, 14), solid(110, 122, 150))
-    return ic
+# The Platinum build's own drawings of the sidebar toggle and the refresh ring
+# (tools/generate_ui_icons.py: a window with a shaded list pane and a white
+# pane, a ring open at the upper right with its head pointing right), redrawn
+# with gradients, a gloss and a soft shadow but on the same grid and in the
+# same composition.
+
+def sidebar_window(ic, pane):
+    ic.shape(rrect(1, 1, 15, 14, 1.0), vgrad(1, 14, (252, 252, 252), (226, 228, 234)),
+             rim=(92, 96, 110))
+    ic.add(rect(2, 2, 14, 4), vgrad(2, 4, (246, 247, 250), (186, 190, 200)))    # title bar
+    ic.add(inter(rect(2, 2, 14, 3), rect(0, 0, 16, 3)), solid(255, 255, 255, 0.7))
+    hline(ic, 2, 14, 4, (70, 76, 92))                                           # its rule
+    ic.add(rect(2, 5, pane, 13), vgrad(5, 13, (244, 245, 248), (214, 218, 228)))
+    hline(ic, 2, 14, 13, (190, 194, 204))
+    ic.add(rect(pane, 5, pane + 1, 13), solid(70, 76, 92))                      # divider
+    if pane > 4:
+        for row in (6, 9, 12):
+            ic.add(rect(3, row, pane - 2, row + 1), solid(150, 156, 170))
+
+
+def chevron(ic, pts):
+    """The pane's direction, a bold blue angle bracket in the white pane."""
+    ic.add(stroke(pts, 2.8), solid(10, 36, 120, 0.9))
+    ic.add(stroke(pts, 1.5), vgrad(6, 13, (96, 150, 244), (30, 84, 200)))
 
 
 def o_sidebar_hide():
-    ic = Icon(S, 0.0)
-    window_os9(ic, 5)
-    ic.add(rect(2, 9, 5, 11), solid(58, 108, 214))
-    ic.add(rect(2, 12, 5, 13), solid(110, 122, 150))
-    blue16(ic, 12, 10.5, 3.6)
-    ic.add(stroke([(12.9, 8.9), (11, 10.5), (12.9, 12.1)], 1.5), solid(255, 255, 255))
+    ic = shadowed()
+    sidebar_window(ic, 7)
+    chevron(ic, [(11.6, 7.2), (9.6, 9.5), (11.6, 11.8)])
     return ic
 
 
 def o_sidebar_show():
-    ic = Icon(S, 0.0)
-    window_os9(ic, 2)
-    blue16(ic, 12, 10.5, 3.6)
-    ic.add(stroke([(11.1, 8.9), (13, 10.5), (11.1, 12.1)], 1.5), solid(255, 255, 255))
+    ic = shadowed()
+    sidebar_window(ic, 4)
+    chevron(ic, [(8.2, 7.2), (10.2, 9.5), (8.2, 11.8)])
+    return ic
+
+
+def o_refresh():
+    """The old ring: open between about one and four o'clock, a triangle head on its upper end."""
+    ic = shadowed()
+    cx, cy, r = 7.5, 9.0, 4.4
+    ring = stroke(arc_pts(cx, cy, r, 20, 285, 40), 3.0)
+    head = poly([(8.5, 1.5), (8.5, 7.5), (13.5, 4.5)])
+    shp = union(ring, head)
+    ic.shape(shp, vgrad(1, 15, (146, 214, 236), (44, 128, 206), (24, 78, 170)), rim=(14, 56, 130), w=0.9)
+    ic.add(inter(inset(shp, 0.9), ellipse(7.5, 5.0, 8.0, 4.2)), vgrad(1, 8, (255, 255, 255, 0.55), (255, 255, 255, 0.0)))
     return ic
 
 
@@ -370,6 +388,15 @@ def a_allunread():
     return ic
 
 
+def a_clearsearch():
+    """The glass with a red cross struck over its lens: Windows' Clear Search."""
+    ic = a_find()
+    for col, w in ((solid(255, 255, 255, 0.6), 4.0), (solid(190, 24, 24), 2.4)):
+        ic.add(stroke([(4.2, 4.2), (8.8, 8.8)], w), col)
+        ic.add(stroke([(8.8, 4.2), (4.2, 8.8)], w), col)
+    return ic
+
+
 def a_find():
     ic = shadowed()
     ic.add(stroke([(10, 10), (14, 14)], 3.0), solid(60, 44, 36), True)
@@ -380,14 +407,15 @@ def a_find():
     return ic
 
 
-# (resource id, name, builder). 260, 269 and 272 are the Mac OS 9 art.
+# (resource id, name, builder). 260, 261, 269 and 272 are the Mac OS 9 / Windows
+# art: the Aqua window and ring and the compass are OS X furniture.
 RESOURCES = [
     (256, "Today", a_today),
     (257, "All Unread", a_allunread),
     (258, "Starred", a_star),
     (259, "Starred Article", a_starsmall),
     (260, "Hide Sidebar", o_sidebar_hide),
-    (261, "Refresh", a_refresh),
+    (261, "Refresh", o_refresh),
     (262, "Mark All as Read", lambda: a_markall(False)),
     (263, "Mark All as Unread", lambda: a_markall(True)),
     (264, "Hide Read Articles", lambda: a_hideread(True)),
@@ -411,6 +439,7 @@ AQUA16 = [
     ("browser", a_browser),
 ]
 OS9 = [("sidebar-hide-os9", o_sidebar_hide), ("sidebar-show-os9", o_sidebar_show),
+       ("refresh-os9", o_refresh),
        ("browser-os9", o_browser)]
 SIDEBAR = [("today", a_today), ("allunread", a_allunread), ("starred", a_star),
            ("starredsmall", a_starsmall), ("find", a_find)]
@@ -580,6 +609,23 @@ def family_rez(rid, name, buf):
 
 # --- Proof -------------------------------------------------------------------------
 
+def matted(buf, bg, cutoff):
+    """What the Windows window makes of an icon: mixed with `bg`, and anything
+    under `cutoff` (of 255) left out. See BuildIconList in gazette_win_window.c."""
+    out = []
+    for row in buf:
+        o = []
+        for r, g, b, a in row:
+            a8 = int(round(a * 255))
+            if a8 < cutoff:
+                o.append((0, 0, 0, 0.0))
+            else:
+                k = a8 / 255.0
+                o.append((r * k + bg[0] * (1 - k), g * k + bg[1] * (1 - k), b * k + bg[2] * (1 - k), 1.0))
+        out.append(o)
+    return out
+
+
 def uri(buf):
     return "data:image/png;base64," + base64.b64encode(png_bytes(buf)).decode()
 
@@ -630,6 +676,21 @@ code{font-size:11px;color:#666}
 <h3>Sidebar rows and starred-headline mark (16 x 16, OS 9 and OS X); Find (the search field's glass)</h3>
 <div class="grid">""" + "".join(cell16(n, b) for n, b in small["side"])
             + """</div>
+<h3>Redone from the Platinum drawings: sidebar pair and refresh, 16 x 16 (1x and 4x)</h3>
+<div class="grid">""" + "".join(cell16(n, b) for n, b in small["os9"] if n != "browser-os9")
+            + """</div>
+<h3>The Windows toolbar, as BuildIconList makes it (alpha mixed with the button face, fainter than 48/255 left out): classic grey 192,192,192 and XP beige 236,233,216; 1x and 3x</h3>"""
+            + "".join(
+                '<div class="bar" style="background:rgb(%d,%d,%d);border-color:#808080">%s</div>'
+                '<div class="bar" style="background:rgb(%d,%d,%d);border-color:#808080;gap:8px">%s</div>' % (
+                    bg + ("".join('<div><img src="%s" width="16" height="16"><span style="font:11px Tahoma,sans-serif">%s</span></div>' % (uri(matted(b, bg, 48)), l) for l, b in small["win"]),)
+                    + bg + ("".join('<img class="px" src="%s" width="48" height="48">' % uri(matted(b, bg, 48)) for l, b in small["win"]),))
+                for bg in ((192, 192, 192), (236, 233, 216)))
+            + """
+<h3>The Windows lists (sidebar, headlines) on window white, cutoff 128</h3>
+<div class="bar" style="background:#fff;border-color:#808080">""" + "".join(
+                '<img src="%s" width="16" height="16">' % uri(matted(b, (255, 255, 255), 128)) for l, b in small["win"])
+            + """</div>
 <h3>As the Mac OS 9 toolbar will show them (16 px over a caption, on Platinum grey)</h3>
 <div class="bar" style="background:#dddddd;border-color:#888">""" + "".join(
                 '<div><img src="%s" width="16" height="16"><span style="font:10px Geneva,sans-serif">%s</span></div>' % (uri(b), l)
@@ -676,6 +737,8 @@ def main():
                  (268, "Next Unread"), (269, "Browser")]
         byid = {rid: fn for rid, nm, fn in RESOURCES}
         small["os9bar"] = [(l, byid[rid]().render()) for rid, l in order]
+        wl = [(nm, fn().render()) for rid, nm, fn in RESOURCES if rid <= 271] + [("Clear Search", a_clearsearch().render())]
+        small["win"] = wl
         if a.proof:
             proof(a.proof, set32, small)
         if a.sheets:
