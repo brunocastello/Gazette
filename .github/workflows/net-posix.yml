@@ -1,0 +1,51 @@
+# Gazette — the BSD-sockets network path, proved against live servers
+#
+# The Mac OS X 10.4+ build reaches the network through Certainly's
+# transport_posix.c. This builds the application's own fetch over it with a
+# plain host cc and runs it against the same servers windows.yml uses, on
+# Linux and on macOS, so the transport, the entropy pool and the compat clock
+# are known good before the OS X build exists to exercise them.
+
+name: Network (POSIX)
+
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - 'src/net/**'
+      - 'third_party/certainly/**'
+      - 'tests/posix/**'
+      - 'src/portable/**'
+      - 'src/feeds/**'
+      - '.github/workflows/net-posix.yml'
+  workflow_dispatch:
+
+jobs:
+  nettest:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Strict build of the transport and entropy sources
+        run: make -C tests/posix strict
+
+      - name: Build GazetteNetTest
+        run: make -C tests/posix -j4 >/dev/null
+
+      - name: Fetch live feeds over TLS
+        run: |
+          set -euo pipefail
+          # news.google.com   -- TLS 1.3, Certainly's own handshake, a feed
+          # feeds.nbcnews.com -- a second RSS host
+          # www.nbcnews.com   -- TLS 1.2 only, BearSSL's engine (PATCHES.md §24)
+          # 9to5mac.com/feed  -- chunked, redirects
+          tests/posix/GazetteNetTest \
+            "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en" \
+            "https://feeds.nbcnews.com/nbcnews/public/news" \
+            "https://www.nbcnews.com/" \
+            "https://9to5mac.com/feed/"
