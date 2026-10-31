@@ -211,6 +211,22 @@ enum { kMacToUnixEpoch = 2082844800L };
 /* ------------------------------------------------------------------ */
 
 static WindowRef              gWindow;
+
+/*
+ * Mac OS X (osx-legacy) buffers every window: what QuickDraw draws reaches
+ * the screen when the application next calls WaitNextEvent, or flushes the
+ * port. The loops below that follow the mouse -- a toolbar press, a divider,
+ * a drag in the sidebar, a selection in the article -- draw and then spin on
+ * StillDown() without ever returning to the event loop, so each pass flushes
+ * by hand or the screen would show nothing until the button came up. On
+ * Mac OS 9 the port is the screen, so this is nothing.
+ */
+#ifdef GAZETTE_MACOSX
+#define FlushWindow() \
+    do { if (gWindow != NULL) (void)QDFlushPortBuffer(GetWindowPort(gWindow), NULL); } while (0)
+#else
+#define FlushWindow() ((void)0)
+#endif
 static GazetteUIFeedChosen    gOnFeedChosen;
 static GazetteUIArticleChosen gOnArticleChosen;
 static GazetteUIGroupChosen   gOnGroupChosen;
@@ -2840,6 +2856,7 @@ static pascal void ScrollAction(ControlRef control, ControlPartCode part)
     /* Scrolled here rather than invalidated: this runs inside TrackControl's
        own loop, and an update event would not be seen until it returned. */
     ScrollReaderTo((short)(ReaderOffset() + delta));
+    FlushWindow();
 }
 
 /* ------------------------------------------------------------------ */
@@ -4816,6 +4833,7 @@ static void TrackToolButton(int i)
     gToolHover   = (short)i;
     gToolPressed = (short)i;
     DrawToolButton(i);
+    FlushWindow();
 
     while (StillDown()) {
         Point   p;
@@ -4827,6 +4845,7 @@ static void TrackToolButton(int i)
             inside       = now;
             gToolPressed = (short)(now ? i : -1);
             DrawToolButton(i);
+            FlushWindow();
         }
     }
 
@@ -4835,6 +4854,7 @@ static void TrackToolButton(int i)
         gToolHover = -1;
     }
     DrawToolButton(i);
+    FlushWindow();
 
     if (inside) {
         ToolbarButtonPressed(i);
@@ -5162,6 +5182,7 @@ static void TrackDivider(Point where, Boolean second)
                 gListWidth = want;
                 Layout();
                 GazetteUIUpdate();
+                FlushWindow();
             }
         } else {
             short want = (short)(pt.h - bounds.left);
@@ -5170,6 +5191,7 @@ static void TrackDivider(Point where, Boolean second)
                 gSidebarWidth = want;
                 Layout();
                 GazetteUIUpdate();
+                FlushWindow();
             }
         }
     }
@@ -5178,6 +5200,7 @@ static void TrackDivider(Point where, Boolean second)
        they actually have. */
     ReflowHeadlines();
     GazetteUIUpdate();
+    FlushWindow();
 }
 
 /* ------------------------------------------------------------------ */
@@ -5712,6 +5735,7 @@ static void TrackSidebarDrag(const GazetteSidebarRow *what)
                 shown.valid = false;
                 LScroll(0, step, gSidebarList);
                 lastScroll = TickCount();
+                FlushWindow();
             }
         }
 
@@ -5729,9 +5753,11 @@ static void TrackSidebarDrag(const GazetteSidebarRow *what)
             ToggleDropSpot(&shown);
             ToggleDropSpot(&spot);
             shown = spot;
+            FlushWindow();
         }
     }
     ToggleDropSpot(&shown);
+    FlushWindow();
 
     if (!shown.valid) {
         return;
@@ -5938,10 +5964,12 @@ static void ReaderClick(Point where, EventModifiers modifiers)
                         (long)((anchor < at) ? at : anchor), te);
             last = at;
         }
+        FlushWindow();
     }
 
     if ((**te).selStart == (**te).selEnd) {
         TEDeactivate(te);
+        FlushWindow();
         return;
     }
 
@@ -5952,6 +5980,7 @@ static void ReaderClick(Point where, EventModifiers modifiers)
      * at the end is what TextEdit says the selection is.
      */
     DrawReader();
+    FlushWindow();
 }
 
 /* The user pane's tracking procedure: a click that HandleControlClick has

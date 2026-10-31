@@ -22,6 +22,18 @@
 #include <stdio.h>       /* snprintf, for the error text */
 #include <string.h>      /* strlen */
 
+/*
+ * Which volume's Preferences folder. On Mac OS 9 it is the System Folder's,
+ * found on the startup disk. On Mac OS X that call would name a system-wide
+ * folder no ordinary user can write to; the user's own ~/Library/Preferences
+ * is the kUserDomain one, and it is where the prefs file and the cache go.
+ */
+#ifdef GAZETTE_MACOSX
+#define kGazetteFolderDomain kUserDomain
+#else
+#define kGazetteFolderDomain kOnSystemDisk
+#endif
+
 /* Pascal strings, so they can go straight to FSMakeFSSpec. */
 static const unsigned char kPrefsFileName[]   = "\pGazette Preferences";
 static const unsigned char kCacheFolderName[] = "\pGazette Cache";
@@ -69,7 +81,7 @@ static OSErr MakePrefsSpec(FSSpec *spec, Boolean *existed)
 
     *existed = false;
 
-    err = FindFolder(kOnSystemDisk, kPreferencesFolderType,
+    err = FindFolder(kGazetteFolderDomain, kPreferencesFolderType,
                      kDontCreateFolder, &vRefNum, &dirID);
     if (err != noErr) {
         return err;
@@ -307,7 +319,7 @@ static OSErr MakeCacheSpecNamed(ConstStr255Param name, Boolean createFolder,
 
     *existed = false;
 
-    err = FindFolder(kOnSystemDisk, kPreferencesFolderType,
+    err = FindFolder(kGazetteFolderDomain, kPreferencesFolderType,
                      kDontCreateFolder, &vRefNum, &prefsDir);
     if (err != noErr) {
         return err;

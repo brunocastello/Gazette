@@ -41,6 +41,12 @@
 #include <TextUtils.h>
 #include <InternetConfig.h>     /* ICLaunchURL, for Open in Browser */
 #include <Scrap.h>              /* the clipboard, for Copy Feed URL */
+#ifdef GAZETTE_MACOSX
+#include <Gestalt.h>            /* gestaltMenuMgrAttr */
+#include <Files.h>              /* FSOpenResourceFile */
+#include <CFBundle.h>           /* where the resource file is */
+#include <CFString.h>
+#endif
 
 #include <stdio.h>
 #include <string.h>
@@ -297,8 +303,48 @@ enum {
 /* Entry point                                                         */
 /* ------------------------------------------------------------------ */
 
+#ifdef GAZETTE_MACOSX
+/*
+ * Mac OS X (the osx-legacy build). A bundled Mach-O application does not get
+ * Contents/Resources/Gazette.rsrc mapped into the Resource Manager for it,
+ * and without that every GetNewDialog and GetIconSuite comes back empty. So
+ * the file is found by name and opened by hand. CI's Rez writes it into the
+ * *data* fork (a Linux filesystem has no resource forks), so it is opened by
+ * the reserved data-fork name rather than the default resource fork.
+ */
+static void OpenBundleResources(void)
+{
+    CFBundleRef bundle = CFBundleGetMainBundle();
+    CFStringRef name   = CFStringCreateWithCString(NULL, "Gazette", kCFStringEncodingASCII);
+    CFStringRef type   = CFStringCreateWithCString(NULL, "rsrc", kCFStringEncodingASCII);
+    CFURLRef    url    = NULL;
+    FSRef       ref;
+
+    if (bundle != NULL && name != NULL && type != NULL) {
+        url = CFBundleCopyResourceURL(bundle, name, type, NULL);
+    }
+    if (url != NULL) {
+        if (CFURLGetFSRef(url, &ref)) {
+            HFSUniStr255 dataFork;
+            SInt16       refNum;
+
+            FSGetDataForkName(&dataFork);
+            (void)FSOpenResourceFile(&ref, dataFork.length, dataFork.unicode,
+                                     fsRdPerm, &refNum);
+        }
+        CFRelease(url);
+    }
+    if (name != NULL) CFRelease(name);
+    if (type != NULL) CFRelease(type);
+}
+#endif
+
 int main(void)
 {
+#ifdef GAZETTE_MACOSX
+    OpenBundleResources();
+#endif
+
     if (!InitGazette()) {
         SysBeep(30);
         DoExitGazette();
@@ -439,6 +485,23 @@ static Boolean BuildMenuBar(void)
                "Refresh/R;(-;"
                "Import Feeds\311;Export Feeds\311/E;(-;"
                "Quit/Q");
+#ifdef GAZETTE_MACOSX
+    /*
+     * With the Aqua menu layout (every Mac OS X) Quit belongs to the
+     * application menu, which the system builds and which sends the quit
+     * Apple event AEQuit answers. A second one here would be a duplicate, and
+     * the divider above it would be left hanging.
+     */
+    {
+        long menuMgr = 0;
+
+        if (Gestalt(gestaltMenuMgrAttr, &menuMgr) == noErr &&
+            (menuMgr & gestaltMenuMgrAquaLayoutMask) != 0) {
+            DeleteMenuItem(fileMenu, kFileItemQuit);
+            DeleteMenuItem(fileMenu, kFileItemQuit - 1);
+        }
+    }
+#endif
     InsertMenu(fileMenu, 0);
 
     editMenu = NewMenu(kMenuEdit, "\pEdit");
