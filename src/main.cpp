@@ -43,6 +43,7 @@
 #include <Scrap.h>              /* the clipboard, for Copy Feed URL */
 #ifdef GAZETTE_MACOSX
 #include <Gestalt.h>            /* gestaltMenuMgrAttr */
+#include <AEInteraction.h>      /* AEProcessAppleEvent: its own header on OS X */
 #include <Files.h>              /* FSOpenResourceFile */
 #include <CFBundle.h>           /* where the resource file is */
 #include <CFString.h>
