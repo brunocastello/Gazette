@@ -87,6 +87,10 @@
  * groove with two columns of grab margin; Aqua's is one pixel, so the panes
  * butt up to it. The hidden sidebar's offset is the same number negated.
  *
+ * kPaneLap: how many rows a list pane overlaps the header above it and the
+ * strip below (Platinum's scroll bar edge lands on their rules). Aqua has no
+ * such rules, so the header owns its bottom row and the strip its top one.
+ *
  * kFocusBorder: Mail has no focus ring round a pane (an inactive selection
  * turns grey instead), so no room is kept for one.
  *
@@ -99,12 +103,14 @@
 #define GZ_DIV_WIDTH      1
 #define GZ_FOCUS_BORDER   0
 #define GZ_TEXT_INSET     6
+#define GZ_PANE_LAP       0
 #else
 #define GZ_DIV_HEAD_OFF   5
 #define GZ_DIV_PANE_OFF   6
 #define GZ_DIV_WIDTH      8
 #define GZ_FOCUS_BORDER   2
 #define GZ_TEXT_INSET     4
+#define GZ_PANE_LAP       1
 #endif
 
 enum {
@@ -128,6 +134,7 @@ enum {
     kDivHeadOff    = GZ_DIV_HEAD_OFF,
     kDivPaneOff    = GZ_DIV_PANE_OFF,
     kTextInset     = GZ_TEXT_INSET,
+    kPaneLap       = GZ_PANE_LAP,
     kBaseline      = 10,        /* likewise, until gRowBaseline is worked out */
 
     /* The sidebar is an outline: a column for the disclosure triangle, then
@@ -711,6 +718,7 @@ static void UseHeadingFont(void)
  * flag that is set again by the next drawing call, and when it did not the
  * selection came out with no background at all.
  */
+#ifndef GAZETTE_MACOSX      /* Aqua paints its own selections */
 static void FillHighlight(const Rect *box)
 {
     RGBColor hilite;
@@ -722,6 +730,7 @@ static void FillHighlight(const Rect *box)
     EraseRect(box);
     RGBBackColor(&saveBack);
 }
+#endif
 
 /*
  * The font, and everything sized from it: row height, baselines, the two
@@ -1091,7 +1100,7 @@ static void ListViewIn(const Rect *pane, Rect *view)
      * The top keeps its pixel: that is the header's own black rule, which
      * the bar's top edge lands on and the rows must not paint over.
      */
-    SetRect(view, pane->left, (short)(pane->top + 1),
+    SetRect(view, pane->left, (short)(pane->top + kPaneLap),
             (short)(pane->right - kScrollWidth + 1), pane->bottom);
 }
 
@@ -1151,8 +1160,8 @@ static void PlaceListScrollBar(ListHandle list, const Rect *pane)
         return;
     }
     ListViewIn(pane, &frame);
-    SetRect(&want, frame.right, (short)(frame.top - 1),
-            (short)(frame.right + kScrollWidth), (short)(frame.bottom + 1));
+    SetRect(&want, frame.right, (short)(frame.top - kPaneLap),
+            (short)(frame.right + kScrollWidth), (short)(frame.bottom + kPaneLap));
     SetControlBounds(bar, &want);
 }
 
@@ -1919,7 +1928,7 @@ static void Layout(void)
          * its pane ends a pixel past the window's right edge, so the column
          * in question is clipped away and never drawn.
          */
-        SetRect(&gSidebarPane, bounds.left, (short)(headBot - 1),
+        SetRect(&gSidebarPane, bounds.left, (short)(headBot - kPaneLap),
                 (short)(split - 1), contentBottom);
 
         /*
@@ -1934,7 +1943,7 @@ static void Layout(void)
          * bounds.right + 1 and was right only because the extra column fell
          * off the edge of the window.
          */
-        SetRect(&gListPane, (short)(split + kDivPaneOff), (short)(headBot - 1),
+        SetRect(&gListPane, (short)(split + kDivPaneOff), (short)(headBot - kPaneLap),
                 (short)(split2 - 1), contentBottom);
 
         /*
@@ -3110,6 +3119,7 @@ static void DrawHeaderTitle(const Rect *r, const char *text,
  * The box a sidebar row's name sits in — what the selection is painted
  * behind, rather than a bar across the whole row.
  */
+#ifndef GAZETTE_MACOSX
 static void LabelBox(const Rect *cell, short left, short width,
                      short baseline, Rect *box)
 {
@@ -3497,6 +3507,7 @@ static void DrawCountPill(short right, short rowTop, short rowHeight,
 }
 #endif
 
+#ifndef GAZETTE_MACOSX
 static void DrawCount(short right, short baseline, int count, Boolean enabled)
 {
     char     text[16];
@@ -3521,6 +3532,7 @@ static void DrawCount(short right, short baseline, int count, Boolean enabled)
 
     RGBForeColor(&save);
 }
+#endif
 
 /* "Name (12)", with the count only when there is one. Drawn as one string so
    the truncation takes the name and never the number — the count is the part
@@ -3609,6 +3621,9 @@ static void EraseWith(const Rect *r, ThemeBrush brush)
     /* The source list's blue-grey is no theme brush; it is set as a plain
        background colour, which stays current for whoever draws next. */
     if (brush == kBrushAquaSource) {
+        /* A pattern background (the window's, on Tiger possibly a pinstripe
+           PixPat) would survive RGBBackColor, so a solid one goes first. */
+        SetThemeBackground(kThemeBrushWhite, 8, true);
         AquaBackRGB(&kAquaSourceBack);
         EraseRect(r);
         return;
@@ -3710,6 +3725,12 @@ static void DrawSidebarCell(const Rect *full, short row, Boolean selected)
        selection anywhere else is the dimmer blue-grey. */
     Boolean           focused = (Boolean)(gActive &&
                                           PaneHasFocus(gSidebarCtl));
+#endif
+
+#ifdef GAZETTE_MACOSX
+    /* The List Manager may drop its own selected flag when the list is
+       deactivated; the inactive selection is drawn from our own state. */
+    selected = (Boolean)(row == SelectedRow());
 #endif
 
     RowRect(full, &cellRect);
@@ -4582,7 +4603,14 @@ static void DrawVDivider(const Rect *r)
 
 #ifdef GAZETTE_MACOSX
     /* A single 1-px line between panes that keep their own backgrounds. */
-    AquaPaintRGB(r, &kAquaDivider);
+    {
+        Rect line = *r;
+
+        if (line.bottom > gStatusRect.top) {
+            line.bottom = gStatusRect.top;      /* stop at the strip */
+        }
+        AquaPaintRGB(&line, &kAquaDivider);
+    }
     return;
 #endif
 
@@ -5551,7 +5579,9 @@ static Boolean HitDivider(Point where, const Rect *divider)
     if (grab.right <= grab.left) {
         return false;
     }
-    InsetRect(&grab, -3, 0);
+    /* The lists' scroll bars end at the divider's left edge, so only the
+       right-hand side is widened. */
+    grab.right = (short)(grab.right + 4);
     return PtInRect(where, &grab);
 #else
     return PtInRect(where, divider);
@@ -6817,6 +6847,18 @@ void GazetteUIActivate(Boolean active)
         return;
     }
     gActive = active;
+#ifdef GAZETTE_MACOSX
+    /* Headers, selections (both lines of a headline) and pills are drawn in
+       the active or inactive colours; a suspend arrives without the
+       GazetteUIResized an activate event gets, so repaint the lot. */
+    {
+        Rect all;
+
+        SetPortWindowPort(gWindow);
+        GetWindowPortBounds(gWindow, &all);
+        InvalWindowRect(gWindow, &all);
+    }
+#endif
 
     /* Whatever was under the mouse is not ours to raise any more. */
     if (!active && gToolHover >= 0) {
