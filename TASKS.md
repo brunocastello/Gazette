@@ -242,7 +242,7 @@ Same `src/win/` shell, second build. The legacy 95–XP build stays untouched.
 - [ ] Portable core never gains platform `#ifdef`s that break host tests.
 - [ ] Portable core never sees a TLS flag; TLS / platform `#if`s live only in shells and `src/net/`.
 - [ ] Every build job (`mac-ppc-carbon`, `win32-legacy`, `mac-68k`, `win-modern`, `macos-universal`, `osx-legacy`) runs after the host-test gate.
-- [ ] `windows.yml`: "The Windows file store, under Wine" — the Import/Export dialog checks are flaky on main itself (run 41232078601: pass, then fail on re-run; fail on every osx-legacy run). The 250 ms timer answers a dialog Wine has not finished building, so it ends "cancelled". Make the driver wait for the name field and OK button, or retry; until then a red Windows run needs that step's log read before it means anything.
+- [ ] `windows.yml`: "The Windows file store, under Wine" — the Import/Export dialog checks are flaky on main itself (run 41232078601: pass, then fail on re-run; fail on every osx-legacy run). Likely cause (unconfirmed): the 250 ms timer answers a dialog Wine has not finished building, so it ends "cancelled". Make the driver wait for the name field and OK button, or retry; until then a red Windows run needs that step's log read before it means anything.
 - [ ] Prefer one platform “done” definition at a time so Opus 5.5 can finish a clear finish line.
 
 ---
