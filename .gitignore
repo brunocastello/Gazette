@@ -30,3 +30,9 @@ docs/*
 # pack's own readme. Kept beside the repo, not in it.
 /PROMPTS.md
 /PACK-README.md
+
+# tests/posix builds objects beside the sources (CI only; see net-posix.yml).
+tests/posix/GazetteNetTest
+tests/posix/*.o
+src/**/*.o
+third_party/certainly/**/*.o

@@ -628,3 +628,48 @@ makes the code match: the three are found with `GetProcAddress` on a
 skipped. The pool still gets QueryPerformanceCounter, the tick count, the
 system time, the cursor, the process and thread ids and the memory status.
 
+
+## §26 — A BSD-sockets transport: `transport_posix.c`, `entropy_posix.c`
+
+*Gazette's patch, for the Mac OS X 10.4 and later build and the Linux/macOS
+host test (tests/posix).*
+
+Certainly had two transports, Open Transport and Winsock. This adds the third:
+`transport_posix.c` implements every function of `certainly_transport.h` over
+non-blocking BSD sockets, in the structure of `transport_win32.c`. `fcntl`
+O_NONBLOCK; connect polled with `select()` and confirmed with `SO_ERROR`; the
+30 second timeout on the tick clock; `EINTR` retried; `EAGAIN` is "nothing
+yet" (0); `ECONNRESET`, `ECONNABORTED` and `EPIPE` set `peerClosed`. SIGPIPE is
+suppressed with `SO_NOSIGPIPE` where defined (Darwin) and `MSG_NOSIGNAL` where
+defined (Linux). Nothing needs more than Mac OS X 10.4's libSystem.
+
+Name resolution is a pthread calling `getaddrinfo` (AF_INET), joined in
+`ct_transport_destroy()`; a dotted quad skips the thread. One deliberate
+difference from the Windows file: the thread's result (`dnsDone`, `dnsAddr`,
+`dnsError`) is guarded by a `pthread_mutex_t`, not left to `volatile`. The
+Win32 comment justifies unordered stores with "x86 does not reorder stores";
+PowerPC does, and a pump on another core could otherwise see `dnsDone` before
+`dnsAddr`. The mutex is the portable barrier.
+
+`entropy_posix.c` is `entropy_win32.c` with other sources: `/dev/urandom` (32
+bytes, failure tolerated), `gettimeofday`, `getpid`, `clock()`,
+`getrusage()` and the address of a stack variable, mixed into the same pool
+and hashed with SHA-256 at the point of use. Fresh urandom bytes are added on
+every engine seed.
+
+## §27 — `certainly_compat.h`: a `CERTAINLY_POSIX` branch
+
+*Gazette's patch.*
+
+Between the Open Transport and Windows branches, selected by
+`CERTAINLY_POSIX`: `Ptr` (guarded by `__MACTYPES__` so it cannot clash where
+Carbon's MacTypes.h is also visible), `NewPtrClear`/`DisposePtr` over
+`calloc`/`free`, and `TickCount` in sixtieths of a second from a monotonic
+clock — `mach_absolute_time` on Darwin, `clock_gettime(CLOCK_MONOTONIC)`
+elsewhere. The Darwin scaling splits the timebase division into quotient and
+remainder: the naive `ticks * numer / denom` overflows 64 bits within minutes
+on the PowerPC timebase (numer/denom = 1e9/33333333). `TickCount` is `static
+inline` here so each translation unit has a private copy and none can collide
+with the Toolbox's symbol. The Windows branch is unchanged. No other Certainly
+file named `<windows.h>` or Winsock outside comments, so nothing else needed an
+alternative.
