@@ -18,11 +18,6 @@
 #          for i386 the full phracker one, because the image's has its i386
 #          slices stripped (see the workflow).
 #   OUT    build directory (default build/osx)
-#   GAZETTE_ALLOW_UNDEFINED=1
-#          while src/net/gazette_net_posix.c and Certainly's
-#          transport_posix.c / entropy_posix.c do not all exist, fall back to
-#          a link that ignores undefined symbols so the bundle, zip and dmg
-#          steps can still be proved. Refused once all three files exist.
 #
 # It does not use CMakeLists.txt: that build is Retro68's and ends in a PEF.
 # The source list below is that file's GAZETTE_SOURCES with Open Transport
@@ -189,7 +184,7 @@ case $PHASE in
     mkdir -p "$OBJ" "$PASCAL"
     find "${OBJ:?}" -name '*.o' -delete
     for f in "${POSIX_FILES[@]}"; do
-        [ -f "$f" ] || echo "::warning::$f does not exist yet; skipped, so the link will fail"
+        [ -f "$f" ] || { echo "::error::$f is missing"; exit 1; }
     done
 
     list=$OUT/sources-$ARCH.txt
@@ -234,21 +229,7 @@ case $PHASE in
     fi
     cat "$OUT/link-$ARCH.log"
     echo "::error::$ARCH link failed"
-
-    # While the BSD-sockets files are missing, the only acceptable link
-    # failure is the transport they provide.
-    absent=0
-    for f in "${POSIX_FILES[@]}"; do [ -f "$f" ] || absent=1; done
-    if [ "${GAZETTE_ALLOW_UNDEFINED:-0}" != 1 ] || [ $absent = 0 ]; then
-        exit 1
-    fi
-    echo "::warning::$ARCH: relinking with undefined symbols allowed; this binary will not run"
-    case $ARCH in
-      ppc)  $CC -arch ppc -isysroot "$SDK" -mmacosx-version-min=10.4 "$OBJ"/*.o \
-                $FRAMEWORKS -Wl,-undefined,dynamic_lookup -o "$LINKOUT" ;;
-      i386) $LD -arch i386 -macosx_version_min 10.4 -syslibroot "$SDK" -undefined dynamic_lookup \
-                -o "$LINKOUT" "$SDK/usr/lib/crt1.o" "$OBJ"/*.o $FRAMEWORKS $LIBGCC -lSystem ;;
-    esac
+    exit 1
     ;;
   *) echo "unknown phase $PHASE" >&2; exit 2 ;;
 esac

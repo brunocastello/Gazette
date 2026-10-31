@@ -25,6 +25,7 @@ __pycache__/
 docs/*
 !docs/release-notes.md
 !docs/windows.md
+!docs/osx-port.md
 
 # Working notes for driving Claude Code sessions: the prompt book and the
 # pack's own readme. Kept beside the repo, not in it.
