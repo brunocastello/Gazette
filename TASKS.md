@@ -122,7 +122,7 @@ Keep portable C core. Shells may differ by era.
 
 ### X-CI0 – Prove the toolchains on GitHub Actions (do this first)
 - [x] 10.4u SDK source found: iWordle's `build-macosx.yml` (variantxyz PPC gcc image with SDK + phracker 10.4u for i386, SHA-256 pinned). 2026-10-31.
-- [ ] `osx-legacy` workflow copied from iWordle; first proof: Gazette's Carbon shell + engine links as a ppc + i386 Mach-O (C++17 shell, gcc 14 / clang).
+- [x] `osx-legacy` workflow (`.github/workflows/osx-legacy.yml`, `tools/build_osx_legacy.sh`) copied from iWordle: Gazette's Carbon shell + engine links as a ppc + i386 Mach-O (C++17 shell, gcc 14 / clang), lipo'd, bundled, `.zip` + `.dmg` (artifact `Gazette-mac-os-x`). Green on osx-legacy merged with osx-legacy-net, 2026-10-31. Not yet run on a Mac.
 - [ ] `macos-universal` on `macos-latest`: Xcode, `-arch arm64 -arch x86_64`, deployment target 10.13, hello-world `.app`.
 
 ### X0 – Architecture audit
@@ -147,11 +147,11 @@ Keep portable C core. Shells may differ by era.
 - [ ] `osx-legacy` (10.4–10.14, ppc + i386) keeps embedded Certainly/BearSSL over BSD sockets (`GAZETTE_USE_EMBEDDED_TLS`).
 - [x] CI host: cross toolchain in a container on GitHub Actions (all builds on Actions). Decided 2026-10-31.
 - [x] 10.6–10.10 covered, by `osx-legacy`'s i386 slice; `macos-universal` from 10.13. Decided 2026-10-31.
-- [ ] Carbon shell on Mach-O: BSD-sockets transport for Certainly, `~/Library` prefs/cache path, Mach-O frameworks instead of CarbonLib — behind a build flag, not a fork.
+- [x] Carbon shell on Mach-O: BSD-sockets transport for Certainly (osx-legacy-net), `~/Library/Preferences` via kUserDomain, Mach-O frameworks instead of CarbonLib, Quit left to the application menu, QDFlushPortBuffer in the tracking loops, bundle .rsrc opened by hand — behind `GAZETTE_MACOSX`, not a fork.
 - [ ] Tested on 10.4 PPC, 10.6 Intel and one of 10.7–10.10 (emulated or real).
 
 ### X4 – Ship
-- [ ] Icons (`.icns`).
+- [x] Icons (`.icns`): `tools/make_icns.py` wraps the classic ICN#/icl8/ics#/ics8 family; no new artwork.
 - [ ] CI artifacts / releases. (`macos-universal`: Universal 2 `.app`, arm64 + x86_64, deployment target 10.13, new `macos.yml`.)
 - [ ] `macos-universal` uses `URLSession` (`GAZETTE_USE_NATIVE_TLS`); Certainly/BearSSL not linked.
 - [ ] README section for OS X / macOS.
