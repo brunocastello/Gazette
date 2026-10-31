@@ -128,7 +128,7 @@ Keep portable C core. Shells may differ by era.
 ### X0 – Architecture audit
 - [ ] Confirm every module that must stay pure C and free of Toolbox/Carbon headers.
 - [ ] List exact OS X / macOS APIs that replace Open Transport, File Manager, and Appearance Manager controls.
-- [ ] Produce `docs/osx-port.md` with ownership map and stage plan.
+- [x] Produce `docs/osx-port.md` with ownership map and stage plan. (2026-10-31)
 - [ ] Host tests still pass.
 
 ### X1 – First runnable shell
@@ -144,11 +144,13 @@ Keep portable C core. Shells may differ by era.
 
 ### X3 – PowerPC / early OS X path (if still desired)
 - [ ] Carbon or dual-target strategy documented and implemented, or explicitly deferred with reason.
-- [ ] `osx-legacy` (10.4–10.14, ppc + i386) keeps embedded Certainly/BearSSL over BSD sockets (`GAZETTE_USE_EMBEDDED_TLS`).
+- [x] `osx-legacy` (10.4–10.14, ppc + i386) keeps embedded Certainly/BearSSL over BSD sockets. `transport_posix.c` / `entropy_posix.c` (PATCHES §26–27; getaddrinfo serialised for Tiger) proved live on Linux and macOS by `net-posix.yml` (TLS 1.3 + 1.2), 2026-10-31. The `GAZETTE_USE_*_TLS` flags themselves are still N1.
 - [x] CI host: cross toolchain in a container on GitHub Actions (all builds on Actions). Decided 2026-10-31.
 - [x] 10.6–10.10 covered, by `osx-legacy`'s i386 slice; `macos-universal` from 10.13. Decided 2026-10-31.
 - [x] Carbon shell on Mach-O: BSD-sockets transport for Certainly (osx-legacy-net), `~/Library/Preferences` via kUserDomain, Mach-O frameworks instead of CarbonLib, Quit left to the application menu, QDFlushPortBuffer in the tracking loops, bundle .rsrc opened by hand — behind `GAZETTE_MACOSX`, not a fork.
-- [ ] Tested on 10.4 PPC, 10.6 Intel and one of 10.7–10.10 (emulated or real).
+- [ ] Tested on 10.4 PPC, 10.6 Intel and one of 10.7–10.10 (emulated or real). **Needs Bruno (UTM)** — artifact `Gazette-mac-os-x` from `osx-legacy.yml`.
+- [ ] Application menu: wire its Preferences… item to the Preferences dialog and drop Edit > Preferences under Aqua layout (HIG; found in review 2026-10-31).
+- [ ] Cache folder: consider `~/Library/Caches/Gazette` instead of `~/Library/Preferences/Gazette Cache` (works as is; OS X convention).
 
 ### X4 – Ship
 - [x] Icons (`.icns`): `tools/make_icns.py` wraps the classic ICN#/icl8/ics#/ics8 family; no new artwork.
@@ -240,6 +242,7 @@ Same `src/win/` shell, second build. The legacy 95–XP build stays untouched.
 - [ ] Portable core never gains platform `#ifdef`s that break host tests.
 - [ ] Portable core never sees a TLS flag; TLS / platform `#if`s live only in shells and `src/net/`.
 - [ ] Every build job (`mac-ppc-carbon`, `win32-legacy`, `mac-68k`, `win-modern`, `macos-universal`, `osx-legacy`) runs after the host-test gate.
+- [ ] `windows.yml`: "The Windows file store, under Wine" — the Import/Export dialog checks are flaky on main itself (run 41232078601: pass, then fail on re-run; fail on every osx-legacy run). The 250 ms timer answers a dialog Wine has not finished building, so it ends "cancelled". Make the driver wait for the name field and OK button, or retry; until then a red Windows run needs that step's log read before it means anything.
 - [ ] Prefer one platform “done” definition at a time so Opus 5.5 can finish a clear finish line.
 
 ---

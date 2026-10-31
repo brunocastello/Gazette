@@ -29,9 +29,9 @@ The Carbon shell is CarbonLib code and Carbon on OS X runs it with Aqua controls
 | Pascal strings | `-fpascal-strings` (Retro68) | rewritten at build time by `tools/pascal_strings.py`; sources unchanged | build script |
 | Resources | resource fork | `Contents/Resources/Gazette.rsrc` (Retro68 Rez, data fork) | workflow |
 | Icon | `ICN#`/`icl8`/`ics#`/`ics8` | `Gazette.icns` assembled from the same classic elements (proper large art is an X4 item) | workflow |
-| Quit | File > Quit | application menu (Aqua layout), `kAEQuitApplication` | `src/main.cpp`, behind `TARGET_RT_MAC_MACHO` |
+| Quit | File > Quit | application menu (Aqua layout), `kAEQuitApplication` | `src/main.cpp`, behind `GAZETTE_MACOSX` |
 | Drawing outside updates | immediate | `QDFlushPortBuffer` in tracking loops | `src/ui/` |
-| Byte order | big-endian | ppc big, i386 little: custom resource reads made explicit | `src/ui/`, `src/main.cpp` |
+| Byte order | big-endian | ppc big, i386 little; the shell reads only system resource types, which the Resource Manager swaps itself, so nothing changed | (checked) |
 | Prefs and cache | System Folder:Preferences | `~/Library/Preferences` via `FindFolder(kUserDomain, ...)`, prefs file and `Gazette Cache` folder alike (same names and formats) | `src/store/gazette_store.c` |
 | User agent | `(Macintosh; Mac OS 9)` | `(Macintosh; Mac OS X)` via `GAZETTE_MACOSX` | `src/portable/gazette_http.h` |
 

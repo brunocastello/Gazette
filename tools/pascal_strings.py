@@ -164,6 +164,13 @@ def convert(text, name="<input>", cast=False):
                 if b.startswith("\\p"):
                     raise PascalError("%s: \\p begins a later literal of a run" % where)
             continue
+        # A macro or a preprocessor line after the run would join more text
+        # onto the string than this script can see, and the length would
+        # come out short with no warning. Refuse it.
+        after = skip_gap(text, run[-1][1])
+        if after < len(text) and (text[after].isalnum() or text[after] in "_#"):
+            raise PascalError("%s: \\p string joined to a macro or #line; "
+                              "write it as one literal" % where)
         first = bodies[0][2:]
         total = decoded_length(first, where)
         for b in bodies[1:]:

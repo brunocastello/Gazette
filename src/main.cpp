@@ -306,12 +306,13 @@ enum {
 
 #ifdef GAZETTE_MACOSX
 /*
- * Mac OS X (the osx-legacy build). A bundled Mach-O application does not get
- * Contents/Resources/Gazette.rsrc mapped into the Resource Manager for it,
- * and without that every GetNewDialog and GetIconSuite comes back empty. So
- * the file is found by name and opened by hand. CI's Rez writes it into the
- * *data* fork (a Linux filesystem has no resource forks), so it is opened by
- * the reserved data-fork name rather than the default resource fork.
+ * Mac OS X (the osx-legacy build). Carbon opens a bundle's
+ * Contents/Resources/<executable>.rsrc by itself, data fork or resource fork,
+ * so this is insurance rather than a necessity: if that ever fails, every
+ * GetNewDialog and GetIconSuite comes back empty. Opening a file already in
+ * the chain hands back its refnum, so the second open costs nothing. CI's Rez
+ * writes the file's *data* fork (a Linux filesystem has no resource forks),
+ * hence the reserved data-fork name.
  */
 static void OpenBundleResources(void)
 {
