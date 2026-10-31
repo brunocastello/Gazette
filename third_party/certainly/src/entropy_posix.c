@@ -113,6 +113,7 @@ void entropy_seed_engine(br_ssl_engine_context *eng)
     br_sha256_out(&sha, seed);
 
     br_ssl_engine_inject_entropy(eng, seed, sizeof(seed));
+    memset(&sha, 0, sizeof(sha));       /* it still holds a copy of the pool */
 
     /* Do not leave the seed we just handed out sitting in the pool. */
     entropy_add(seed, sizeof(seed));

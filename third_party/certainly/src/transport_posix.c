@@ -88,6 +88,17 @@ struct CTransport {
 /* Name resolution                                                     */
 /* ------------------------------------------------------------------ */
 
+/*
+ * One lookup at a time. Before 10.5, Darwin's getaddrinfo was old BSD
+ * resolver code with shared state and is not safe on two threads at once;
+ * Leopard moved it behind mDNSResponder. Gazette can have three fetches
+ * resolving together -- a refresh, a full-text page and its photos -- so
+ * on Tiger the lookups are serialised here (CPython does the same for the
+ * same reason, bpo-25924). It costs nothing elsewhere: the threads wait on
+ * each other, never the event loop.
+ */
+static pthread_mutex_t sResolverLock = PTHREAD_MUTEX_INITIALIZER;
+
 static void *resolve_thread(void *param)
 {
     CTransport      *t = (CTransport *)param;
@@ -99,6 +110,7 @@ static void *resolve_thread(void *param)
     hints.ai_family   = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
 
+    pthread_mutex_lock(&sResolverLock);
     rc = getaddrinfo(t->host, NULL, &hints, &res);
     if (rc == 0 && res != NULL && res->ai_family == AF_INET &&
         res->ai_addr != NULL) {
@@ -106,6 +118,7 @@ static void *resolve_thread(void *param)
         ok = 1;
     }
     if (res != NULL) freeaddrinfo(res);
+    pthread_mutex_unlock(&sResolverLock);
 
     pthread_mutex_lock(&t->dnsLock);
     if (ok) {
@@ -164,6 +177,11 @@ static int set_nonblocking(int fd)
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
 }
 
+/* A write to a reset connection must not kill the application. */
+#if defined(__APPLE__) && !defined(SO_NOSIGPIPE)
+#error "SO_NOSIGPIPE missing: compile with -std=gnu99, not -std=c99 (it hides behind _POSIX_C_SOURCE)"
+#endif
+
 static void no_sigpipe(int fd)
 {
 #ifdef SO_NOSIGPIPE
@@ -198,9 +216,13 @@ static int begin_connect(CTransport *t)
     while (connect(t->sock, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
         int err = errno;
 
-        if (err == EINTR) continue;
-        /* The expected answer from a non-blocking connect. */
-        if (err == EINPROGRESS || err == EWOULDBLOCK || err == EAGAIN) break;
+        /*
+         * The expected answer from a non-blocking connect. EINTR belongs
+         * here too: the connect carries on regardless, and calling it again
+         * would only earn EALREADY.
+         */
+        if (err == EINPROGRESS || err == EWOULDBLOCK || err == EAGAIN ||
+            err == EINTR) break;
         t->lastError = err;
         return 0;
     }

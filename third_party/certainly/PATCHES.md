@@ -638,8 +638,9 @@ Certainly had two transports, Open Transport and Winsock. This adds the third:
 `transport_posix.c` implements every function of `certainly_transport.h` over
 non-blocking BSD sockets, in the structure of `transport_win32.c`. `fcntl`
 O_NONBLOCK; connect polled with `select()` and confirmed with `SO_ERROR`; the
-30 second timeout on the tick clock; `EINTR` retried; `EAGAIN` is "nothing
-yet" (0); `ECONNRESET`, `ECONNABORTED` and `EPIPE` set `peerClosed`. SIGPIPE is
+30 second timeout on the tick clock; `EINTR` retried on send and receive, and
+taken as "in progress" on connect (a second connect would only answer
+`EALREADY`); `EAGAIN` is "nothing yet" (0); `ECONNRESET`, `ECONNABORTED` and `EPIPE` set `peerClosed`. SIGPIPE is
 suppressed with `SO_NOSIGPIPE` where defined (Darwin) and `MSG_NOSIGNAL` where
 defined (Linux). Nothing needs more than Mac OS X 10.4's libSystem.
 
@@ -650,6 +651,13 @@ difference from the Windows file: the thread's result (`dnsDone`, `dnsAddr`,
 Win32 comment justifies unordered stores with "x86 does not reorder stores";
 PowerPC does, and a pump on another core could otherwise see `dnsDone` before
 `dnsAddr`. The mutex is the portable barrier.
+
+Lookups are also serialised by a file-scope mutex around `getaddrinfo`.
+Before 10.5, Darwin's `getaddrinfo` was BSD resolver code with shared state,
+not safe on two threads at once, and Gazette can resolve for a refresh, a
+full-text page and its photos together. CPython locks for the same reason
+(bpo-25924). On Darwin the build stops with `#error` if `SO_NOSIGPIPE` is
+hidden (a `-std=c99` build hides it), rather than quietly allowing SIGPIPE.
 
 `entropy_posix.c` is `entropy_win32.c` with other sources: `/dev/urandom` (32
 bytes, failure tolerated), `gettimeofday`, `getpid`, `clock()`,
