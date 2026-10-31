@@ -4,10 +4,12 @@ Cut Gazette's icons for Windows.
 
 Not a second set of drawings: this imports the two generators that draw
 the Mac's -- tools/generate_icon.py for the application icon and
-tools/generate_ui_icons.py for the sidebar's and the toolbar's -- and
+tools/generate_ui_icons_aqua.py for the sidebar's and the toolbar's -- and
 writes the same pixels out in the formats Win32 reads. Every icon is
-therefore drawn in exactly one place, and a change to a grid reaches
-both builds by regenerating.
+therefore drawn in exactly one place, and a change to a drawing reaches
+both builds by regenerating. (The Windows build used to cut the Platinum
+pixel grids of tools/generate_ui_icons.py into a magenta-keyed bitmap; it
+now uses the Aqua-era 16x16 art with its alpha, see ui_icons.rgba.)
 
     python3 tools/generate_win_assets.py --out Resources/win
                                          [--proof proof.json]
@@ -18,11 +20,15 @@ Writes:
                     1-bit AND mask. No 32-bit alpha member -- these are
                     hard-edged pixel drawings with nothing to blend, and
                     a 32-bit member is not read before XP anyway.
-    ui_icons.bmp    every 16x16 icon in one strip, in resource-id order,
-                    which is the order the GAZETTE_ICON_* constants in
-                    src/win/gazette_win.h give. Magenta is the
-                    transparent colour, as it is in every Win32 image
-                    list that predates alpha.
+    ui_icons.rgba   every 16x16 icon in one strip, in resource-id order,
+                    which is the order the kIcon* constants in
+                    src/win/gazette_win.h give: raw 8-bit RGBA, rows top
+                    to bottom, 16 * N pixels wide. An RCDATA resource.
+                    The window turns it into image lists at start-up,
+                    mixing each pixel's alpha with the colour it will be
+                    drawn on (see BuildIconList in gazette_win_window.c),
+                    because an image list before comctl32 6 has a mask
+                    and no alpha.
 
 Both are committed rather than generated during the build: windres reads
 them, and a build machine has no Python guarantee.
@@ -38,51 +44,30 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import generate_icon as app          # noqa: E402
 import generate_ui_icons as ui       # noqa: E402
+import generate_ui_icons_aqua as aq  # noqa: E402
 
 # The colour a Win32 image list treats as nothing. Magenta because no
 # icon uses it -- the usual reason, and the reason it looks like that.
 MAGENTA = (255, 0, 255)
 
 
-# --- Windows-only icons -----------------------------------------------------
-#
-# Drawn here rather than in generate_ui_icons.py so the Mac's resource file
-# never carries them: the Mac's toolbar has no such buttons (Bruno,
-# 2026-09-26 -- the Mac stays as it shipped). Each takes the next index in
-# the strip after the shared ones; gazette_win.h's kIcon* list follows.
-
-# A cross ten pixels square, the Hide Read Articles cross's strokes grown,
-# centred on the whole sixteen-pixel icon (rows and columns 3 to 12).
-CLEAR_CROSS = ui.badge("""
-DD......DD
-DRD....DRD
-.DRD..DRD.
-..DRDDRD..
-...DRRD...
-...DRSD...
-..DRDDSD..
-.DRD..DSD.
-DRD....DSD
-DD......DD
-""")
-
-
-def draw_clear_search():
-    """Search's magnifier with the cross over it: clear the search.
-    Bruno's pick of the drafts, 2026-09-26 (draft C)."""
-    return ui.overlay(ui.draw_find(), CLEAR_CROSS, 3, 3)
-
-
 def win_icon_list():
-    """The shared icons, then the Windows-only ones, in strip order."""
-    icons = list(ui.icon_list())
-    icons.append((272, "Clear Search", draw_clear_search()))
+    """The shared icons, 256 to 271, then the Windows-only Clear Search."""
+    icons = [(rid, name, fn().render()) for rid, name, fn in aq.RESOURCES if rid <= 271]
+    icons.append((272, "Clear Search", aq.a_clearsearch().render()))
     return icons
 
 
-def ui_pixels(px):
-    """A generate_ui_icons grid of letters, as rows of RGB or None."""
-    return [[ui.PAL[ch] for ch in row] for row in px]
+def write_rgba(path, icons):
+    """The strip as raw RGBA, 16 rows of 16 * len(icons) pixels."""
+    rows = [bytearray() for _ in range(16)]
+    for _, _, buf in icons:
+        px = aq.rgba_bytes(buf)
+        for y in range(16):
+            for x in range(16):
+                rows[y] += bytes(px[y * 16 + x])
+    with open(path, "wb") as f:
+        f.write(b"".join(bytes(r) for r in rows))
 
 
 # --- BMP --------------------------------------------------------------------
@@ -191,43 +176,31 @@ def write_ico(path, images):
 
 def proof(icons, app32, app16):
     """
-    The grids as JSON, for the artifact that shows Bruno what was cut
-    before any of it is committed. Colours as hex, transparent as null.
+    The application icon's grids as JSON, for the artifact that shows Bruno
+    what was cut before any of it is committed. Colours as hex, transparent
+    as null. (The strip's proof is tools/generate_ui_icons_aqua.py's sheet.)
     """
     def rows(pixels):
         return [["#%02x%02x%02x" % c if c is not None else None for c in row]
                 for row in pixels]
 
-    return {
-        "application": {"32": rows(app32), "16": rows(app16)},
-        "icons": [{"id": res_id, "name": name, "grid": rows(ui_pixels(px))}
-                  for res_id, name, px in icons],
-    }
+    return {"application": {"32": rows(app32), "16": rows(app16)}}
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True,
-                    help="directory the .ico and .bmp are written to")
+                    help="directory the .ico and .rgba are written to")
     ap.add_argument("--proof", help="write the grids as JSON for review")
     args = ap.parse_args()
 
     icons = win_icon_list()
     app32, app16 = app.draw32(), app.draw16()
 
-    # One strip, sixteen pixels tall and as wide as it needs: an image
-    # list is loaded from exactly this and cut up by its own height.
-    strip = [[None] * (16 * len(icons)) for _ in range(16)]
-    for index, (_, _, px) in enumerate(icons):
-        pixels = ui_pixels(px)
-        for y in range(16):
-            for x in range(16):
-                strip[y][index * 16 + x] = pixels[y][x]
-
     os.makedirs(args.out, exist_ok=True)
 
-    strip_path = os.path.join(args.out, "ui_icons.bmp")
-    write_bmp(strip_path, strip)
+    strip_path = os.path.join(args.out, "ui_icons.rgba")
+    write_rgba(strip_path, icons)
     print("wrote %s (%d icons)" % (strip_path, len(icons)))
 
     ico_path = os.path.join(args.out, "Gazette.ico")

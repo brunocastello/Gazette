@@ -15,9 +15,9 @@
 #define IDI_GAZETTE            100
 #define IDR_MAIN_MENU          101
 #define IDR_ACCELERATORS       102
-/* The strip of every 16x16 icon Gazette drew for itself, cut into an
-   image list at startup. tools/generate_win_assets.py writes it. */
-#define IDB_UI_ICONS           103
+/* The strip of every 16x16 icon Gazette drew for itself (raw RGBA), made into
+   image lists at startup. tools/generate_win_assets.py writes it. */
+#define IDR_UI_ICONS           103
 /* The dialogs, gazette_win_dialogs.c: the Mac's DLOGs 128-130 in
    Windows' layout. */
 #define IDD_FEED               110
