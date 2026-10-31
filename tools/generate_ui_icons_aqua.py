@@ -332,23 +332,15 @@ def sidebar_window(ic, pane):
             ic.add(rect(3, row, pane - 2, row + 1), solid(150, 156, 170))
 
 
-def chevron(ic, pts):
-    """The pane's direction, a bold blue angle bracket in the white pane."""
-    ic.add(stroke(pts, 2.8), solid(10, 36, 120, 0.9))
-    ic.add(stroke(pts, 1.5), vgrad(6, 13, (96, 150, 244), (30, 84, 200)))
-
-
 def o_sidebar_hide():
     ic = shadowed()
     sidebar_window(ic, 7)
-    chevron(ic, [(11.6, 7.2), (9.6, 9.5), (11.6, 11.8)])
     return ic
 
 
 def o_sidebar_show():
     ic = shadowed()
     sidebar_window(ic, 4)
-    chevron(ic, [(8.2, 7.2), (10.2, 9.5), (8.2, 11.8)])
     return ic
 
 
@@ -717,13 +709,19 @@ def main():
     ap.add_argument("--out", help="write the Rez source here")
     ap.add_argument("--proof", help="write the HTML proof sheet here")
     ap.add_argument("--sheets", help="directory for sheet.png and sheet16.png")
-    ap.add_argument("--png32", default=None, help="also rewrite the 32 px PNGs here")
+    ap.add_argument("--png16", help="write every 16 px picture as NAME.png here")
     a = ap.parse_args()
 
     if a.out:
         text = HEADER + "\n" + "".join(family_rez(rid, nm, fn().render()) for rid, nm, fn in RESOURCES)
         with open(a.out, "w") as f:
             f.write(text.rstrip("\n") + "\n")
+
+    if a.png16:
+        os.makedirs(a.png16, exist_ok=True)
+        for name, fn in AQUA16 + OS9 + SIDEBAR + [("clearsearch", a_clearsearch)]:
+            with open(os.path.join(a.png16, name + ".png"), "wb") as f:
+                f.write(png_bytes(fn().render()))
 
     if a.proof or a.sheets:
         set32 = [(n, l, fn().render()) for n, fn, l in A.ICONS]
