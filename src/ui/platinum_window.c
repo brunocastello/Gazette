@@ -361,6 +361,11 @@ static Boolean    gToolbarStale;        /* a caption changed: lay the row out ag
 static short      gToolPressed = -1;    /* the one held down, or -1 */
 static MenuRef    gNewMenu;             /* New Feed... and New Group... */
 static ControlRef gSearchCtl;
+#ifdef GAZETTE_MACOSX
+/* False if the system's toolbar could not be made, in which case the drawn
+   Platinum one is used as on Mac OS 9. */
+static Boolean    gAquaToolbar;
+#endif
 static Rect       gToolbarRect;     /* the grey, and the rule along its foot */
 static Rect       gToolbarSep[3];   /* between one group and the next */
 static short      gToolbarSepCount;
@@ -1636,14 +1641,19 @@ static void Layout(void)
     /* Show or hide the real toolbar first, so that the content rectangle read
        below is the one the window has now: the toolbar is in the window's
        structure, and showing it moves where the content begins. */
-    GazetteAquaToolbarShow((Boolean)!GazetteCoreHideToolbar());
+    if (gAquaToolbar) {
+        GazetteAquaToolbarShow((Boolean)!GazetteCoreHideToolbar());
+    }
 #endif
     GetWindowPortBounds(gWindow, &bounds);
 
     contentBottom = (short)(bounds.bottom - gStatusHeight);
     noSidebar     = GazetteCoreHideSidebar();
 #ifdef GAZETTE_MACOSX
-    toolbar       = 0;      /* the toolbar is the window's own; see aqua_toolbar.c */
+    /* The system's toolbar is the window's own (aqua_toolbar.c); only if it
+       could not be made is the drawn one laid out. */
+    toolbar       = gAquaToolbar ? 0
+                  : (GazetteCoreHideToolbar() ? 0 : kToolbarHeight);
 #else
     toolbar       = GazetteCoreHideToolbar() ? 0 : kToolbarHeight;
 #endif
@@ -4482,17 +4492,21 @@ static void AquaToggleToolbar(void)
     GazetteUIViewChanged();
 }
 
-static void AquaMakeToolbar(void)
+static Boolean AquaMakeToolbar(void)
 {
     /* The nine items are the nine the shell's table names. */
     (void)sizeof(char[((int)kToolbarButtons == (int)kGazetteAquaItems) ? 1 : -1]);
 
     if (!GazetteAquaToolbarCreate(gWindow, AquaItemClicked,
                                   AquaSearchRequested, AquaToggleToolbar)) {
-        return;
+        fprintf(stderr, "Gazette: the HIToolbar could not be made; "
+                        "using the drawn toolbar\n");
+        return false;
     }
+    gAquaToolbar = true;
     AdjustToolbarState();       /* labels and pictures before the first look */
     Layout();                   /* the content begins where the toolbar ends */
+    return true;
 }
 #endif
 
@@ -4541,8 +4555,10 @@ static void MakeToolbar(void)
      * (gSearchCtl stays NULL, which every use of it already allows), and the
      * drawn buttons below are never laid out or drawn.
      */
-    AquaMakeToolbar();
-    return;
+    if (AquaMakeToolbar()) {
+        return;
+    }
+    /* Otherwise carry on and make the drawn one. */
 #endif
 
     /*
@@ -4579,6 +4595,7 @@ static void DisposeToolbar(void)
 {
 #ifdef GAZETTE_MACOSX
     GazetteAquaToolbarDispose();
+    gAquaToolbar = false;
 #endif
     if (gNewMenu != NULL) {
         DeleteMenu(kToolbarNewMenuID);
@@ -4611,7 +4628,9 @@ static void DrawToolButton(int i)
     short       x;
 
 #ifdef GAZETTE_MACOSX
-    return;                     /* the toolbar is the system's; see aqua_toolbar.c */
+    if (gAquaToolbar) {
+        return;                 /* the toolbar is the system's; see aqua_toolbar.c */
+    }
 #endif
     if (gWindow == NULL || GazetteCoreHideToolbar()) {
         return;
@@ -4858,7 +4877,9 @@ void GazetteUIAdjustToolbar(void)
     AdjustToolbarState();
 
 #ifdef GAZETTE_MACOSX
-    return;                     /* nothing of ours to draw: the items update themselves */
+    if (gAquaToolbar) {
+        return;                 /* nothing of ours to draw: the items update themselves */
+    }
 #endif
     if (gWindow == NULL || GazetteCoreHideToolbar()) {
         return;
@@ -4897,7 +4918,9 @@ void GazetteUIIdle(void)
     short i;
 
 #ifdef GAZETTE_MACOSX
-    return;                     /* the system's items track the mouse themselves */
+    if (gAquaToolbar) {
+        return;                 /* the system's items track the mouse themselves */
+    }
 #endif
     if (gWindow == NULL || !gActive || GazetteCoreHideToolbar() ||
         gToolPressed >= 0 || FrontWindow() != gWindow) {
@@ -5042,7 +5065,7 @@ static void PopNewMenuAtMouse(void)
 
 Boolean GazetteUIToolbarMouseDown(const EventRecord *event, short part)
 {
-    if (gWindow == NULL) {
+    if (gWindow == NULL || !gAquaToolbar) {
         return false;
     }
     return GazetteAquaToolbarMouseDown(gWindow, event, part);
@@ -5058,8 +5081,10 @@ void GazetteUISearchText(char *out, size_t cap)
     }
     out[0] = '\0';
 #ifdef GAZETTE_MACOSX
-    GazetteAquaSearchText(out, cap);
-    return;
+    if (gAquaToolbar) {
+        GazetteAquaSearchText(out, cap);
+        return;
+    }
 #endif
     if (gSearchCtl == NULL) {
         return;
@@ -5078,8 +5103,10 @@ void GazetteUISearchText(char *out, size_t cap)
 void GazetteUISetSearchText(const char *text)
 {
 #ifdef GAZETTE_MACOSX
-    GazetteAquaSetSearchText(text);
-    return;
+    if (gAquaToolbar) {
+        GazetteAquaSetSearchText(text);
+        return;
+    }
 #endif
     if (gSearchCtl == NULL) {
         return;
@@ -6485,6 +6512,14 @@ static void SetFocus(short pane)
 {
     ControlRef want;
 
+#ifdef GAZETTE_MACOSX
+    /* The search field is a focus of its own, and FocusedPane() reports the
+       reader while it has the keyboard; so a pane asked for is given the
+       keyboard even when it is "already" the reader. */
+    if (gWindow != NULL && GazetteAquaSearchHasFocus()) {
+        GazetteAquaSearchDefocus();
+    } else
+#endif
     if (gWindow == NULL || FocusedPane() == pane) {
         return;
     }

@@ -215,7 +215,9 @@ static IconRef IconFromSuite(short resID)
         HUnlock((Handle)family);
         DisposeHandle((Handle)family);
     }
-    (void)DisposeIconSuite(suite, true);
+    /* false: the handles belong to the Resource Manager and are shared with
+       the suites platinum_window.c loaded for the same IDs. */
+    (void)DisposeIconSuite(suite, false);
     return ref;
 }
 
@@ -326,10 +328,44 @@ static OSStatus FieldSearchClicked(EventHandlerCallRef next, EventRef event,
     return noErr;
 }
 
+/*
+ * The customise sheet makes its own copies of every item, the search item's
+ * included, and each copy has a field. Only the field that is in the real
+ * window is ours (gField); the others must never be. So a field is adopted
+ * when its owner is gWindow, dropped when it moves elsewhere, and forgotten
+ * when it is disposed of, whichever comes last.
+ */
+static OSStatus FieldOwnership(EventRef event, void *data)
+{
+    HIViewRef field = (HIViewRef)data;
+
+    if (GetEventKind(event) == kEventControlDispose) {
+        if (gField == field) {
+            gField = NULL;
+        }
+    } else {
+        WindowRef owner = NULL;
+
+        (void)GetEventParameter(event, kEventParamControlCurrentOwningWindow,
+                                typeWindowRef, NULL, sizeof owner, NULL, &owner);
+        if (owner != NULL && owner == gWindow) {
+            gField = field;
+        } else if (gField == field) {
+            gField = NULL;
+        }
+    }
+    return eventNotHandledErr;              /* the view's own handling goes on */
+}
+
 static OSStatus FieldHandler(EventHandlerCallRef next, EventRef event, void *data)
 {
     UInt32 cls  = GetEventClass(event);
     UInt32 kind = GetEventKind(event);
+
+    if (cls == kEventClassControl && (kind == kEventControlDispose ||
+                                      kind == kEventControlOwningWindowChanged)) {
+        return FieldOwnership(event, data);
+    }
 
     if (cls == kEventClassControl && kind == kEventControlGetSizeConstraints) {
         return FieldSize(next, event, data);
@@ -345,7 +381,9 @@ static OSStatus FieldHandler(EventHandlerCallRef next, EventRef event, void *dat
 
 static OSStatus CreateSearchView(EventRef event)
 {
-    static const EventTypeSpec kSpecs[3] = {
+    static const EventTypeSpec kSpecs[5] = {
+        { kEventClassControl,     kEventControlDispose },
+        { kEventClassControl,     kEventControlOwningWindowChanged },
         { kEventClassControl,     kEventControlGetSizeConstraints },
         { kEventClassSearchField, kEventSearchFieldCancelClicked },
         { kEventClassSearchField, kEventSearchFieldSearchClicked }
@@ -370,13 +408,17 @@ static OSStatus CreateSearchView(EventRef event)
         return err != noErr ? err : eventNotHandledErr;
     }
     (void)InstallEventHandler(GetControlEventTarget(field), gFieldUPP,
-                              3, kSpecs, NULL, NULL);
+                              5, kSpecs, field, NULL);
     SetFieldText(field, gText);
     if (!gSearchEnabled) {
         DisableControl(field);
     }
     HIViewSetVisible(field, true);
-    gField = field;
+    /* Not yet gField: it has no window until the toolbar embeds it, and the
+       owning-window event above adopts it if it turns out to be the real one. */
+    if (GetControlOwner(field) == gWindow) {
+        gField = field;
+    }
     return SetEventParameter(event, kEventParamControlRef, typeControlRef,
                              sizeof field, &field);
 }
@@ -614,11 +656,7 @@ static OSStatus WindowHandler(EventHandlerCallRef next, EventRef event, void *da
         /* Sent by the system's own handler, if it ever sees the click first;
            the shell's mouse-down path handles the click itself otherwise, so
            the two never both fire for one click. */
-        UInt32 mods = 0;
-
-        (void)GetEventParameter(event, kEventParamKeyModifiers, typeUInt32,
-                                NULL, sizeof mods, NULL, &mods);
-        ToolbarButtonClicked(mods);
+        ToolbarButtonClicked(GetCurrentKeyModifiers());
         return noErr;
     }
     return eventNotHandledErr;
@@ -783,6 +821,9 @@ void GazetteAquaToolbarSetSearchEnabled(Boolean enabled)
 
 void GazetteAquaToolbarShow(Boolean show)
 {
+    if (gWindow != NULL && !show) {
+        GazetteAquaSearchDefocus();         /* the keyboard must not stay in it */
+    }
     if (gWindow != NULL && IsWindowToolbarVisible(gWindow) != show) {
         (void)ShowHideWindowToolbar(gWindow, show, false);
     }
@@ -891,6 +932,43 @@ static EventRef MouseDownEvent(WindowRef window, const EventRecord *rec,
     return made;
 }
 
+/*
+ * Is there anything under the mouse to click? The toolbar's own view, a
+ * space and a flexible space are views too, and HIViewClick on them returns
+ * noErr, but they have no part to hit. The point is tried in both window
+ * coordinate systems (from the content's corner and from the structure's)
+ * because the header does not say which a toolbar view's window-relative
+ * point means; a part found in either counts.
+ */
+static Boolean HasPartUnderMouse(WindowRef window, HIViewRef view,
+                                 const EventRecord *event)
+{
+    Rect content, structure;
+    int  pass;
+
+    if (gField != NULL && IsSelfOrAncestor(gField, view)) {
+        return true;
+    }
+    if (GetWindowBounds(window, kWindowContentRgn, &content) != noErr ||
+        GetWindowBounds(window, kWindowStructureRgn, &structure) != noErr) {
+        return false;
+    }
+    for (pass = 0; pass < 2; pass++) {
+        const Rect    *origin = pass == 0 ? &content : &structure;
+        HIPoint        pt;
+        HIViewPartCode part = kControlNoPart;
+
+        pt.x = event->where.h - origin->left;
+        pt.y = event->where.v - origin->top;
+        if (HIViewConvertPoint(&pt, NULL, view) == noErr &&
+            HIViewGetPartHit(view, &pt, &part) == noErr &&
+            part != kControlNoPart) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static Boolean TrackToolbarButton(WindowRef window, const EventRecord *event)
 {
     Point    where;
@@ -947,6 +1025,10 @@ Boolean GazetteAquaToolbarMouseDown(WindowRef window, const EventRecord *event,
         if (ours) ReleaseEvent(me);
         return false;                       /* the title bar: drag it */
     }
+    if (!HasPartUnderMouse(window, view, event)) {
+        if (ours) ReleaseEvent(me);
+        return false;                       /* a gap or a space: drag it */
+    }
     if (FrontWindow() != window) {
         /* The first click only brings the window forward. */
         SelectWindow(window);
@@ -959,8 +1041,7 @@ Boolean GazetteAquaToolbarMouseDown(WindowRef window, const EventRecord *event,
         return false;                       /* a gap in the bar: drag it */
     }
     /* A click in the field leaves the keyboard in it. */
-    if (gField != NULL && (view == gField || IsSelfOrAncestor(gField, view) ||
-                           IsSelfOrAncestor(view, gField))) {
+    if (gField != NULL && IsSelfOrAncestor(gField, view)) {
         (void)SetKeyboardFocus(window, gField, kControlEditTextPart);
     }
     return true;
@@ -1012,6 +1093,13 @@ void GazetteAquaSetSearchText(const char *text)
     gText[kTextLen - 1] = '\0';
     if (gField != NULL) {
         SetFieldText(gField, gText);
+    }
+}
+
+void GazetteAquaSearchDefocus(void)
+{
+    if (gWindow != NULL && gField != NULL && GazetteAquaSearchHasFocus()) {
+        (void)SetKeyboardFocus(gWindow, gField, kControlFocusNoPart);
     }
 }
 

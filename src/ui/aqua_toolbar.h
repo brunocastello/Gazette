@@ -70,6 +70,8 @@ Boolean GazetteAquaToolbarMouseDown(WindowRef window, const EventRecord *event,
 void    GazetteAquaSearchText(char *out, size_t cap);
 void    GazetteAquaSetSearchText(const char *text);
 Boolean GazetteAquaSearchHasFocus(void);
+/* Takes the keyboard out of the field, if it has it. */
+void    GazetteAquaSearchDefocus(void);
 
 #ifdef __cplusplus
 }
