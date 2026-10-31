@@ -4485,7 +4485,7 @@ static void AquaToggleToolbar(void)
 static void AquaMakeToolbar(void)
 {
     /* The nine items are the nine the shell's table names. */
-    typedef char kItemsMatch[(kToolbarButtons == kGazetteAquaItems) ? 1 : -1];
+    (void)sizeof(char[((int)kToolbarButtons == (int)kGazetteAquaItems) ? 1 : -1]);
 
     if (!GazetteAquaToolbarCreate(gWindow, AquaItemClicked,
                                   AquaSearchRequested, AquaToggleToolbar)) {
