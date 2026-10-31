@@ -23,7 +23,7 @@ original file.
 The file is read and written as Latin-1, byte for byte; a MacRoman or UTF-8
 byte in a literal counts as one character, as the compiler counts it.
 
-    pascal_strings.py IN OUT      convert IN into OUT
+    pascal_strings.py [--cast] IN OUT   convert IN into OUT
     pascal_strings.py --check IN  exit 1 if IN contains a \\p literal
     pascal_strings.py --self-test
 """
@@ -134,8 +134,13 @@ def skip_gap(text, i):
     return i
 
 
-def convert(text, name="<input>"):
-    """Return (converted text, number of literals converted)."""
+def convert(text, name="<input>", cast=False):
+    """Return (converted text, number of literals converted).
+
+    With cast, each converted literal (or run of them) is wrapped in
+    ((const unsigned char *)...). C++ will not pass a char array where a
+    ConstStr255Param is wanted, as C will, with a warning. Not for an array
+    initialiser, where a cast is not allowed; nothing in a .cpp is one."""
     lits = list(scan(text))
     out = []
     last = 0
@@ -166,9 +171,19 @@ def convert(text, name="<input>"):
         if total > 255:
             raise PascalError("%s: Pascal string of %d characters" % (where, total))
         s0 = run[0][0]
-        out.append(text[last:s0 + 1])
+        if cast:
+            out.append(text[last:s0])
+            out.append("((const unsigned char *)")
+            out.append(text[s0:s0 + 1])
+        else:
+            out.append(text[last:s0 + 1])
         out.append("\\%03o" % total)
         last = s0 + 3          # past the quote and the two characters of \p
+        if cast:
+            # the literal run ends where its last member does
+            out.append(text[last:run[-1][1]])
+            out.append(")")
+            last = run[-1][1]
         count += 1
     out.append(text[last:])
     return "".join(out), count
@@ -197,6 +212,11 @@ def self_test():
         if got != want:
             print("FAIL: %r -> %r, wanted %r" % (src, got, want))
             return 1
+    got, _ = convert('f("\\pA" "BC", x ? "\\pZ" : "\\p");', cast=True)
+    want = 'f(((const unsigned char *)"\\003A" "BC"), x ? ((const unsigned char *)"\\001Z") : ((const unsigned char *)"\\000"));'
+    if got != want:
+        print("FAIL cast: %r" % got)
+        return 1
     try:
         convert('"\\p%s"' % ("a" * 256))
         print("FAIL: 256 characters accepted")
@@ -217,13 +237,17 @@ def main(argv):
             text = f.read().decode("latin-1")
         _, n = convert(text, argv[2])
         return 1 if n else 0
+    cast = False
+    if len(argv) == 4 and argv[1] == "--cast":
+        cast = True
+        argv = [argv[0]] + argv[2:]
     if len(argv) != 3:
         sys.stderr.write(__doc__)
         return 2
     with open(argv[1], "rb") as f:
         text = f.read().decode("latin-1")
     try:
-        new, n = convert(text, argv[1])
+        new, n = convert(text, argv[1], cast)
     except PascalError as e:
         sys.stderr.write("pascal_strings.py: %s\n" % e)
         return 1

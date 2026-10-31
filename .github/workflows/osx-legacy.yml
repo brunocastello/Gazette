@@ -118,6 +118,7 @@ jobs:
           docker run --rm -i "$GCC_IMAGE" /bin/bash <<'EOF'
           SDK=/usr/local/MacOSX10.4u.sdk
           ls /usr/local/bin | grep -E 'powerpc-apple-darwin8-(gcc|g\+\+|ld|lipo)$|^clang$' || true
+          grep -rn "AEProcessAppleEvent" "$SDK/System/Library/Frameworks" --include=*.h | head -5 || true
           for h in MacWindows.h Lists.h Navigation.h QuickTimeComponents.h InternetConfig.h Folders.h; do
             echo "$h: $(find "$SDK/System/Library/Frameworks" -name "$h" | head -3 | tr '\n' ' ')"
           done

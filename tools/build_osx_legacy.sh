@@ -86,7 +86,12 @@ if [ "$ARCH" = pascal ]; then
         [ -f "$src" ] || continue
         if ! python3 -I tools/pascal_strings.py --check "$src"; then
             mkdir -p "$PASCAL/$(dirname "$src")"
-            python3 -I tools/pascal_strings.py "$src" "$PASCAL/$src"
+            # C++ will not take a char array for a Pascal string (C only
+            # warns), so the .cpp gets a cast around each literal.
+            case $src in
+                *.cpp) python3 -I tools/pascal_strings.py --cast "$src" "$PASCAL/$src" ;;
+                *)     python3 -I tools/pascal_strings.py "$src" "$PASCAL/$src" ;;
+            esac
             echo "$src" >> "$PASCAL/MANIFEST"
         fi
     done
